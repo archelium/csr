@@ -3,10 +3,15 @@
 A **career-stats dashboard for Star Citizen**. CSR mines your entire client-log
 history and builds a single, interactive, HUD-styled web page: playtime, ships
 flown, missions, favorite guns, quantum travel, aUEC spent — broken down by
-patch (4.1 → 4.9) and by account.
+patch and by account.
 
-Pure Python **standard library** (no pip installs to run from source). Built and
-verified against **SC alpha 4.9** (July 2026).
+Pure Python **standard library** (no pip installs to run from source).
+
+**Patch coverage — tested on 4.1 → 4.9** (July 2026). CSR reads the version out of each
+log rather than working from a fixed list, so **older patches will often work too**, and
+newer ones should. Neither is tested: Star Citizen changes its log format between
+builds, so expect gaps or misparsed figures outside that range — and please
+[report them](https://github.com/archelium/csr/issues) if you hit any.
 
 ![CSR](https://img.shields.io/badge/Star%20Citizen-Career%20Stats-5bd1e6)
 
@@ -129,7 +134,8 @@ share. (No server, so no in-page Refresh button — re-run to update.)
 ## What's in the dashboard
 
 A left sidebar of sections; a top bar with an **account** dropdown, a **patch**
-dropdown (*Career* / 4.1 … 4.9), a light/dark toggle, and Refresh. Every section
+dropdown (*Career*, then every patch found in your logs), a light/dark toggle, and
+Refresh. Every section
 is scoped by account × patch. On **Overview**, click any bar in *Playtime by
 Patch* to filter to that patch (and *↩ View career* to reset).
 

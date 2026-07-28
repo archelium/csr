@@ -22,6 +22,12 @@ Some figures are inferred from log-text patterns and may be approximate or
 incomplete; the in-app notes on each section describe known limitations. Use at
 your own discretion.
 
+## What the licence covers
+The MIT licence in `LICENSE` applies to the **CSR source code only**. It does not
+grant any rights over Star Citizen game data, imagery, or the third-party fonts
+listed below — those remain the property of their respective owners and are used
+here under the terms noted.
+
 ## Third-party data & assets
 - **RSI Ship Matrix** — ship names, specifications, and artwork (© Cloud Imperium).
 - **Star Citizen Wiki** (star-citizen.wiki / starcitizen.tools) — item and weapon names/images (CC BY-SA / CC BY-NC-SA where applicable).
