@@ -4218,6 +4218,23 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
   .wbar span{font-family:var(--font-mono);font-size:11px;letter-spacing:.06em;color:var(--dim);
     border:1px solid var(--line);border-radius:7px;padding:7px 11px;background:var(--panel2)}
   .wbar b{color:var(--cyan);font-weight:700}
+  /* paste-the-path escape hatch: the native folder dialog can end up behind the
+     browser on some setups, and there has to be a way through that doesn't depend on
+     winning a fight with Windows over window focus */
+  .pastefall{margin-top:9px}
+  /* only raised while the picker is actually open — as a standing warning it would
+     read as a defect on the setups where the dialog does come to the front */
+  .pastehint{display:none;font-size:11px;line-height:1.45;color:var(--amber);
+    border-left:2px solid var(--amber);padding-left:8px;margin-bottom:9px}
+  .pastehint.on{display:block}
+  .linky{background:none;border:0;padding:0;cursor:pointer;font-size:11.5px;
+    color:var(--dim);text-decoration:underline;text-underline-offset:3px}
+  .linky:hover{color:var(--cyan)}
+  .pasterow{display:none;gap:7px;margin-top:9px;flex-direction:column}
+  .pasterow.on{display:flex}
+  .pasterow input{font-family:var(--font-mono);font-size:11.5px;color:var(--txt);
+    background:var(--panel2);border:1px solid var(--line);border-radius:7px;padding:8px 10px}
+  .pasterow input:focus{outline:none;border-color:var(--cyan)}
   /* pager under a long list */
   .pager{display:flex;align-items:center;gap:12px;margin-top:12px;flex-wrap:wrap}
   .pager .pgi{font-family:var(--font-mono);font-size:10.5px;letter-spacing:.09em;color:var(--dim)}
@@ -4839,17 +4856,27 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     <div class="mb">CSR keeps a running <b>archive</b> of every session it has scanned (<span id="dmCount">—</span> on file), so your career survives even if Star Citizen deletes old logs.</div>
     <div class="datarow three">
       <div class="dcard">
-        <div class="dct">⬇ Export backup</div>
+        <div class="dct" data-ic="export">Export backup</div>
         <div class="dcd">Save your whole career as a single file — keep it safe, or move it to another PC.</div>
         <button class="mbtn go" id="dmExport">Download archive</button>
       </div>
       <div class="dcard">
-        <div class="dct">📁 Import logs</div>
+        <div class="dct" data-ic="transfer">Import logs</div>
         <div class="dcd">Copied your <b>Game.log</b> folder from another PC? Point CSR at it — no need to install CSR over there first.</div>
         <button class="mbtn go" id="dmLogsBtn">Choose log folder…</button>
+        <div class="pastefall">
+          <div class="pastehint" id="dmHint">Windows opens that dialog <b>behind</b> this
+            window — look in your taskbar. Or just paste the path below.</div>
+          <button class="linky" id="dmPasteToggle">or paste the folder path</button>
+          <div class="pasterow" id="dmPasteRow">
+            <input type="text" id="dmPastePath" spellcheck="false"
+                   placeholder="D:\path\to\the\copied\logbackups">
+            <button class="mbtn go" id="dmPasteGo">Use this folder</button>
+          </div>
+        </div>
       </div>
       <div class="dcard">
-        <div class="dct">⬆ Import backup</div>
+        <div class="dct" data-ic="import">Import backup</div>
         <div class="dcd">Load <b>.json</b> backups exported from CSR. Pick one or several.</div>
         <button class="mbtn ghost" id="dmImportBtn">Choose backup file(s)…</button>
         <input type="file" id="dmFile" accept=".json,.csr,application/json" multiple style="display:none">
@@ -6895,6 +6922,12 @@ $('#olBtn').onclick=()=>{
 $('#dataBtn').onclick=()=>{ $('#dmMsg').textContent=''; olWhen(); modal('dataModal',true); };
 $('#dmClose').onclick=()=>modal('dataModal',false);
 $('#dmExport').onclick=()=>{ window.location='/api/export'; $('#dmMsg').innerHTML='<span style="color:var(--cyan)">Downloading your archive…</span>'; };
+// The three card titles carried emoji: ⬇ and ⬆ rendered as plain glyphs in the text
+// colour, but 📁 came out as a full-colour emoji — one yellow icon in a row of white
+// ones. Swap all three for the HUD set so they match each other and the rest of the UI.
+document.querySelectorAll('.dct[data-ic]').forEach(e=>{
+  if(ICON[e.dataset.ic]) e.insertAdjacentHTML('afterbegin', icon(e.dataset.ic));
+});
 $('#dmImportBtn').onclick=()=>$('#dmFile').click();
 $('#dmFile').onchange=e=>{
   const files=[...e.target.files]; e.target.value=''; if(!files.length) return;
@@ -6911,27 +6944,54 @@ $('#dmFile').onchange=e=>{
       });
   }).catch(()=>{ CSRTerm.fail('is the CSR app still running?'); });
 };
+// Escape hatch for the native dialog. It shares runImportFolder() with the picker, so
+// both routes go through exactly the same import — only the way the path is obtained
+// differs. Kept collapsed so it doesn't compete with the button for attention.
+$('#dmPasteToggle').onclick=()=>{
+  const row=$('#dmPasteRow'); row.classList.toggle('on');
+  if(row.classList.contains('on')) $('#dmPastePath').focus();
+};
+$('#dmPasteGo').onclick=()=>{
+  const v=$('#dmPastePath').value.trim().replace(/^["']|["']$/g,'');
+  if(!v) return;
+  modal('dataModal',false); CSRTerm.start(); runImportFolder(v);
+};
+$('#dmPastePath').addEventListener('keydown',e=>{ if(e.key==='Enter') $('#dmPasteGo').click(); });
+// Shared by the native picker and the paste box.
+function runImportFolder(path){
+  return fetch('/api/import-logs',{method:'POST',headers:{'Content-Type':'application/json'},
+                                   body:JSON.stringify({path})})
+    .then(r=>r.json()).then(r2=>{
+      if(r2.ok){ CSRTerm.finish(()=>location.reload()); }
+      else{ CSRTerm.fail(r2.error||'could not read that folder'); }
+    })
+    .catch(()=>CSRTerm.fail('lost contact with the CSR app — it may have been closed'));
+}
 // Import a copied Game.log FOLDER. The folder is picked natively and read by the
 // app off disk — a log folder is hundreds of MB, far too much to upload through
 // the browser, and this also saves installing CSR on the other PC just to Export.
 $('#dmLogsBtn').onclick=()=>{
   const btn=$('#dmLogsBtn'), was=btn.textContent;
   btn.disabled=true; btn.textContent='Waiting for folder…';
+  // The dialog frequently opens BEHIND the browser and no amount of Win32 coaxing has
+  // fixed it (see pick_folder_dialog). So say so plainly the moment it's opened, and
+  // put the paste box in reach in the same breath rather than leaving it to be found.
+  $('#dmHint').classList.add('on'); $('#dmPasteRow').classList.add('on');
   // Step 1 — native folder dialog. The terminal stays closed while it's open;
   // showing a progress readout over an unanswered dialog looked like a hang.
   fetch('/api/pick-import-folder',{method:'POST'}).then(r=>r.json()).then(res=>{
-    btn.disabled=false; btn.textContent=was;
+    btn.disabled=false; btn.textContent=was; $('#dmHint').classList.remove('on');
+    // A failed picker used to look exactly like Cancel — the button just reset and
+    // nothing happened, with no way to tell the dialog had never opened.
+    if(!res.ok && res.error){
+      modal('dataModal',false); CSRTerm.fail(res.error); return;
+    }
     if(!res.ok) return;                       // cancelled: stay in the panel
     // Step 2 — folder chosen, NOW show the terminal and do the work
     modal('dataModal',false); CSRTerm.start();
-    return fetch('/api/import-logs',{method:'POST',headers:{'Content-Type':'application/json'},
-                                     body:JSON.stringify({path:res.path})})
-      .then(r=>r.json()).then(r2=>{
-        if(r2.ok){ CSRTerm.finish(()=>location.reload()); }
-        else{ CSRTerm.fail(r2.error||'could not read that folder'); }
-      });
+    return runImportFolder(res.path);
   }).catch(()=>{
-    btn.disabled=false; btn.textContent=was;
+    btn.disabled=false; btn.textContent=was; $('#dmHint').classList.remove('on');
     modal('dataModal',false);
     CSRTerm.fail('lost contact with the CSR app — it may have been closed');
   });
@@ -7173,32 +7233,126 @@ def generate(out_path, explicit_logs=None, live_path=None, quick=False):
 # --------------------------------------------------------------------------- #
 
 def pick_folder_dialog():
-    """Open the native Windows 'select folder' dialog via Windows PowerShell's
-    WinForms FolderBrowserDialog — so we don't have to bundle Tcl/Tk (~3-4 MB)
-    just for a folder picker. Returns the chosen path, or None if cancelled."""
+    """Open the native Windows 'select folder' dialog via Windows PowerShell's WinForms
+    FolderBrowserDialog — so we don't have to bundle Tcl/Tk (~3-4 MB) just for a picker.
+
+    Returns the chosen path, None if cancelled, or False if the picker itself failed.
+
+    KNOWN LIMITATION: the dialog often opens BEHIND the browser. Three approaches were
+    tried and all three failed on a real machine; they're recorded so the next person
+    (or the next me) doesn't spend the afternoon re-deriving them:
+
+      * `$owner.TopMost = $true` — TopMost sets z-order between windows; it does not
+        make the shell's Browse-For-Folder dialog (a separate #32770 window) topmost.
+      * AllowSetForegroundWindow() + SetForegroundWindow() — Windows only honours these
+        for a process that ALREADY holds the foreground. CSR's console is hidden and the
+        browser owns the foreground, so the grant is refused and the call is a no-op.
+      * SetWindowPos(HWND_TOPMOST) from a WinForms timer inside ShowDialog's modal pump.
+        This needs no foreground rights and the timer does fire, but the dialog still
+        came up behind the browser.
+
+    The root problem is that CSR's foreground-activation rights are already spent: the
+    click happens in the BROWSER, so the browser is what Windows considers to have
+    earned the right to raise a window — not the background HTTP handler reacting to it.
+    Rather than escalate (a visible always-on-top shim, forced input-thread attachment),
+    the UI now states plainly that the dialog may be behind, and offers a paste-the-path
+    box that doesn't depend on window focus at all. Fix the picker if a clean way turns
+    up, but the import path is no longer blocked on it.
+
+    The SetWindowPos timer is kept: it is harmless, and on setups where the browser is
+    not fullscreen it is what makes the dialog visible at all.
+    """
     init = r"C:\Program Files\Roberts Space Industries\StarCitizen\StarCitizen"
     if not os.path.isdir(init):
         init = r"C:\Program Files\Roberts Space Industries\StarCitizen"
-    ps = (
-        "Add-Type -AssemblyName System.Windows.Forms;"
-        "$f = New-Object System.Windows.Forms.FolderBrowserDialog;"
-        "$f.Description = 'Select your StarCitizen folder (contains LIVE, PTU, ...)';"
-        "$f.ShowNewFolderButton = $false;"
-        f"$p = '{init}'; if (Test-Path $p) {{ $f.SelectedPath = $p }};"
-        "if ($f.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) "
-        "{ [Console]::Out.Write($f.SelectedPath) }"
-    )
+    # Written to a temp .ps1 and run with -File: this outgrew -Command, where every
+    # embedded quote needs escaping twice and a typo fails silently at runtime.
+    script = """
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
+Add-Type -Namespace CSR -Name Win -MemberDefinition @'
+  [DllImport("user32.dll", SetLastError=true)]
+  public static extern IntPtr FindWindowEx(IntPtr p, IntPtr c, string cls, string title);
+  [DllImport("user32.dll")]
+  public static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
+  [DllImport("user32.dll")]
+  public static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y,
+                                         int cx, int cy, uint flags);
+  [DllImport("user32.dll")]
+  public static extern bool IsWindowVisible(IntPtr h);
+'@
+
+$owner = New-Object System.Windows.Forms.Form
+$owner.ShowInTaskbar = $false
+$owner.Opacity = 0
+$owner.StartPosition = 'Manual'
+$owner.Location = New-Object System.Drawing.Point(-4000,-4000)
+$owner.Size = New-Object System.Drawing.Size(1,1)
+$owner.TopMost = $true
+$owner.Show()
+
+# Lift the shell dialog above every other window once it exists. HWND_TOPMOST = -1;
+# SWP_NOMOVE|SWP_NOSIZE|SWP_SHOWWINDOW = 0x0043. This does not need foreground rights.
+$me = [System.Diagnostics.Process]::GetCurrentProcess().Id
+$timer = New-Object System.Windows.Forms.Timer
+$timer.Interval = 120
+$timer.Add_Tick({
+  $h = [IntPtr]::Zero
+  while ($true) {
+    $h = [CSR.Win]::FindWindowEx([IntPtr]::Zero, $h, '#32770', $null)
+    if ($h -eq [IntPtr]::Zero) { break }
+    $pid_out = 0
+    [void][CSR.Win]::GetWindowThreadProcessId($h, [ref]$pid_out)
+    if ($pid_out -eq $me -and [CSR.Win]::IsWindowVisible($h)) {
+      [void][CSR.Win]::SetWindowPos($h, [IntPtr](-1), 0, 0, 0, 0, 0x0043)
+      $timer.Stop()
+      break
+    }
+  }
+})
+$timer.Start()
+
+$dlg = New-Object System.Windows.Forms.FolderBrowserDialog
+$dlg.Description = 'Select your StarCitizen folder (contains LIVE, PTU, ...)'
+$dlg.ShowNewFolderButton = $false
+$seed = '__INIT__'
+if (Test-Path $seed) { $dlg.SelectedPath = $seed }
+$result = $dlg.ShowDialog($owner)
+$timer.Stop()
+$owner.Close()
+if ($result -eq [System.Windows.Forms.DialogResult]::OK) {
+  [Console]::Out.Write($dlg.SelectedPath)
+}
+""".replace("__INIT__", init.replace("'", "''"))
+
+    tmp = None
     try:
         import subprocess
+        import tempfile
+        fd, tmp = tempfile.mkstemp(suffix=".ps1", text=True)
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(script)
         r = subprocess.run(
-            ["powershell", "-NoProfile", "-STA", "-WindowStyle", "Hidden", "-Command", ps],
+            ["powershell", "-NoProfile", "-STA", "-ExecutionPolicy", "Bypass",
+             "-WindowStyle", "Hidden", "-File", tmp],
             capture_output=True, text=True, timeout=600,
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-        path = (r.stdout or "").strip()
-        return path or None
+        if r.returncode != 0:
+            # PowerShell itself failed (missing, blocked, WinForms unavailable). This
+            # used to be indistinguishable from "user pressed Cancel", so the button
+            # silently reset and nobody could tell the picker was broken.
+            cerr(f"folder picker failed: {(r.stderr or '').strip()[:200]}")
+            return False
+        return (r.stdout or "").strip() or None      # None = cancelled
     except Exception as e:
         cerr(f"folder picker unavailable: {e}")
-        return None
+        return False                                  # False = broken, not cancelled
+    finally:
+        if tmp:
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
 
 
 def serve(out_path, port=7878, explicit_logs=None, open_browser=True,
@@ -7383,7 +7537,11 @@ def serve(out_path, port=7878, explicit_logs=None, open_browser=True,
             elif p == "/api/pick-folder":
                 pick_req.put(True)
                 path = pick_res.get()              # main thread runs the dialog
-                if not path:
+                if path is False:                  # the picker itself failed
+                    self._send(200, json.dumps({"ok": False, "error":
+                        "the folder picker could not open - see the CSR console"}))
+                    return
+                if not path:                       # user pressed Cancel
                     self._send(200, json.dumps({"ok": False, "cancelled": True}))
                     return
                 self._accept_folder(path)
@@ -7440,7 +7598,11 @@ def serve(out_path, port=7878, explicit_logs=None, open_browser=True,
                 # sat there animating over a modal dialog the user hadn't answered yet.
                 pick_req.put(True)
                 path = pick_res.get()              # main thread runs the native dialog
-                if not path:
+                if path is False:                  # the picker itself failed
+                    self._send(200, json.dumps({"ok": False, "error":
+                        "the folder picker could not open - see the CSR console"}))
+                    return
+                if not path:                       # user pressed Cancel
                     self._send(200, json.dumps({"ok": False, "cancelled": True}))
                     return
                 self._send(200, json.dumps({"ok": True, "path": path.strip().strip('"')}))

@@ -187,13 +187,18 @@ running **archive** so your career survives both. Open **💾 Backup & transfer*
 
 | You have | Use |
 |---|---|
-| A **log folder copied** from the other PC | **Import logs** → pick the folder. CSR reads it straight off disk — you don't need to install CSR over there. |
+| A **log folder copied** from the other PC | **Import logs** → pick the folder, or paste its path. CSR reads it straight off disk — you don't need to install CSR over there. |
 | CSR **installed on both** machines | **Export** on the other PC, then **Import backup** here. |
 | Just want a safety copy | **Export** — one file with your whole career. |
 
 Sessions merge and de-duplicate by identity, so importing the same folder or file
 twice never double-counts. Copied logs still declare which channel they came from,
 so they land in the right career even if you dropped them in the wrong folder.
+
+> **Known issue.** The *Choose log folder…* dialog is a native Windows one, and Windows
+> often opens it **behind** your browser — check the taskbar if the button seems to hang.
+> The **"or paste the folder path"** box next to it doesn't depend on window focus and
+> always works.
 
 Everything is real, from your logs. Backend class IDs become in-fiction names
 (`RSI_Zeus_ES` → **Zeus Mk II ES**, `klwe_rifle_energy_01` → **Klaus & Werner

@@ -24,6 +24,12 @@ DOCS = {"README.md": "README.txt", "PRIVACY.md": "PRIVACY.txt",
 def md2txt(md):
     md = md.replace("\r\n", "\n")
     md = re.sub(r"\*\*(.+?)\*\*", r"\1", md, flags=re.DOTALL)     # bold (may span lines)
+    # italics — after bold, so **x** is already gone and can't be half-matched. The docs
+    # are hard-wrapped, so an emphasised phrase often straddles a line break; the match
+    # allows single newlines but never a blank line, so a stray "*" in prose can at worst
+    # eat to the end of its own paragraph rather than the rest of the file. Refusing to
+    # start or end on a space keeps "*.log" and "3 * 4" intact.
+    md = re.sub(r"\*(?!\s)((?:[^*\n]|\n(?!\s*\n))+?)(?<!\s)\*", r"\1", md)
     md = re.sub(r"`([^`]+)`", r"\1", md)                          # inline code
     md = re.sub(r"\[([^\]]+)\]\((mailto:)?([^)]+)\)",
                 lambda m: m.group(1) if m.group(1) == m.group(3) else f"{m.group(1)} ({m.group(3)})", md)

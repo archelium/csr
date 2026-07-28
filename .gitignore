@@ -49,6 +49,10 @@ StarLogs-v0.9.1/
 
 # Internal working notes — architecture, open TODOs, notes-to-self. Kept local.
 HANDOFF.md
+# Drafts of announcement / Discord copy, staged here before posting. Underscore
+# prefix marks anything that is written for a person, not for the repo.
+/_*.txt
+/_*.md
 
 # OS / editor cruft
 Thumbs.db

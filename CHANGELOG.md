@@ -250,6 +250,22 @@ new players actually ask — *"is it the game, or is it my PC?"*
   you were already on. It now scrolls to the Crashes group itself. Simulated events no
   longer offer the link at all — they are never written to a log, so they cannot appear
   in the history, and following it would have shown your last *real* crash instead.
+- **The Import logs card had a yellow icon** while every other card's was white. The
+  three *Backup & transfer* headings used text characters, and `📁` is an emoji — Windows
+  draws it from a colour font, so it ignores the CSS colour entirely. All three now use
+  the same drawn SVG icons as the rest of the interface.
+- **"Choose log folder…" appeared to do nothing.** The Windows folder dialog *was*
+  opening — behind the browser window, where you would never see it, while the button sat
+  on *Waiting for folder…* looking hung. Three separate ways of forcing it to the front
+  were tried and none of them worked: the click happens in the **browser**, so the browser
+  is what Windows regards as having earned the right to raise a window — not the CSR
+  process reacting to it a moment later.
+  - Rather than escalate to something more invasive, CSR now **tells you** the dialog may
+    be behind this window the moment it opens one, and offers **"or paste the folder
+    path"** in the same breath. That route doesn't involve window focus at all, so it
+    works everywhere. Both go through identical import code.
+  - The failed approaches are written up in the source so the next attempt starts from
+    where this one stopped.
 
 ### Corrected
 - **Star Citizen *does* log frame rate — the previous release said it didn't.** On level
