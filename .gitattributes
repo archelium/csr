@@ -1,0 +1,13 @@
+# Normalise line endings in the repo (LF) while leaving working copies native.
+# Without this, every .py and .bat committed from Windows shows up as modified on
+# a Linux clone and vice versa.
+* text=auto eol=lf
+
+# Windows-only launchers must keep CRLF or cmd.exe mis-parses them
+*.bat text eol=crlf
+
+# Binary — never diff or convert
+*.ico binary
+*.png binary
+*.zip binary
+*.exe binary

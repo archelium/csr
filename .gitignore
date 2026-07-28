@@ -1,0 +1,64 @@
+# ---------------------------------------------------------------------------
+# CSR — .gitignore   (track source; not build outputs, caches, or personal data)
+#
+# NOTE: git does NOT support a trailing comment on a pattern line. "foo.json # why"
+# is read as a filename containing " # why" and silently matches nothing. Every
+# comment here is therefore on its own line. This file previously had two inline
+# comments, which is how csr_archive.json and sc_images.json — both personal — came
+# within one commit of a public repository.
+# ---------------------------------------------------------------------------
+
+# Build / generated artifacts (rebuilt from source — don't commit)
+dist/
+build/
+release/
+__pycache__/
+*.pyc
+CSR.html
+sc_stats.html
+CSR-v*.zip
+csr_icon.png
+
+# Per-user runtime data & caches
+CSR-data/
+csr_config.json
+# each user's accumulated session archive — personal play history
+csr_archive.json
+# each user's own ship/gun art cache (~9 MB, fetched per install)
+sc_images.json
+
+# Per-user online caches: these hold YOUR handle, citizen record and org
+sc_profile.json
+sc_online.json
+# per-death records from the deprecated live analyzer
+diviner.json
+
+# Personal Star Citizen logs — never publish these
+Game.log
+*.log
+logbackups/
+# a friend's logs, shared for testing — not ours to publish
+Zephyrion Logs/
+
+# Third-party tool kept locally for reference — not ours to redistribute
+StarLogs-v0.9.1/
+
+# Local machine config written by editors and dev tooling — absolute paths and
+# per-machine permissions, never portable to anyone else's checkout
+**/settings.local.json
+
+# Internal working notes — architecture, open TODOs, notes-to-self. Kept local.
+HANDOFF.md
+
+# OS / editor cruft
+Thumbs.db
+desktop.ini
+.DS_Store
+.vscode/
+.idea/
+
+# ---------------------------------------------------------------------------
+# KEPT (intentionally NOT ignored) so `build_exe.bat` bundles them and a fresh
+# clone builds an exe with data ready (delete-to-refetch still works):
+#   sc_ship_matrix.json   sc_item_names.json   sc_fonts_embed.css   csr.ico
+# ---------------------------------------------------------------------------
