@@ -250,6 +250,13 @@ new players actually ask — *"is it the game, or is it my PC?"*
   you were already on. It now scrolls to the Crashes group itself. Simulated events no
   longer offer the link at all — they are never written to a log, so they cannot appear
   in the history, and following it would have shown your last *real* crash instead.
+- **CSR went blank while a hotfix was being applied.** CIG's own procedure for taking a
+  hotfix is to rename `LIVE` to `HOTFIX`, patch through the launcher, then rename it
+  back — so a folder saved as `…\StarCitizen\LIVE` genuinely does not exist for the
+  length of that window. CSR looked at the saved path, found nothing, and stopped there:
+  **no channels at all**, not even PTU, which never moved. It now recognises that the
+  parent is your StarCitizen folder and reads the channels from there. Hotfix sessions
+  were already folded into LIVE, so nothing splits your career.
 - **The Import logs card had a yellow icon** while every other card's was white. The
   three *Backup & transfer* headings used text characters, and `📁` is an emoji — Windows
   draws it from a colour font, so it ignores the CSS colour entirely. All three now use

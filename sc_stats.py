@@ -554,6 +554,14 @@ def _sc_root(path):
     f, l = _channel_files(path)
     if f or l:
         return os.path.dirname(os.path.normpath(path))
+    # A saved channel folder can VANISH during normal play. CIG's own procedure for
+    # applying a hotfix is to rename LIVE to HOTFIX, patch through the launcher, then
+    # rename it back — so a path stored as …\StarCitizen\LIVE does not exist for the
+    # length of that window. Without this, CSR found NO channels at all during it, not
+    # even PTU, which never moved. Climb to the parent when the parent is a root.
+    parent = os.path.dirname(os.path.normpath(path))
+    if parent and parent != path and _has_subchannels(parent):
+        return parent
     return path
 
 
