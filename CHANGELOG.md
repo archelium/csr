@@ -195,6 +195,12 @@ new players actually ask — *"is it the game, or is it my PC?"*
   now display as the size on the box.
 
 ### Fixed
+- **Legacy Combat listed your own handle as a weapon.** The kill lines in patches
+  4.1–4.3 sometimes name the *player* in the weapon field — a self-inflicted death —
+  and the filter that dropped those had the author's handle written into it as a
+  literal string. Correct on exactly one machine, and wrong for everybody else since
+  v1.0.0: your own handle appeared in the weapon rankings. CSR now collects handles as
+  it scans and filters against those.
 - **"Session live" kept showing after you had already quit.** A log timestamp cannot tell
   "being written because you're playing" from "being written because Star Citizen is
   shutting down" — and SC's exit is drawn out, so for ~30 s after quitting, *last written
