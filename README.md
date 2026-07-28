@@ -10,6 +10,34 @@ verified against **SC alpha 4.9** (July 2026).
 
 ![CSR](https://img.shields.io/badge/Star%20Citizen-Career%20Stats-5bd1e6)
 
+![Overview — profile, career snapshot and playtime by patch](docs/img/overview.png)
+
+<details>
+<summary><b>More screenshots</b> — Stability, Your Machine, Flight &amp; Travel</summary>
+
+### Stability
+
+Crashes named in the game's own words, a full crash history, and **drops to the main
+menu** — the "it booted me for no reason" moment, which Star Citizen records as *you*
+asking to disconnect, and which nothing else counts.
+
+![Stability — crash analysis and drops to the main menu](docs/img/stability.png)
+
+### Your Machine
+
+The rig the game saw, your graphics settings in the menu's own wording, and a
+configuration check that flags what is measurably wrong.
+
+![Your Machine — hardware, graphics settings and configuration check](docs/img/machine.png)
+
+### Flight &amp; Travel
+
+Ships flown, hull-size mix, roles, and quantum travel.
+
+![Flight and Travel — ships, hulls and quantum travel](docs/img/flight.png)
+
+</details>
+
 ---
 
 ## Get started
