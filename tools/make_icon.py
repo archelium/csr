@@ -1,10 +1,21 @@
 #!/usr/bin/env python3
 """Draw the CSR ship-chevron mark and save it as csr.ico (multi-size).
 
+DEVELOPER TOOL — not part of the app, and not needed to build or run it. CSR itself
+is standard-library only; this script is the one thing in the repo that needs a
+package (Pillow), which is why it lives in tools/ rather than beside the source.
+The generated csr.ico is committed, so a fresh clone builds an exe without ever
+running this. Re-run it only to change the mark:
+
+    pip install pillow
+    python tools/make_icon.py           # writes csr.ico + csr_icon.png at the repo root
+
 Mirrors the SVG mark (viewBox 0 0 90 110): a cyan upper chevron, a light lower
 chevron, and a cyan drop stroke. At 16 px the lower chevron + stroke are dropped
-for legibility. Run:  python make_icon.py
+for legibility.
 """
+import os
+
 from PIL import Image, ImageDraw
 
 CYAN = (91, 209, 230, 255)      # #5bd1e6
@@ -46,13 +57,18 @@ def render(size, supersample=4):
 
 
 def main():
+    # Always write to the repo root, not the working directory — this script lives in
+    # tools/ but csr.spec expects csr.ico beside the source.
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     sizes = [256, 128, 64, 48, 32, 24, 16]     # largest first = base
     imgs = [render(s) for s in sizes]
+    ico = os.path.join(root, "csr.ico")
+    png = os.path.join(root, "csr_icon.png")
     # write every distinct-size render into the ICO (base + appended)
-    imgs[0].save("csr.ico", format="ICO", append_images=imgs[1:],
+    imgs[0].save(ico, format="ICO", append_images=imgs[1:],
                  sizes=[(s, s) for s in sizes])
-    render(256).save("csr_icon.png", format="PNG")
-    print("wrote csr.ico + csr_icon.png (sizes: %s)" % sizes)
+    render(256).save(png, format="PNG")
+    print("wrote %s + %s (sizes: %s)" % (ico, png, sizes))
 
 
 if __name__ == "__main__":

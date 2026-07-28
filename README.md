@@ -241,6 +241,7 @@ drop a `csr.ico` next to `csr.spec` and rebuild.
 | `Start CSR.bat` | Double-click launcher for the source app. |
 | `sc_*.json`, `sc_fonts_embed.css` | Cached game data / fonts (delete to refetch). |
 | `sc_analyzer.py` | **Deprecated** live death-tracker (kept for reference; not maintained). |
+| `tools/make_icon.py` | Draws the chevron mark → `csr.ico`. Developer tool, **not** part of the app: it's the one file needing a package (Pillow), and the generated `.ico` is committed so a clone builds without it. |
 
 ---
 
