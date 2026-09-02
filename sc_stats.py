@@ -48,7 +48,7 @@ CSR_CONTACT = "support@archelium.com"      # publisher/contact (archelium.com)
 # Bump whenever scan_log() learns to extract something new or fixes an extraction bug.
 # A quick refresh reuses archived sessions only when they were parsed by THIS version,
 # so improved parsing always re-reads old logs instead of silently keeping stale numbers.
-PARSER_VERSION = 10
+PARSER_VERSION = 12
 
 
 # --------------------------------------------------------------------------- #
@@ -1285,6 +1285,25 @@ LOGIN_RE = re.compile(r"Handle\[([^\]]+)\]")
 LOCAL_HANDLE_RE = re.compile(r"LocalPlayer\w*.*?owned by '([^']+)'")
 CONTRACT_RE = re.compile(r"contract \[([A-Za-z][A-Za-z0-9_]+?)(?:_\d+)?\]")
 FLEET_RE = re.compile(r"Retrieved \d+ entitlements out of (\d+) vehic")
+# Crafting blueprints (4.7+) reach the log ONLY as HUD notifications, and not in one
+# shape: most builds queue each one ("Added notification … [id]") and then log its
+# lifecycle (Next / StartFade / Remove) under <UpdateNotificationItem>. Builds 11875683
+# and 11952564 (May–Jun 2026) wrap the WHOLE string in <EM4>…</EM4> — the quote is
+# followed by markup, not by "Received" — and 15 blueprints vanished when the pattern
+# was anchored on that quote. So nothing is anchored on it, every line form is matched,
+# and receipts are deduplicated by the notification id, which is unique within a
+# session. The name runs to the closing `: " [id]` and may itself contain quotes
+# (Atzkav "Mirage" Sniper Rifle) — a [^"]* match truncates those to the bare model
+# and silently merges every skin of a gun into one entry.
+BLUEPRINT_RE = re.compile(r'Received Blueprint: (.*?): " \[(\d+)\]')
+
+
+def _bp_clean(name):
+    """The display name as the HUD shows it: markup tags and the [BP] badge removed,
+    the occasional non-breaking space normalised (five of them in one player's logs)."""
+    name = re.sub(r"</?EM\d>", "", name).replace("\xa0", " ")
+    name = re.sub(r"\s*\[BP\]", "", name)
+    return re.sub(r"\s+", " ", name).strip()
 DEAD_ZONE_RE = re.compile(r"ejected from zone '([A-Za-z][A-Za-z0-9_]+?)_\d{6,}'")
 COLLISION_RE = "FatalCollision"
 # --- LEGACY combat (old format, only in pre-Nov-2025 / patch 4.1–4.3 logs) ---
@@ -1674,6 +1693,134 @@ def _purchase_category(cls):
     return "Other"
 
 
+# --- blueprints ------------------------------------------------------------------
+# There is no ownership list anywhere in the client log — the crafting library is
+# fetched from CIG's servers over gRPC and never written down — so what CSR can show
+# is every blueprint the game ANNOUNCED while a log existed on this PC. Names are the
+# HUD's display strings, matched back to item ids through the wiki item index; about
+# nine in ten resolve, and the id then decides the category (an id is immune to a
+# weapon maker called "…Arms"). The rest are judged from the name.
+_BP_COMP_A = re.compile(r'^(MIL|IND|CIV|STL|CMP)-(\d)([A-D])\s+"(.+)"\s*$', re.I)   # MIL-2A "JS-400"
+_BP_COMP_B = re.compile(r'^(Mil|Ind|Civ|Stl|Cmp)/(\d)/([A-D])\s+(.+?)\s*$', re.I)    # Mil/2/A FR-76
+_BP_CLASS = {"mil": "Military", "ind": "Industrial", "civ": "Civilian",
+             "stl": "Stealth", "cmp": "Competition"}
+_BP_COMP_KIND = (("cool_", "Cooler"), ("shld_", "Shield generator"), ("powr_", "Power plant"),
+                 ("radr_", "Radar"), ("qdrv_", "Quantum drive"), ("fuel_", "Fuel nozzle"),
+                 ("qtank", "Quantum fuel tank"), ("fueltank", "Fuel tank"))
+_BP_SHIPGUN_KIND = (("laserrepeater", "Laser repeater"), ("lasercannon", "Laser cannon"),
+                    ("ballisticcannon", "Ballistic cannon"), ("ballisticgatling", "Ballistic gatling"),
+                    ("neutronrepeater", "Neutron repeater"), ("massdriver", "Mass driver"),
+                    ("scattergun", "Scattergun"), ("distortion", "Distortion"),
+                    ("repeater", "Repeater"), ("cannon", "Cannon"), ("gatling", "Gatling"))
+_BP_SLOT = (("helmet", "Helmet"), ("backpack", "Backpack"), ("_core", "Core"),
+            ("_torso", "Core"), ("_arms", "Arms"), ("_legs", "Legs"), ("jacket", "Jacket"))
+_BP_GUN_WORDS = ("pistol", "rifle", "smg", "lmg", "sniper", "shotgun", "crossbow", "launcher", "railgun")
+_BP_NAME_WPN = re.compile(r"\b(pistol|rifle|smg|lmg|shotgun|crossbow|sniper|railgun|launcher)\b", re.I)
+_BP_NAME_ARM = re.compile(r"\b(helmet|core|arms|legs|backpack|armor|armour)\b", re.I)
+_BP_NAME_SUIT = re.compile(r"\b(flight suit|flight helmet|racing helmet|racing flight suit|undersuit)\b", re.I)
+_BP_NAME_MAG = re.compile(r"\b(magazine|battery)\b", re.I)
+_BP_NAME_MINE = re.compile(r"\b(mining laser|scraper|salvage)\b", re.I)
+_bp_rev = None
+_bp_cache = {}
+
+
+def _bp_norm(s):
+    return re.sub(r"\s+", " ", (s or "").replace("\xa0", " ")).strip().lower()
+
+
+def _bp_reverse_index():
+    """display name -> item classes (shortest first = the base item before its skins),
+    built once from the item index. 12k entries; a dict flip, not a search."""
+    global _bp_rev
+    if _bp_rev is None:
+        rev = defaultdict(list)
+        for cls, nm in (ITEMS.idx or {}).items():
+            if isinstance(nm, str) and nm:
+                rev[_bp_norm(nm)].append(cls)
+        for v in rev.values():
+            v.sort(key=len)
+        _bp_rev = rev
+    return _bp_rev
+
+
+def _bp_resolve(name):
+    """Item class for a blueprint's display name, or None. Tries the name as written,
+    then without a magazine's "(30 cap)" suffix, then a component's bare model name."""
+    rev = _bp_reverse_index()
+    cands = [name, re.sub(r"\s*\(\d+\s*cap\)\s*$", "", name, flags=re.I)]
+    for rx in (_BP_COMP_B, _BP_COMP_A):
+        m = rx.match(name)
+        if m:
+            cands.append(m.group(4))
+    for c in cands:
+        hit = rev.get(_bp_norm(c))
+        if hit:
+            return hit[0]
+    return None
+
+
+def blueprint_info(name):
+    """(category, kind) for a blueprint's display name — cached, since finalize() runs
+    once per patch view and the same 200-odd names come round every time."""
+    if name in _bp_cache:
+        return _bp_cache[name]
+    cls = (_bp_resolve(name) or "").lower()
+    cat, kind = "Other", ""
+    comp = _BP_COMP_A.match(name) or _BP_COMP_B.match(name)
+    if comp:
+        # the name itself carries class / size / grade — usable even when the id is unknown
+        cat = "Ship components"
+        kind = (f"{_BP_CLASS.get(comp.group(1).lower(), comp.group(1))} · "
+                f"size {comp.group(2)} · grade {comp.group(3).upper()}")
+        typ = next((v for k, v in _BP_COMP_KIND if k in cls), "")
+        if typ:
+            kind = typ + " · " + kind
+    elif cls:
+        if any(k in cls for k, _ in _BP_COMP_KIND):
+            cat = "Ship components"
+            kind = next(v for k, v in _BP_COMP_KIND if k in cls)
+        elif "_mag" in cls or "magazine" in cls or "battery" in cls:
+            cat = "Magazines & batteries"
+        elif ("mining" in cls and "laser" in cls) or cls.startswith("salvage_"):
+            cat = "Mining & salvage"
+            kind = "Mining laser" if "laser" in cls else "Salvage module"
+        elif "flightsuit" in cls or "undersuit" in cls:
+            cat = "Flight suits"
+            kind = next((v for k, v in _BP_SLOT if k in cls), "")
+        elif any(k in cls for k, _ in _BP_SLOT) or "_armor" in cls or "armor_" in cls:
+            cat = "Armor"
+            slot = next((v for k, v in _BP_SLOT if k in cls), "")
+            weight = next((w.title() for w in ("light", "medium", "heavy") if "_" + w + "_" in cls), "")
+            kind = " · ".join(x for x in (weight, slot) if x)
+        elif re.search(r"_s\d{1,2}(?=_|$)", cls) or any(k in cls for k, _ in _BP_SHIPGUN_KIND):
+            cat = "Ship weapons"
+            kind = next((v for k, v in _BP_SHIPGUN_KIND if k in cls), "")
+            sz = re.search(r"_s(\d{1,2})(?=_|$)", cls)
+            if sz:
+                kind = (kind + " · " if kind else "") + "S" + str(int(sz.group(1)))
+        elif any(g in cls for g in _BP_GUN_WORDS):
+            cat = "FPS weapons"
+            gtype, ammo = sc_names.gun_class_labels(cls, name)
+            kind = " ".join(x for x in (ammo, gtype) if x)
+    if cat == "Other":                       # no id, or an id with no tell — judge the name
+        if _BP_NAME_MAG.search(name):
+            cat = "Magazines & batteries"
+        elif _BP_NAME_MINE.search(name):
+            cat = "Mining & salvage"
+        elif _BP_NAME_SUIT.search(name):
+            cat = "Flight suits"
+        elif _BP_NAME_WPN.search(name):
+            cat = "FPS weapons"
+        elif _BP_NAME_ARM.search(name):
+            cat = "Armor"
+    if not kind:                             # no id to read a kind from — take it off the name
+        mk = re.search(r"\b(Battery|Magazine|Backpack|Helmet|Core|Arms|Legs|Flight Suit|Undersuit)\b", name, re.I)
+        if mk:
+            kind = mk.group(1).title()
+    _bp_cache[name] = (cat, kind)
+    return cat, kind
+
+
 def _pretty_shop(name, cats=None):
     low = (name or "").lower()
     brand = next((v for k, v in _SHOP_BRANDS if k in low), None)
@@ -1924,6 +2071,8 @@ def scan_log(path):
     shop_cat = defaultdict(Counter)    # shopName -> category -> count (what you buy where)
     buy_cat = Counter()                # purchase category -> count (what you buy)
     claims = 0
+    blueprints = Counter()             # blueprint name -> times the HUD announced it (4.7+)
+    bp_seen = set()                    # (notification id, name) already counted this session
     systems_incomplete = True
     handle = None
     handle_fb = None                   # fallback handle (reduced-logging builds)
@@ -2107,6 +2256,12 @@ def scan_log(path):
                     m = MISSION_RE.search(line)
                     if m:
                         missions[m.group(1)] = m.group(2)
+                elif "Received Blueprint:" in line:
+                    # one receipt is 2-4 lines (queue, continuation, lifecycle) sharing an id
+                    m = BLUEPRINT_RE.search(line)
+                    if m and (m.group(2), m.group(1)) not in bp_seen:
+                        bp_seen.add((m.group(2), m.group(1)))
+                        blueprints[_bp_clean(m.group(1))] += 1
                 elif DEAD_RE in line:
                     deaths += 1
                     m = DEAD_ZONE_RE.search(line)
@@ -2337,6 +2492,7 @@ def scan_log(path):
         "deaths": deaths, "collisions": collisions, "death_ships": death_ships,
         "qt": qt, "contracts": contracts, "systems": systems,
         "fleet_max": fleet_max, "purchases": purchases, "claims": claims,
+        "blueprints": dict(blueprints),
         "shops": shops, "combat": combat,
         "spend": spend, "commodity_spend": commodity_spend,
         "commodity_buys": commodity_buys,
@@ -2387,6 +2543,9 @@ def blank_patch():
         "death_ships": Counter(),
         "deaths": 0, "collisions": 0, "qt": 0, "fleet_max": 0,
         "purchases": 0, "claims": 0, "shops": Counter(),
+        # blueprints (4.7+): receipts per name, first/last date, sessions seen in, per month
+        "bp_recv": Counter(), "bp_first": {}, "bp_last": {}, "bp_sessions": Counter(),
+        "bp_months": Counter(),
         "spend": 0.0, "commodity_spend": 0.0, "commodity_buys": 0,
         "item_spend": Counter(), "item_qty": Counter(),
         "shop_cat": defaultdict(Counter), "buy_cat": Counter(),
@@ -2468,6 +2627,18 @@ def fold(agg, s):
         # the final bucket is frames slower than 50 ms — the ones you actually feel
         hitch = _wf[2][-1] if len(_wf) > 2 and _wf[2] else 0
         agg["fps"].append((_d, _wf[0], _wf[1], hitch))
+    _bp = s.get("blueprints") or {}
+    if _bp:
+        agg["bp_recv"].update(_bp)
+        for nm in _bp:
+            agg["bp_sessions"][nm] += 1
+        if _d:
+            for nm in _bp:
+                if nm not in agg["bp_first"] or _d < agg["bp_first"][nm]:
+                    agg["bp_first"][nm] = _d
+                if nm not in agg["bp_last"] or _d > agg["bp_last"][nm]:
+                    agg["bp_last"][nm] = _d
+            agg["bp_months"][_d[:7]] += sum(_bp.values())
     agg["net_events"].update(s.get("net_events") or {})
     _bt = s.get("boots") or []
     if _bt:
@@ -2706,6 +2877,14 @@ def finalize(agg):
         nm = purchase_display(cls)
         item_spend_named[nm] += amt
         item_qty_named[nm] += agg["item_qty"][cls]
+    # ---- blueprints (4.7+): one row per distinct name, newest first ----
+    bp_rows = []
+    for nm, n in agg["bp_recv"].items():
+        cat, kind = blueprint_info(nm)
+        bp_rows.append([nm, cat, kind, agg["bp_first"].get(nm), n, agg["bp_sessions"].get(nm, 0)])
+    bp_rows.sort(key=lambda r: (r[3] or "", r[0].lower()), reverse=True)
+    bp_cats = Counter(r[1] for r in bp_rows).most_common()
+    bp_firsts = [r[3] for r in bp_rows if r[3]]
     top_items = [[n, round(item_spend_named[n]), item_qty_named[n]]
                  for n, _ in item_spend_named.most_common(12)]
     # purchase categories: keep the top 8 named buckets, roll the rest into "Other"
@@ -2814,6 +2993,13 @@ def finalize(agg):
         "item_spend": round(agg["spend"] - agg["commodity_spend"]),
         "top_items": top_items,
         "claims": agg["claims"],
+        "blueprints": bp_rows,
+        "bp_unique": len(bp_rows),
+        "bp_receipts": sum(agg["bp_recv"].values()),
+        "bp_repeats": sum(1 for r in bp_rows if r[4] > 1),
+        "bp_cats": bp_cats,
+        "bp_months": sorted(agg["bp_months"].items()),
+        "bp_since": min(bp_firsts) if bp_firsts else None,
         "ships_unique": len(agg["ship_set"]),
         "ships_top": top_ships,
         "ships_flown_total": sum(agg["ships"].values()),
@@ -4243,6 +4429,15 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
   .pasterow input{font-family:var(--font-mono);font-size:11.5px;color:var(--txt);
     background:var(--panel2);border:1px solid var(--line);border-radius:7px;padding:8px 10px}
   .pasterow input:focus{outline:none;border-color:var(--cyan)}
+  /* ---- blueprint library: compact filter pills + search, list rows reuse .tline ---- */
+  .vpill.sm{font-size:12px;padding:6px 11px;border-radius:8px}
+  .vpill.sm .vc{font-size:10px;margin-left:5px;opacity:.75}
+  .bpbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:6px 0 12px}
+  .bpq{font-family:var(--font-mono);font-size:11.5px;color:var(--txt);background:var(--panel2);
+    border:1px solid var(--line);border-radius:8px;padding:7px 10px;flex:1;min-width:190px}
+  .bpq:focus{outline:none;border-color:var(--cyan)}
+  .bpk{font-family:var(--font-mono);font-size:10px;letter-spacing:.04em;color:var(--dim);margin-left:9px}
+  .bpx{color:var(--amber);font-weight:600}
   /* pager under a long list */
   .pager{display:flex;align-items:center;gap:12px;margin-top:12px;flex-wrap:wrap}
   .pager .pgi{font-family:var(--font-mono);font-size:10.5px;letter-spacing:.09em;color:var(--dim)}
@@ -4764,6 +4959,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
       <a data-sec="legacy" data-label="Legacy Combat"><span>⚔️</span> Legacy Combat</a>
       <a data-sec="missions" data-label="Missions"><span>🎯</span> Missions</a>
       <a data-sec="economy" data-label="Economy"><span>💰</span> Economy</a>
+      <a data-sec="blueprints" data-label="Blueprints"><span>📐</span> Blueprints</a>
       <a data-sec="activity" data-label="Activity"><span>📆</span> Activity</a>
       <a data-sec="system" data-label="Your Machine"><span>🖥️</span> Your Machine</a>
       <a data-sec="stability" data-label="Stability &amp; Crashes"><span>🩺</span> Stability<i class="navlive" id="navLive" title="CSR is watching your logs"></i></a>
@@ -5041,7 +5237,8 @@ const ICON = {
   stability:_SVG('<rect x="2.8" y="4.4" width="18.4" height="12.8" rx="2.2"/><path d="M6 11.4h2.4l1.5-3.2 2.4 6.4 1.6-3.2H18"/><path d="M8.8 20.4h6.4"/><path d="M12 17.2v3.2"/>'),
   bell:_SVG('<path d="M18 16.4H6l1.5-2.3V10a4.5 4.5 0 019 0v4.1z"/><path d="M10.2 19a1.9 1.9 0 003.6 0"/><path d="M12 5.5V3.6"/>'),
   star:_SVG('<path d="M12 3.4l2.6 5.7 6.2.7-4.6 4.2 1.3 6.1L12 17l-5.5 3.1 1.3-6.1L3.2 9.8l6.2-.7z"/>'),
-  starOn:_SVG('<path d="M12 3.4l2.6 5.7 6.2.7-4.6 4.2 1.3 6.1L12 17l-5.5 3.1 1.3-6.1L3.2 9.8l6.2-.7z" fill="currentColor"/>')
+  starOn:_SVG('<path d="M12 3.4l2.6 5.7 6.2.7-4.6 4.2 1.3 6.1L12 17l-5.5 3.1 1.3-6.1L3.2 9.8l6.2-.7z" fill="currentColor"/>'),
+  blueprints:_SVG('<rect x="3.5" y="3.5" width="17" height="17" rx="1.8"/><path d="M3.5 9h17"/><path d="M9 9v11.5"/><path d="M12.5 13h5M12.5 16.5h3.5"/>')
 };
 function icon(name){ return ICON[name]||''; }
 
@@ -5359,6 +5556,7 @@ const SECTIONS = {
   // Kept as an alias so an existing bookmark or in-page link still resolves.
   travel:{title:'Flight & Travel', fn:secFlight, alias:'flight'},
   economy:{title:'Economy', fn:secEconomy},
+  blueprints:{title:'Blueprints', fn:secBlueprints},
   activity:{title:'Activity', fn:secActivity},
   system:{title:'Your Machine', fn:secSystem},
   stability:{title:'Stability & Crashes', fn:secStability},
@@ -5604,6 +5802,76 @@ function secEconomy(v){
     `<div class="note"><b>These aUEC totals are real</b> — Star Citizen writes the price of every shop purchase your client sends (<code>client_price</code>), so this sums what you actually spent on items, ship components, gun magazines, consumables and (yes) whole ships bought for aUEC. What's still <b>not</b> in the log: your <b>balance</b>, <b>earnings</b>, and money from <b>selling</b> — so this is spend, not net worth. <b>What you buy</b> groups every purchase by item category — FPS weapons/armor vs ship weapons/components (decided by the item's weapon type and size class), medical, cargo, ships, etc. — rather than by store, since the internal shop codes aren't reliable storefront brands. <b>Fleet size</b> is your <b>ASOP</b> vehicle list read at a terminal — the ships you can claim/spawn, which includes both pledged (real-money) ships <b>and</b> ships bought with aUEC in-game — not a pledged-only count.</div>`;
   hbars($('#itemBars'), (v.top_items||[]).map(([n,amt,q])=>({label:n, value:amt, disp:auec(amt)+' · ×'+fmt(q), href:wikiURL(n)})));
   hbars($('#catBars'), (v.buy_cats||[]).map(([n,c])=>({label:n, value:c, disp:fmt(c)+' buys'})));
+}
+
+// ---- Blueprints (4.7+) ----
+// The game announces each blueprint you receive as a HUD notification, and that is the
+// ONLY trace it leaves in the client log — there is no ownership list to reconcile
+// against. So this is the set of blueprints CSR has seen you receive, counted once per
+// name, and labelled as exactly that. 25 to a page for the same reason the crash list
+// pages: 200+ rows in a scroll box is a haystack.
+const BP_PAGE=25;
+let bpPage=0, bpCat='all', bpQ='';
+function bpRows(v){
+  let rows=v.blueprints||[];
+  if(bpCat!=='all') rows=rows.filter(r=>r[1]===bpCat);
+  if(bpQ){ const q=bpQ.toLowerCase(); rows=rows.filter(r=>r[0].toLowerCase().includes(q)||(r[2]||'').toLowerCase().includes(q)||r[1].toLowerCase().includes(q)); }
+  return rows;
+}
+function bpListHTML(v){
+  const rows=bpRows(v);
+  if(!rows.length) return `<div class="tline"><div class="tev"><span class="tw" style="color:var(--dim)">${(v.blueprints||[]).length?'Nothing matches that filter.':'No blueprints received in this scope.'}</span></div></div>`;
+  const pages=Math.ceil(rows.length/BP_PAGE); bpPage=Math.min(bpPage,pages-1);
+  const slice=rows.slice(bpPage*BP_PAGE,(bpPage+1)*BP_PAGE);
+  const pad=Array.from({length:Math.max(0,BP_PAGE-slice.length)},
+    ()=>`<div class="tev ghost"><span class="td">&nbsp;</span><span class="tw">&nbsp;</span></div>`).join('');
+  const body=slice.map(([n,cat,kind,first,recv,sess])=>`<div class="tev"><span class="td">${first?ddmm(first):'—'}</span>`+
+    `<span class="tw">${link(wikiURL(n.replace(/"/g,'')),esc(n),'lk')}${kind?`<span class="bpk">${esc(kind)}</span>`:''}</span>`+
+    `<span class="tv">${esc(cat)}${recv>1?` <span class="bpx" title="received ${recv} times across ${sess} session${sess===1?'':'s'}">×${recv}</span>`:''}</span></div>`).join('');
+  const nav=pages>1?`<div class="pager"><button class="foot-link" data-bpg="${bpPage-1}" ${bpPage?'':'disabled'}>← Newer</button>`+
+    `<span class="pgi">${bpPage*BP_PAGE+1}–${bpPage*BP_PAGE+slice.length} of ${fmt(rows.length)}</span>`+
+    `<button class="foot-link" data-bpg="${bpPage+1}" ${bpPage<pages-1?'':'disabled'}>Older →</button></div>`:'';
+  return `<div class="tline">${body}${pad}</div>${nav}`;
+}
+function secBlueprints(v){
+  const car=A().career||{};
+  const all=v.blueprints||[];
+  const cats=v.bp_cats||[];
+  if(bpCat!=='all' && !cats.some(([c])=>c===bpCat)) bpCat='all';   // a filter from another scope may not exist here
+  const K=kpiRow([
+    [icon('blueprints'), fmt(car.bp_unique||0), 'Blueprints owned', 'distinct · all-time on this account'],
+    current==='all' ? [icon('import'), fmt(v.bp_receipts||0), 'Times received', `${fmt(v.bp_repeats||0)} received more than once`]
+                    : [icon('import'), fmt(v.bp_unique||0), 'Received in '+esc(pLabel(current)), `${fmt(v.bp_receipts||0)} notifications`],
+    [icon('overview'), fmt(cats.length), 'Categories', cats.length?esc(cats[0][0])+' is the largest':'—'],
+    v.bp_since ? [icon('day'), ddmm(v.bp_since), 'First blueprint', 'earliest receipt in this scope']
+               : [icon('day'), 'N/A', 'First blueprint', 'not logged before patch 4.7', 'na'],
+  ]);
+  const pills=`<button class="vpill sm ${bpCat==='all'?'on':''}" data-bpc="all">All <span class="vc">${fmt(all.length)}</span></button>`+
+    cats.map(([c,n])=>`<button class="vpill sm ${bpCat===c?'on':''}" data-bpc="${esc(c)}">${esc(c)} <span class="vc">${fmt(n)}</span></button>`).join('');
+  const bar=`<div class="bpbar">${pills}<input class="bpq" id="bpQ" type="search" placeholder="Search blueprints…" value="${esc(bpQ)}" spellcheck="false" autocomplete="off"></div>`;
+  const listTitle = current==='all' ? `Your library <span class="u">— every blueprint you've received, newest first</span>`
+                                     : `Received in ${esc(pLabel(current))} <span class="u">— newest first</span>`;
+  $('#content').innerHTML=metaLine(v)+
+    group(1,'blueprints','Blueprint library','Everything the game has told you it handed over',
+      K+`<div class="card"><h3>${listTitle}</h3>${bar}<div id="bpList">${bpListHTML(v)}</div></div>`)+
+    group(2,'activity','Unlock history','When the blueprints arrived, and what kind',
+      `<div class="grid2">`+cardHTML('Received per month','notifications, not distinct blueprints','bpMonths')+
+      barsCard('By category','distinct blueprints in this scope','bpCats')+`</div>`)+
+    `<div class="note"><b>What this is.</b> Every blueprint Star Citizen has announced to you — the <i>Received Blueprint</i> notification — collected across your logs and counted once per name. <b>What it isn't:</b> an audited inventory. The client log holds <b>no list of what you own</b>; the crafting library is fetched from CIG's servers and never written down, so CSR can only know about blueprints received <b>while a log existed on this PC</b>. Anything unlocked before <b>patch 4.7</b> (when blueprints first appeared in the log), or on another machine whose logs were never imported, is invisible here — treat the count as a floor. A blueprint received again (a duplicate drop) is still one blueprint; <span class="bpx">×2</span> marks the repeats. PTU and Tech-Preview run on a copy of your account, so their libraries are shown separately under those channels. <b>Category</b> comes from the game's own item id where the name resolves to one (about 9 in 10 do); the rest are judged from the name alone.</div>`;
+  const draw=()=>{ const el=$('#bpList'); if(!el) return; el.innerHTML=bpListHTML(v); wire(); };
+  const wire=()=>document.querySelectorAll('#content [data-bpg]').forEach(b=>b.onclick=()=>{
+    bpPage=+b.dataset.bpg; draw();
+    const el=$('#bpList'); if(el) scrollToY(el.getBoundingClientRect().top+window.pageYOffset-160);
+  });
+  // a pill re-renders the whole section (cheap); the search box only redraws the list,
+  // so typing never loses focus
+  document.querySelectorAll('#content [data-bpc]').forEach(b=>b.onclick=()=>{ bpCat=b.dataset.bpc; bpPage=0; secBlueprints(v); });
+  const q=$('#bpQ'); if(q) q.oninput=()=>{ bpQ=q.value; bpPage=0; draw(); };
+  wire();
+  const months=v.bp_months||[];
+  if(months.length) vbars($('#bpMonths'), months.map(([m,n])=>({label:MON[+m.slice(5,7)-1]+' '+m.slice(2,4), full:m, value:n})), {w:560,h:200,rot:months.length>9});
+  else $('#bpMonths').innerHTML='<div style="color:var(--dim);font-size:12px;padding:8px 2px">Nothing in this scope</div>';
+  hbars($('#bpCats'), cats.map(([c,n])=>({label:c, value:n, disp:fmt(n)})));
 }
 
 function secMissions(v){
