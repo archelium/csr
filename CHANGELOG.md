@@ -47,7 +47,37 @@ uses [Semantic Versioning](https://semver.org/) (MAJOR.MINOR.PATCH).
     notification in markup. A first draft anchored on the quote that normally precedes
     the text and lost 15 blueprints to that wrapping. Nothing is anchored on it now, and
     repeats of one notification are deduplicated by its id.
-  - Parser version **12**: the first run after updating re-reads your logs.
+  - Parser version **13**: the first run after updating re-reads your logs.
+
+### Changed
+- **4.10 log format.** Read against the first 4.10 LIVE sessions (build 12545750),
+  every signal CSR depends on was checked line by line against 4.9:
+  - **Inventory requests were renamed** — `<InventoryManagementRequest>` is now
+    `<Inventory Mgmt Request Queued>`, with the request text itself unchanged. Reloads
+    and inventory transfers keyed on the old tag and would have read as zero for every
+    4.10 session; both tags are accepted now.
+  - **Reloads may be gone from the log.** The 4.10 sessions read so far contain no
+    `AmmoRepool` request at all — the request types seen are QueryInventory, Interaction,
+    Store and Move. That matches what players saw on the 4.10 PTU. CSR counts them if
+    they appear; if they don't, the reload figures simply stop growing at 4.9.
+  - **Quantum jumps look gone too.** The whole navigation event family — *Player
+    Selected Quantum Target*, *Calculate Route*, *Quantum Drive Arrived* — is absent
+    from the 4.10 sessions, leaving only routing noise. Not yet confirmed against a
+    session with a known jump. A patch scope with no jumps already shows **N/A** rather
+    than 0, so nothing false is displayed either way.
+  - **Missions are unverified** — the 4.10 sessions took none, so the `<EndMission>`
+    and contract lines had no chance to appear. Mission *generation* lines are present.
+  - Unchanged and confirmed working in 4.10: sessions and playtime, ships flown,
+    weapons drawn and carried, purchases and aUEC spend, fleet size, loot access
+    tokens, the machine profile and launch benchmark, per-session frame statistics,
+    disconnect and front-end events (a drop to the main menu was detected in the second
+    4.10 session with exactly the 4.9 signature), and the HUD notification stream.
+
+### Fixed
+- **The "latest build" could never be 4.10.** CIG rebranded the client's FileVersion
+  from `4.9.188.x` to `1.0.191.x` in 4.10, and CSR picked the numerically largest
+  version as the scope's build — so 4.9.188 would have stayed "latest" for as long as
+  the archive existed. The build shown is now the most recent session's.
 
 ## [1.3.0] — 2026-07-28
 

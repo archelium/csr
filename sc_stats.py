@@ -48,7 +48,7 @@ CSR_CONTACT = "support@archelium.com"      # publisher/contact (archelium.com)
 # Bump whenever scan_log() learns to extract something new or fixes an extraction bug.
 # A quick refresh reuses archived sessions only when they were parsed by THIS version,
 # so improved parsing always re-reads old logs instead of silently keeping stale numbers.
-PARSER_VERSION = 12
+PARSER_VERSION = 13
 
 
 # --------------------------------------------------------------------------- #
@@ -2407,12 +2407,17 @@ def scan_log(path):
                 # write "Queued Request[N] Type[X] for 'handle'". The <InventoryManagement‐
                 # Request> tag carrying a Source[itemclass] appears exactly ONCE per request
                 # in both, so it is the format-agnostic way to count each action a single time.
-                elif "<InventoryManagementRequest>" in line and "AmmoRepool" in line:
+                # 4.10 renamed the tag: <InventoryManagementRequest> became
+                # <Inventory Mgmt Request Queued>, with the "Queued Request[N] Type[X] …
+                # Source[class]" text unchanged. Both are accepted; the 4.10 sessions read
+                # so far show no AmmoRepool requests at all, so reloads may simply no
+                # longer be logged — if they are, this still counts them.
+                elif ("<InventoryManagementRequest>" in line or "<Inventory Mgmt Request Queued>" in line) and "AmmoRepool" in line:
                     m = AMMO_RE.search(line)
                     if m:
                         # magazine class -> weapon class (drop the trailing _mag)
                         reloads[re.sub(r"_mag$", "", m.group(1))] += 1
-                elif "<InventoryManagementRequest>" in line and "Type[Move]" in line:
+                elif ("<InventoryManagementRequest>" in line or "<Inventory Mgmt Request Queued>" in line) and "Type[Move]" in line:
                     if MOVE_RE.search(line):
                         transfers += 1                 # item moved between inventories
                 elif "Requesting access token" in line and "on Inventory[" in line:
@@ -2668,7 +2673,7 @@ def blank_patch():
         "item_spend": Counter(), "item_qty": Counter(),
         "shop_cat": defaultdict(Counter), "buy_cat": Counter(),
         "combat": {"pu": _mk_combat(), "ac": _mk_combat()},
-        "first": None, "last": None, "build": None,
+        "first": None, "last": None, "build": None, "build_at": None,
         "limited_sessions": 0, "limited_seconds": 0.0,
         # machine profile / stability
         "rig_events": [],              # (date, rig) per session, for the spec timeline
@@ -2718,9 +2723,16 @@ def fold(agg, s):
     agg["ship_events"].update(s.get("ship_events", {}))   # control-token count (≈ flights)
     for mid, ctype in s["missions"].items():
         agg["missions"][mid] = ctype          # last completion type wins
+    # The build shown for a scope is the one from its most RECENT session. It used to be
+    # the numerically largest version string, which broke in 4.10 when CIG rebranded the
+    # client's FileVersion from 4.9.188.x to 1.0.191.x — a numeric compare would have
+    # pinned "4.9.188" as the latest build for as long as the archive existed.
     b = s.get("build")
-    if b and (not agg.get("build") or _ver_tuple(b) > _ver_tuple(agg["build"])):
-        agg["build"] = b
+    if b:
+        st = s.get("start")
+        if not agg.get("build") or (st and (agg.get("build_at") is None or st > agg["build_at"])):
+            agg["build"] = b
+            agg["build_at"] = st or agg.get("build_at")
     agg["weapons"].update(s["weapons"])
     agg["reloads"].update(s.get("reloads", {}))
     agg["carried"].update(s.get("carried", {}))

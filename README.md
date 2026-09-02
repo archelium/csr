@@ -7,7 +7,7 @@ patch and by account.
 
 Pure Python **standard library** (no pip installs to run from source).
 
-**Patch coverage — tested on 4.1 → 4.9** (July 2026). CSR reads the version out of each
+**Patch coverage — tested on 4.1 → 4.10** (September 2026; 4.10 from its first LIVE sessions — the changelog lists what is still unconfirmed there). CSR reads the version out of each
 log rather than working from a fixed list, so **older patches will often work too**, and
 newer ones should. Neither is tested: Star Citizen changes its log format between
 builds, so expect gaps or misparsed figures outside that range — and please
