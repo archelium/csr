@@ -22,11 +22,12 @@ builds, so expect gaps or misparsed figures outside that range — and please
 
 ### Stability
 
-Crashes named in the game's own words, a full crash history, and **drops to the main
-menu** — the "it booted me for no reason" moment, which Star Citizen records as *you*
-asking to disconnect, and which nothing else counts.
+Crashes named in the game's own words, a full crash history, and **returns to the main
+menu mid-session** — the "it booted me for no reason" moment, which Star Citizen records
+as *you* asking to disconnect, and which nothing else counts. Since the 2026 builds a
+deliberate *Exit to menu* leaves the same trace, so CSR counts both and says so.
 
-![Stability — crash analysis and drops to the main menu](docs/img/stability.png)
+![Stability — crash analysis and returns to the main menu](docs/img/stability.png)
 
 ### Your Machine
 
@@ -163,10 +164,11 @@ Patch* to filter to that patch (and *↩ View career* to reset).
   - **Crash analysis** naming the fault in the game's own words, **every crash listed**
     (paged, newest first, with times), and a **Copy a bug report** button that formats
     build, exception, crash digest, memory and rig for an Issue Council filing
-  - **Dropped to the main menu** — the "it just booted me for no reason" moment, counted
+  - **Back to the main menu** — the "it just booted me for no reason" moment, counted
     for the first time. Star Citizen logs it as *you* asking to disconnect, which is why
-    nothing has ever counted it; CSR separates it from a real quit by what the client did
-    first, and reports the rate per 10 hours played with a by-month trend
+    nothing has ever counted it. Since the 2026 builds a deliberate *Exit to menu* looks
+    identical in the log, so the figure includes both, is labelled that way, and is
+    reported as a rate per 10 hours played with a by-month trend
   - How your sessions **ended**, per patch
 - **Live crash alerts** — while CSR is running it watches your log and pops an alert on
   the dashboard within seconds of a crash or a genuine disconnect, saying what broke and

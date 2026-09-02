@@ -48,7 +48,7 @@ CSR_CONTACT = "support@archelium.com"      # publisher/contact (archelium.com)
 # Bump whenever scan_log() learns to extract something new or fixes an extraction bug.
 # A quick refresh reuses archived sessions only when they were parsed by THIS version,
 # so improved parsing always re-reads old logs instead of silently keeping stale numbers.
-PARSER_VERSION = 13
+PARSER_VERSION = 14
 
 
 # --------------------------------------------------------------------------- #
@@ -980,9 +980,10 @@ def watch_tick():
         _pend = _WATCH["boot_pending"].get(label)
         if _pend and now - _pend[0] >= BOOT_TAIL_GAP:
             _WATCH["boot_pending"].pop(label, None)
-            _push_event("boot", "warn", f"Dropped to the main menu — {label}",
-                        "Star Citizen returned you to the front end mid-session. It logs "
-                        "this as you asking to disconnect, but nothing on your side did.",
+            _push_event("boot", "warn", f"Back to the main menu — {label}",
+                        "Star Citizen returned you to the front end mid-session and you carried "
+                        "on. It logs this as you asking to disconnect whether you did or the "
+                        "server dropped you — since the 2026 builds the log cannot tell them apart.",
                         {"test": _pend[1]})
         _scan_chunk(chunk.decode("utf-8", "replace"), label)
     # second, independent trigger: SC's crash folder being rewritten
@@ -1397,6 +1398,15 @@ DISCO_RE = re.compile(r'cause=(\d+) reason="([^"]*)"')
 #       another 2 minutes — i.e. the player rejoined and carried on, which is what
 #       makes it a drop rather than the end of the session.
 #  240 of the events that pass (1) and (3) are excluded by (2) as deliberate exits.
+#
+#  The 2026 builds (11010425 onward) broke signal (2): the client now writes
+#  RequestQuitLobby ~7 s AFTER the disconnect, on entering the front end, for drops and
+#  deliberate exits alike. All 274 qualifying events in the 2026 archive have no intent
+#  before and a lobby quit after, and a session where the player confirmed a deliberate
+#  "exit to menu" from a server queue looked identical to a drop. No network-fault line
+#  precedes real drops reliably either (14%). So from 2026 the figure is honestly
+#  "returned to the main menu mid-session", drops and exits together, and the UI says
+#  so. The intent test stays: it still holds for 2025-era logs.
 BOOT_INTENT = ("RequestQuitLobby", "DisconnectCmd", "CSystem::Quit")
 BOOT_FRONTEND = "[CSessionManager::RequestFrontEnd]"
 BOOT_DISCO_RE = re.compile(
@@ -2163,7 +2173,11 @@ def scan_log(path):
     ship_events = Counter()            # ship class -> control-token count (≈ flights)
     missions = {}                      # id -> completion type
     weapons = Counter()                # weapon class -> times DRAWN into hand
-    reloads = Counter()                # weapon class -> reloads (from AmmoRepool)
+    reloads = Counter()                # weapon class -> reloads (AmmoRepool to 4.9; magazine port from 4.10)
+    mag_sec = None                     # second currently being counted for attachment bursts
+    mag_att_n = 0                      # AttachmentReceived lines in that second
+    mag_pending = []                   # weapon classes whose magazine attached in that second
+    mag_method = False                 # True once the patch is known to be 4.10+
     carried = Counter()                # weapon class -> times CARRIED (stowed/holstered)
     loot_boxes = Counter()             # container size -> crates looted (unique instances)
     loot_box_ids = set()               # container instance ids (dedup)
@@ -2214,6 +2228,12 @@ def scan_log(path):
     try:
         with open(path, "r", encoding="utf-8", errors="replace") as fh:
             patch, build = detect_patch(fh)
+            # 4.10 dropped the AmmoRepool inventory request that reloads were read from.
+            # From there a reload is the magazine landing on the weapon's magazine port —
+            # counted only when it arrives ALONE, because zone changes re-attach every
+            # worn item in a burst of 20-50 lines in the same second, magazines included.
+            # Checked against a session with six known magazines fired: six, exactly.
+            mag_method = _ver_tuple(patch) >= (4, 10)
             fh.seek(0)
             for line in fh:
                 nlines += 1
@@ -2390,6 +2410,18 @@ def scan_log(path):
                 elif QT_RE in line:
                     qt += 1
                 elif "AttachmentReceived" in line:
+                    if mag_method:
+                        sec = line[1:20]                       # <YYYY-MM-DDTHH:MM:SS
+                        if sec != mag_sec:
+                            if mag_att_n <= 2:                 # a quiet second: those were real swaps
+                                for wcls in mag_pending:
+                                    reloads[wcls] += 1
+                            mag_sec, mag_att_n, mag_pending = sec, 0, []
+                        mag_att_n += 1
+                        if "Port[magazine_attach]" in line and "Status[persistent]" in line:
+                            mm = ATTACH_RE.search(line)
+                            if mm and mm.group(1).strip().endswith("_mag"):
+                                mag_pending.append(mm.group(1).strip()[:-4])
                     mo = ATTACH_ID_RE.search(line)
                     if mo:
                         own_ids.add(mo.group(1))       # this entity is gear the player owns
@@ -2607,6 +2639,9 @@ def scan_log(path):
         # itself went down. Kept apart from confirmed crashes rather than merged.
         outcome = "died"
 
+    if mag_method and mag_att_n <= 2:          # the last second of the log
+        for wcls in mag_pending:
+            reloads[wcls] += 1
     return {
         "patch": patch, "build": build, "start": dt0, "dur": dur,
         "ships": ships, "ship_events": ship_events, "missions": missions, "weapons": weapons,
@@ -6632,19 +6667,19 @@ function newcomerVerdict(v, oc, rated, thin){
   }
   return callout(icon('profile'), s);
 }
-// ---- dropped to the main menu ----
+// ---- back to the main menu ----
 // The thing players describe as "it just booted me to the menu for no reason". Star
 // Citizen records it as the PLAYER asking to disconnect, which is why it has never
-// shown up in any stat: it is filed under normal chatter. See BOOT_DISCO_RE for how
-// it is told apart from an actual quit.
+// shown up in any stat. Since the 2026 builds a deliberate exit to menu leaves the SAME
+// trace, so this counts both and is labelled that way — see BOOT_DISCO_RE.
 function bootsHTML(v){
   const b=v.boots;
-  if(!b) return `<div class="card"><div class="empty">No drops to the main menu in this scope. `+
-    `CSR looks for a server-side disconnect that puts you back in the front end while `+
-    `you are still playing.</div></div>`;
+  if(!b) return `<div class="card"><div class="empty">No mid-session returns to the main menu in this scope. `+
+    `CSR looks for a disconnect that puts you back in the front end while you are still `+
+    `playing, followed by more play.</div></div>`;
   const rate=b.per10h!=null ? b.per10h.toFixed(2) : '—';
   const kpis=kpiRow([
-    [icon('warning'), fmt(b.n), 'Drops to the menu', 'server ended the session, not you'],
+    [icon('warning'), fmt(b.n), 'Returns to the menu', 'server drops and exits to menu, together'],
     [icon('time'), rate, 'Per 10 hours played', 'the rate is what to compare'],
     [icon('profile'), b.session_pct+'%', 'Sessions affected', `${fmt(b.sessions)} of your sessions`],
   ]);
@@ -6670,15 +6705,19 @@ function bootsHTML(v){
   // bars end up as slivers.
   const trend=(b.trend||[]).length>1
     ? `<div style="margin-top:16px">`+
-      barsCard('Drops per 10 hours played','by month — quiet months shown at zero','bootTrend')+
+      barsCard('Returns to the menu per 10 hours played','by month — quiet months shown at zero','bootTrend')+
       `</div>`
     : '';
   return kpis+
     callout(icon('satellite'),
-      `Star Citizen logs these as <b>“Player requested disconnect”</b> — the same line it `+
-      `writes when you quit on purpose. That is why nothing has ever counted them. CSR `+
-      `separates them by what the client did: when <b>you</b> leave, it asks first; when `+
-      `the server drops you, nothing precedes it and you are back in the game minutes later.`)+
+      `Star Citizen logs every one of these as <b>“Player requested disconnect”</b> — whether the `+
+      `server dropped you or you chose <i>Exit to menu</i>. Up to the 2025 builds the client wrote `+
+      `its own quit request <b>before</b> a deliberate exit, which let CSR tell the two apart. `+
+      `<b>In every 2026 build that line comes about 7 s <i>after</i> the disconnect, for drops and `+
+      `exits alike</b> — checked across 274 events and one session where the player knew which was `+
+      `which — so the log no longer separates them. What is counted here is every time you were `+
+      `back at the front end mid-session and then kept playing. If you never use <i>Exit to menu</i>, `+
+      `these are all drops; since 4.10 lets you switch shards from the menu, some will be you.`)+
     trend+recent;
 }
 // One renderer, two tabs: `STAB` picks which half of System & Stability to draw.
@@ -6799,7 +6838,7 @@ function secSystem(v, STAB){
       watchHTML())+
     group(2,'bug','Crashes','What Star Citizen said went wrong',
       lastCrashHTML(v)+crashCausesHTML(v)+crashListHTML(v))+
-    group(3,'no','Dropped to the menu','Booted back to the front end while you were playing',
+    group(3,'no','Back to the main menu','Returned to the front end mid-session and carried on — a server drop or an exit to menu',
       bootsHTML(v))+
     group(4,'warning','Session outcomes','How your sessions ended',
       rated ? stabKpis+ctx+newcomerVerdict(v,oc,rated,thin)+stabNote+

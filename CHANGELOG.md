@@ -73,6 +73,25 @@ uses [Semantic Versioning](https://semver.org/) (MAJOR.MINOR.PATCH).
     disconnect and front-end events (a drop to the main menu was detected in the second
     4.10 session with exactly the 4.9 signature), and the HUD notification stream.
 
+### Corrected
+- **"Dropped to the main menu" is now "Back to the main menu", and says what it counts.**
+  1.3.0 separated a server drop from a deliberate exit by whether the client had written
+  its own quit request in the 20 s before the disconnect. That held for the 2025 logs it
+  was built on. In every 2026 build the client writes that line about 7 s *after* the
+  disconnect, on entering the front end — for drops and deliberate exits alike. Checked
+  across all 274 qualifying events in the archive, and against a session where the
+  player knew which was which: a deliberate *Exit to menu* from a server queue looked
+  identical to a drop. No network-fault line precedes real drops reliably either (14%
+  of them). So the count now openly includes deliberate exits followed by a rejoin, and
+  the 1.3.0 figures (473 drops, 19.5% of sessions) should be read the same way. If you
+  never use *Exit to menu*, nothing changes; since 4.10 lets you switch shards from the
+  menu, some of yours will be you.
+- **Reloads from 4.10 onward** are read from the magazine landing on the weapon's
+  magazine port, counted only when it arrives alone — a zone change re-attaches every
+  worn item in a burst of 20-50 lines, magazines included. Checked against a session
+  with six known magazines fired: six, exactly. 4.1-4.9 keep their original method.
+  Parser version **14**.
+
 ### Fixed
 - **The "latest build" could never be 4.10.** CIG rebranded the client's FileVersion
   from `4.9.188.x` to `1.0.191.x` in 4.10, and CSR picked the numerically largest
