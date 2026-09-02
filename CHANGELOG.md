@@ -9,17 +9,31 @@ uses [Semantic Versioning](https://semver.org/) (MAJOR.MINOR.PATCH).
 
 ### Added
 - **Blueprints.** A new section listing every crafting blueprint the game has handed
-  you. Patch 4.7 introduced them, and the client announces each one as a *Received
-  Blueprint* notification — the only trace they leave in the log. CSR collects those
-  across your whole history, counts each name once, and shows the library with a
-  category filter, a search box, first-received dates and a per-month unlock chart.
+  you — and every one it hasn't. Patch 4.7 introduced them, and the client announces
+  each one as a *Received Blueprint* notification, the only trace they leave in the
+  log. CSR collects those across your whole history, counts each blueprint once, and
+  shows the library with a category filter, a search box, first-received dates and a
+  per-month unlock chart.
+  - **What you're missing.** The SC-Wiki publishes its extraction of the game's
+    crafting data — about 1,600 blueprints — and CSR fetches it (cached, bundled with
+    the exe). An **Owned / Missing** toggle flips the list between what you have and
+    what you don't, each missing entry noting how many missions can unlock it, and a
+    per-category progress card shows owned against the catalogue total. "Missing"
+    means *never seen received in your logs on this PC*, and the catalogue includes
+    blueprints that exist in the files but may not be obtainable yet — so it is a
+    wish-list, not a to-do list. Every entry links to its wiki page.
+  - **The game's own names.** The notification carries whatever your UI displays, so a
+    community language pack (StarStrings, ScCompLangPack) leaves its renamed components
+    in your log: `Mil/1/D Tundra`, `MIL-2A "XL-1"`, `BlackFire Racing Helmet`. CSR
+    matches each back to the real item — by game id first, then by the catalogue's
+    spelling, then by the one entry containing every word of the logged name — and
+    shows the original name, keeping what your UI said as a search alias.
   - **Categories** — armor, FPS weapons, magazines & batteries, ship weapons, ship
-    components, flight suits, mining & salvage — come from the game's own item id where
-    the display name resolves to one (about nine in ten do), and from the name alone
-    otherwise. Ship components carry their class / size / grade, read from the name
-    itself, so even an unrecognised `MIL-2A "JS-400"` lands in the right place.
-    Every row also carries a short *kind* — *Energy Pistol*, *Heavy · Arms*, *Laser cannon ·
-    S6*, *Cooler · Civilian · size 0 · grade A* — so the list reads without opening the wiki.
+    components, flight suits, mining & salvage, and for the catalogue also attachments,
+    clothing, medical, food, tools and flair — come from the game's item id, so owned
+    and missing are classified identically. Every row carries a short *kind* — *Energy
+    Pistol*, *Heavy · Arms*, *Laser cannon · S6*, *Cooler · S0* — so the list reads
+    without opening the wiki.
   - **Honest about its limits.** There is **no ownership list in the log** — the
     crafting library is fetched from CIG's servers and never written down — so the
     count is a floor, not an inventory. Blueprints received before 4.7, or on a PC
@@ -29,10 +43,10 @@ uses [Semantic Versioning](https://semver.org/) (MAJOR.MINOR.PATCH).
   - Names that contain a quoted skin — `Atzkav "Mirage" Sniper Rifle` — are read in
     full. A first draft stopped at the inner quote and silently merged every skin of a
     gun into one entry; the difference was 217 blueprints versus the real 229.
-  - Two builds (May–June 2026) wrap the whole notification in text markup, so the
-    quote that normally precedes *Received Blueprint* precedes a tag instead; a first
-    draft anchored on that quote and lost 15 blueprints. Nothing is anchored on it now,
-    and repeats of one notification are deduplicated by its id.
+  - Language packs also add a `[BP]` badge and, in some versions, wrap the whole
+    notification in markup. A first draft anchored on the quote that normally precedes
+    the text and lost 15 blueprints to that wrapping. Nothing is anchored on it now, and
+    repeats of one notification are deduplicated by its id.
   - Parser version **12**: the first run after updating re-reads your logs.
 
 ## [1.3.0] — 2026-07-28

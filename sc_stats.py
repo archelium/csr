@@ -491,6 +491,7 @@ def cache_file(name):
 # Resolvers loaded once in main()/serve() with app-data cache paths.
 SHIPS = sc_names.ShipIndex()
 ITEMS = sc_names.ItemIndex()
+BPS = sc_names.BlueprintIndex()
 
 # --------------------------------------------------------------------------- #
 #  Log discovery
@@ -1287,12 +1288,14 @@ CONTRACT_RE = re.compile(r"contract \[([A-Za-z][A-Za-z0-9_]+?)(?:_\d+)?\]")
 FLEET_RE = re.compile(r"Retrieved \d+ entitlements out of (\d+) vehic")
 # Crafting blueprints (4.7+) reach the log ONLY as HUD notifications, and not in one
 # shape: most builds queue each one ("Added notification … [id]") and then log its
-# lifecycle (Next / StartFade / Remove) under <UpdateNotificationItem>. Builds 11875683
-# and 11952564 (May–Jun 2026) wrap the WHOLE string in <EM4>…</EM4> — the quote is
-# followed by markup, not by "Received" — and 15 blueprints vanished when the pattern
-# was anchored on that quote. So nothing is anchored on it, every line form is matched,
-# and receipts are deduplicated by the notification id, which is unique within a
-# session. The name runs to the closing `: " [id]` and may itself contain quotes
+# lifecycle (Next / StartFade / Remove) under <UpdateNotificationItem>. The text is
+# whatever the player's UI shows: community language packs (StarStrings, ScCompLangPack)
+# rename components ("Mil/1/D Tundra", 'MIL-2A "XL-1"'), append a [BP] badge and, in
+# some versions, wrap the WHOLE string in <EM4>…</EM4> — so the quote is followed by
+# markup, not by "Received". 15 blueprints vanished when the pattern was anchored on
+# that quote. So nothing is anchored on it, every line form is matched, and receipts
+# are deduplicated by the notification id, which is unique within a session. The
+# name runs to the closing `: " [id]` and may itself contain quotes
 # (Atzkav "Mirage" Sniper Rifle) — a [^"]* match truncates those to the bare model
 # and silently merges every skin of a gun into one entry.
 BLUEPRINT_RE = re.compile(r'Received Blueprint: (.*?): " \[(\d+)\]')
@@ -1714,8 +1717,8 @@ _BP_SHIPGUN_KIND = (("laserrepeater", "Laser repeater"), ("lasercannon", "Laser 
                     ("repeater", "Repeater"), ("cannon", "Cannon"), ("gatling", "Gatling"))
 _BP_SLOT = (("helmet", "Helmet"), ("backpack", "Backpack"), ("_core", "Core"),
             ("_torso", "Core"), ("_arms", "Arms"), ("_legs", "Legs"), ("jacket", "Jacket"))
-_BP_GUN_WORDS = ("pistol", "rifle", "smg", "lmg", "sniper", "shotgun", "crossbow", "launcher", "railgun")
-_BP_NAME_WPN = re.compile(r"\b(pistol|rifle|smg|lmg|shotgun|crossbow|sniper|railgun|launcher)\b", re.I)
+_BP_GUN_WORDS = ("pistol", "rifle", "smg", "lmg", "hmg", "sniper", "shotgun", "crossbow", "launcher", "railgun")
+_BP_NAME_WPN = re.compile(r"\b(pistol|rifle|smg|lmg|hmg|shotgun|crossbow|sniper|railgun|launcher)\b", re.I)
 _BP_NAME_ARM = re.compile(r"\b(helmet|core|arms|legs|backpack|armor|armour)\b", re.I)
 _BP_NAME_SUIT = re.compile(r"\b(flight suit|flight helmet|racing helmet|racing flight suit|undersuit)\b", re.I)
 _BP_NAME_MAG = re.compile(r"\b(magazine|battery)\b", re.I)
@@ -1743,50 +1746,71 @@ def _bp_reverse_index():
     return _bp_rev
 
 
+_BP_SLOT_WORDS = ("helmet", "backpack", "core", "torso", "arms", "legs")
+
+
+def _bp_slot_of(text):
+    """The armour slot word a name or class id carries, or ''."""
+    t = (text or "").lower()
+    return next((w for w in _BP_SLOT_WORDS if w in t), "")
+
+
 def _bp_resolve(name):
-    """Item class for a blueprint's display name, or None. Tries the name as written,
-    then without a magazine's "(30 cap)" suffix, then a component's bare model name."""
+    """Item class for a blueprint's display name, or None.
+
+    The crafting catalogue is consulted first — its names are the game's own and its
+    classes are the blueprint outputs themselves. The wiki item index comes second, and
+    with a guard: it carries a few mislabelled skins (qrt_specialist_heavy_ARMS_01_01_13
+    is filed as "Antium HELMET Jet"), so a class whose slot word contradicts the name's
+    is refused rather than trusted. Tries the name as written, then without a magazine's
+    "(30 cap)" suffix, then a language-pack component's bare model name."""
+    by_cls, by_name = _bp_catalog_index()
     rev = _bp_reverse_index()
     cands = [name, re.sub(r"\s*\(\d+\s*cap\)\s*$", "", name, flags=re.I)]
     for rx in (_BP_COMP_B, _BP_COMP_A):
         m = rx.match(name)
         if m:
             cands.append(m.group(4))
+    want = _bp_slot_of(name)
+    for c in cands:
+        hit = by_name.get(_bp_norm(c))
+        if hit and len(hit) == 1:
+            return hit[0]["c"]
     for c in cands:
         hit = rev.get(_bp_norm(c))
         if hit:
-            return hit[0]
+            ok = [k for k in hit if not want or not _bp_slot_of(k) or _bp_slot_of(k) == want]
+            if ok:
+                return ok[0]
     return None
 
 
-def blueprint_info(name):
-    """(category, kind) for a blueprint's display name — cached, since finalize() runs
-    once per patch view and the same 200-odd names come round every time."""
-    if name in _bp_cache:
-        return _bp_cache[name]
-    cls = (_bp_resolve(name) or "").lower()
+def _bp_classify(cls, name):
+    """(category, kind) for a blueprint. The item class is the authoritative signal —
+    immune to renaming and to a weapon maker called '…Arms' — and the name is only
+    consulted when there is no class or the class has no tell. Used for owned rows and
+    for the whole catalogue, so both sides of the Owned / Missing toggle agree."""
+    cls = (cls or "").lower()
     cat, kind = "Other", ""
     comp = _BP_COMP_A.match(name) or _BP_COMP_B.match(name)
-    if comp:
-        # the name itself carries class / size / grade — usable even when the id is unknown
+    if comp or any(k in cls for k, _ in _BP_COMP_KIND):
         cat = "Ship components"
-        kind = (f"{_BP_CLASS.get(comp.group(1).lower(), comp.group(1))} · "
-                f"size {comp.group(2)} · grade {comp.group(3).upper()}")
         typ = next((v for k, v in _BP_COMP_KIND if k in cls), "")
-        if typ:
-            kind = typ + " · " + kind
+        sz = re.search(r"_s(\d{1,2})(?=_|$)", cls)
+        bits = [typ] + (["S" + str(int(sz.group(1)))] if sz else [])
+        if comp:   # a language pack put class / grade in the name — worth keeping
+            bits.append(f"{_BP_CLASS.get(comp.group(1).lower(), comp.group(1))} grade {comp.group(3).upper()}")
+        kind = " · ".join(b for b in bits if b)
     elif cls:
-        if any(k in cls for k, _ in _BP_COMP_KIND):
-            cat = "Ship components"
-            kind = next(v for k, v in _BP_COMP_KIND if k in cls)
-        elif "_mag" in cls or "magazine" in cls or "battery" in cls:
+        if "_mag" in cls or "magazine" in cls or "battery" in cls:
             cat = "Magazines & batteries"
-        elif ("mining" in cls and "laser" in cls) or cls.startswith("salvage_"):
+        elif ("mining" in cls and "laser" in cls) or cls.startswith("salvage_") or "mining_pod" in cls or "mining_modules" in cls:
             cat = "Mining & salvage"
-            kind = "Mining laser" if "laser" in cls else "Salvage module"
-        elif "flightsuit" in cls or "undersuit" in cls:
+            kind = ("Mining laser" if "laser" in cls else "Ore pod" if "pod" in cls
+                    else "Mining module" if "modules" in cls else "Salvage module")
+        elif "flightsuit" in cls or "undersuit" in cls or "_suit_" in cls:
             cat = "Flight suits"
-            kind = next((v for k, v in _BP_SLOT if k in cls), "")
+            kind = next((v for k, v in _BP_SLOT if k in cls), "Suit" if "helmet" not in cls else "")
         elif any(k in cls for k, _ in _BP_SLOT) or "_armor" in cls or "armor_" in cls:
             cat = "Armor"
             slot = next((v for k, v in _BP_SLOT if k in cls), "")
@@ -1802,7 +1826,19 @@ def blueprint_info(name):
             cat = "FPS weapons"
             gtype, ammo = sc_names.gun_class_labels(cls, name)
             kind = " ".join(x for x in (ammo, gtype) if x)
-    if cat == "Other":                       # no id, or an id with no tell — judge the name
+        elif any(w in cls for w in ("optics", "scope", "suppressor", "barrel", "_grip", "_stock", "reflex", "holo", "underbarrel")):
+            cat = "Weapon attachments"
+        elif any(w in cls for w in ("medical", "medpen", "medgun", "hemozal", "paramed", "oxypen")):
+            cat = "Medical"
+        elif any(w in cls for w in ("food", "drink", "bottle", "ration", "snack")):
+            cat = "Food & drink"
+        elif any(w in cls for w in ("shirt", "pants", "jacket", "boots", "shoes", "gloves", "_hat", "hat_", "coat", "dress", "skirt", "vest", "hood", "beanie", "scarf", "glasses", "mask")):
+            cat = "Clothing"
+        elif any(w in cls for w in ("multitool", "tractor", "scanner", "cutter", "gadget", "beacon", "flashlight")):
+            cat = "Tools & gadgets"
+        elif cls.startswith("carryable") or "_deco" in cls or "flair" in cls or "plushie" in cls or "poster" in cls:
+            cat = "Flair & decor"
+    if cat == "Other":                       # no class, or a class with no tell — judge the name
         if _BP_NAME_MAG.search(name):
             cat = "Magazines & batteries"
         elif _BP_NAME_MINE.search(name):
@@ -1813,12 +1849,94 @@ def blueprint_info(name):
             cat = "FPS weapons"
         elif _BP_NAME_ARM.search(name):
             cat = "Armor"
-    if not kind:                             # no id to read a kind from — take it off the name
-        mk = re.search(r"\b(Battery|Magazine|Backpack|Helmet|Core|Arms|Legs|Flight Suit|Undersuit)\b", name, re.I)
+    if not kind:                             # nothing to read a kind from — take it off the name
+        mk = re.search(r"\b(Battery|Magazine|Backpack|Helmet|Core|Arms|Legs|Flight Suit|Undersuit|Jacket)\b", name, re.I)
         if mk:
             kind = mk.group(1).title()
-    _bp_cache[name] = (cat, kind)
     return cat, kind
+
+
+_bp_cat_idx = None
+
+
+def _bp_catalog_index():
+    """(by class, by normalised name) over the crafting catalogue, built once."""
+    global _bp_cat_idx
+    if _bp_cat_idx is None:
+        by_cls, by_name = {}, defaultdict(list)
+        for r in (BPS.rows if BPS.ok else []):
+            by_cls[r["c"]] = r
+            by_name[_bp_norm(r["n"])].append(r)
+        _bp_cat_idx = (by_cls, by_name)
+    return _bp_cat_idx
+
+
+def _bp_tokens(s):
+    return set(re.findall(r"[a-z0-9]+", _bp_norm(s)))
+
+
+def _bp_match(name, cls):
+    """The catalogue entry an owned blueprint corresponds to, or None.
+
+    Class first — exact and immune to renaming. Then the name as the catalogue spells
+    it (the item index sometimes hands back a sibling variant's class, e.g. helmet_03
+    for a blueprint whose output is helmet_01). Then the one catalogue entry whose name
+    contains every word of the logged one, which is how a language pack's 'BlackFire
+    Racing Helmet' finds 'Neutrino Racing Helmet BlackFire'. A name that fits several
+    entries is left unmatched rather than guessed."""
+    by_cls, by_name = _bp_catalog_index()
+    if not by_cls:
+        return None
+    if cls and cls.lower() in by_cls:
+        rec = by_cls[cls.lower()]
+        # a class came from the item index, which is occasionally mislabelled — only
+        # believe it if the catalogue's name and the logged name have a word in common
+        if _bp_tokens(name) & _bp_tokens(rec["n"]):
+            return rec
+    for c in (name, re.sub(r"\s*\(\d+\s*cap\)\s*$", "", name, flags=re.I)):
+        hit = by_name.get(_bp_norm(c))
+        if hit and len(hit) == 1:
+            return hit[0]
+    t = _bp_tokens(name)
+    if len(t) >= 2:
+        cands = [r for r in BPS.rows if t <= _bp_tokens(r["n"])]
+        if len(cands) == 1:
+            return cands[0]
+    return None
+
+
+def blueprint_info(name):
+    """(display name, category, kind, catalogue key, class, alias) for a blueprint as the
+    HUD announced it. The display name is the catalogue's — the game's own English,
+    unaffected by whatever language pack the player runs — falling back to the item
+    index, then to the logged text. `alias` is the logged text when it differs, so a
+    search for what the player actually saw still finds the row. Cached per name:
+    finalize() runs once per patch view and the same names come round every time."""
+    if name in _bp_cache:
+        return _bp_cache[name]
+    cls = (_bp_resolve(name) or "").lower()
+    rec = _bp_match(name, cls)
+    if rec:
+        cls = rec["c"]
+    display = (rec["n"] if rec else None) or ((ITEMS.idx or {}).get(cls) if cls else None) or name
+    display = display.replace("\xa0", " ").strip()
+    cat, kind = _bp_classify(cls, name)
+    alias = name if _bp_norm(name) != _bp_norm(display) else ""
+    out = (display, cat, kind, (rec or {}).get("k") or "", cls, alias)
+    _bp_cache[name] = out
+    return out
+
+
+def _bp_catalog_payload():
+    """The whole crafting catalogue for the page, classified the same way owned rows
+    are: [key, name, class, category, kind, default?, unlocking missions]."""
+    if not BPS.ok:
+        return None
+    rows = []
+    for r in BPS.rows:
+        cat, kind = _bp_classify(r["c"], r["n"])
+        rows.append([r["k"], r["n"], r["c"], cat, kind, 1 if r["d"] else 0, r["m"]])
+    return {"version": BPS.version, "n": len(rows), "rows": rows}
 
 
 def _pretty_shop(name, cats=None):
@@ -2878,10 +2996,23 @@ def finalize(agg):
         item_spend_named[nm] += amt
         item_qty_named[nm] += agg["item_qty"][cls]
     # ---- blueprints (4.7+): one row per distinct name, newest first ----
-    bp_rows = []
+    # Two logged spellings of one blueprint (a language pack changing format between
+    # versions) merge into one row once they resolve to the same catalogue entry.
+    bp_merged = {}
     for nm, n in agg["bp_recv"].items():
-        cat, kind = blueprint_info(nm)
-        bp_rows.append([nm, cat, kind, agg["bp_first"].get(nm), n, agg["bp_sessions"].get(nm, 0)])
+        display, cat, kind, key, cls, alias = blueprint_info(nm)
+        k = key or display.lower()
+        row = bp_merged.get(k)
+        first = agg["bp_first"].get(nm)
+        if row is None:
+            bp_merged[k] = [display, cat, kind, first, n, agg["bp_sessions"].get(nm, 0), key, alias]
+        else:
+            row[3] = min(x for x in (row[3], first) if x) if (row[3] or first) else None
+            row[4] += n
+            row[5] += agg["bp_sessions"].get(nm, 0)
+            if alias and alias not in row[7]:
+                row[7] = (row[7] + " / " + alias) if row[7] else alias
+    bp_rows = list(bp_merged.values())
     bp_rows.sort(key=lambda r: (r[3] or "", r[0].lower()), reverse=True)
     bp_cats = Counter(r[1] for r in bp_rows).most_common()
     bp_firsts = [r[3] for r in bp_rows if r[3]]
@@ -3273,6 +3404,7 @@ def build_from_sessions(sessions, fresh_profile=False):
         "ch": ch,
         "generated": datetime.now().strftime("%d-%b-%Y %H:%M"),
         "log_count": total,
+        "bp_catalog": _bp_catalog_payload(),
     }
 
 
@@ -4438,6 +4570,8 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
   .bpq:focus{outline:none;border-color:var(--cyan)}
   .bpk{font-family:var(--font-mono);font-size:10px;letter-spacing:.04em;color:var(--dim);margin-left:9px}
   .bpx{color:var(--amber);font-weight:600}
+  .bph{font-family:var(--font-mono);font-size:10px;color:var(--dim)}
+  .bpsep{width:1px;height:22px;background:var(--line);margin:0 4px}
   /* pager under a long list */
   .pager{display:flex;align-items:center;gap:12px;margin-top:12px;flex-wrap:wrap}
   .pager .pgi{font-family:var(--font-mono);font-size:10.5px;letter-spacing:.09em;color:var(--dim)}
@@ -5807,71 +5941,135 @@ function secEconomy(v){
 // ---- Blueprints (4.7+) ----
 // The game announces each blueprint you receive as a HUD notification, and that is the
 // ONLY trace it leaves in the client log — there is no ownership list to reconcile
-// against. So this is the set of blueprints CSR has seen you receive, counted once per
-// name, and labelled as exactly that. 25 to a page for the same reason the crash list
-// pages: 200+ rows in a scroll box is a haystack.
+// against. Owned rows are the ones CSR has seen you receive. The Missing side comes from
+// the SC-Wiki's extraction of the game data (DATA.bp_catalog, ~1,600 blueprints), so
+// "missing" means "never seen received in your logs on this PC", not "confirmed absent".
+// 25 to a page for the same reason the crash list pages: 1,600 rows in a scroll box is
+// a haystack.
 const BP_PAGE=25;
-let bpPage=0, bpCat='all', bpQ='';
+let bpPage=0, bpCat='all', bpQ='', bpMode='owned';
+const bpSkin = n => (n||'').replace(/\s*"[^"]*"\s*/g,' ').replace(/\s+/g,' ').trim();   // 'Arclight "Midnight" Pistol' -> wiki page for the gun
+function bpOwnedKeys(){
+  // the all-time library of this account — Missing is judged against everything you
+  // own, even while a patch scope narrows the Owned list to what arrived then
+  const s=new Set(); ((A().career||{}).blueprints||[]).forEach(r=>{ if(r[6]) s.add(r[6]); else s.add('n:'+r[0].toLowerCase()); }); return s;
+}
+function bpMissingRows(){
+  const cat=DATA.bp_catalog; if(!cat) return [];
+  const own=bpOwnedKeys();
+  // same shape as an owned row: [name, cat, kind, first, recv, sess, key, alias] + [default, missions]
+  return cat.rows.filter(r=>!own.has(r[0]) && !own.has('n:'+r[1].toLowerCase()))
+    .map(r=>[r[1], r[3], r[4], null, 0, 0, r[0], '', r[5], r[6]])
+    .sort((a,b)=>a[1]===b[1]? a[0].localeCompare(b[0]) : a[1].localeCompare(b[1]));
+}
+function bpBase(v){ return bpMode==='missing' ? bpMissingRows() : (v.blueprints||[]); }
 function bpRows(v){
-  let rows=v.blueprints||[];
+  let rows=bpBase(v);
   if(bpCat!=='all') rows=rows.filter(r=>r[1]===bpCat);
-  if(bpQ){ const q=bpQ.toLowerCase(); rows=rows.filter(r=>r[0].toLowerCase().includes(q)||(r[2]||'').toLowerCase().includes(q)||r[1].toLowerCase().includes(q)); }
+  if(bpQ){ const q=bpQ.toLowerCase(); rows=rows.filter(r=>r[0].toLowerCase().includes(q)||(r[2]||'').toLowerCase().includes(q)||r[1].toLowerCase().includes(q)||(r[7]||'').toLowerCase().includes(q)); }
   return rows;
 }
 function bpListHTML(v){
-  const rows=bpRows(v);
-  if(!rows.length) return `<div class="tline"><div class="tev"><span class="tw" style="color:var(--dim)">${(v.blueprints||[]).length?'Nothing matches that filter.':'No blueprints received in this scope.'}</span></div></div>`;
+  const rows=bpRows(v), base=bpBase(v);
+  if(!rows.length){
+    const msg = !base.length ? (bpMode==='missing' ? 'Nothing missing — or no catalogue to compare against.' : 'No blueprints received in this scope.') : 'Nothing matches that filter.';
+    return `<div class="tline"><div class="tev"><span class="tw" style="color:var(--dim)">${msg}</span></div></div>`;
+  }
   const pages=Math.ceil(rows.length/BP_PAGE); bpPage=Math.min(bpPage,pages-1);
   const slice=rows.slice(bpPage*BP_PAGE,(bpPage+1)*BP_PAGE);
   const pad=Array.from({length:Math.max(0,BP_PAGE-slice.length)},
     ()=>`<div class="tev ghost"><span class="td">&nbsp;</span><span class="tw">&nbsp;</span></div>`).join('');
-  const body=slice.map(([n,cat,kind,first,recv,sess])=>`<div class="tev"><span class="td">${first?ddmm(first):'—'}</span>`+
-    `<span class="tw">${link(wikiURL(n.replace(/"/g,'')),esc(n),'lk')}${kind?`<span class="bpk">${esc(kind)}</span>`:''}</span>`+
-    `<span class="tv">${esc(cat)}${recv>1?` <span class="bpx" title="received ${recv} times across ${sess} session${sess===1?'':'s'}">×${recv}</span>`:''}</span></div>`).join('');
-  const nav=pages>1?`<div class="pager"><button class="foot-link" data-bpg="${bpPage-1}" ${bpPage?'':'disabled'}>← Newer</button>`+
+  const body=slice.map(r=>{
+    const [n,cat,kind,first,recv,sess,key,alias,dflt,missions]=r;
+    const nm=link(wikiURL(bpSkin(n)),esc(n),'lk');
+    const aka=alias?`<span class="bpk" title="as your UI showed it">shown as ${esc(alias)}</span>`:'';
+    if(bpMode==='missing'){
+      const how = dflt ? 'known from the start' : (missions ? `${missions} unlocking mission${missions===1?'':'s'}` : 'no mission source listed');
+      return `<div class="tev"><span class="td" style="color:var(--dim)">missing</span>`+
+        `<span class="tw">${nm}${kind?`<span class="bpk">${esc(kind)}</span>`:''}</span>`+
+        `<span class="tv">${esc(cat)} <span class="bph">· ${how}</span></span></div>`;
+    }
+    return `<div class="tev"><span class="td">${first?ddmm(first):'—'}</span>`+
+      `<span class="tw">${nm}${kind?`<span class="bpk">${esc(kind)}</span>`:''}${aka}</span>`+
+      `<span class="tv">${esc(cat)}${recv>1?` <span class="bpx" title="received ${recv} times across ${sess} session${sess===1?'':'s'}">×${recv}</span>`:''}</span></div>`;
+  }).join('');
+  const nav=pages>1?`<div class="pager"><button class="foot-link" data-bpg="${bpPage-1}" ${bpPage?'':'disabled'}>← ${bpMode==='missing'?'Back':'Newer'}</button>`+
     `<span class="pgi">${bpPage*BP_PAGE+1}–${bpPage*BP_PAGE+slice.length} of ${fmt(rows.length)}</span>`+
-    `<button class="foot-link" data-bpg="${bpPage+1}" ${bpPage<pages-1?'':'disabled'}>Older →</button></div>`:'';
+    `<button class="foot-link" data-bpg="${bpPage+1}" ${bpPage<pages-1?'':'disabled'}>${bpMode==='missing'?'Next':'Older'} →</button></div>`:'';
   return `<div class="tline">${body}${pad}</div>${nav}`;
+}
+// owned / total per category, on one shared scale so the bars are comparable
+function bpProgressHTML(ownedCats, totalCats){
+  const cats=[...new Set([...totalCats.map(c=>c[0]), ...ownedCats.map(c=>c[0])])];
+  const own=Object.fromEntries(ownedCats), tot=Object.fromEntries(totalCats);
+  const rows=cats.map(c=>({c, o:own[c]||0, t:Math.max(tot[c]||0, own[c]||0)})).sort((a,b)=>b.t-a.t);
+  if(!rows.length) return '<div class="empty">None recorded here.</div>';
+  const max=Math.max(1,...rows.map(r=>r.t));
+  return rows.map((r,i)=>`<div class="bar-row"><div class="bar-head"><div class="nm"><span class="rk">${i+1}</span>${esc(r.c)}</div>`+
+    `<div class="vv">${fmt(r.o)} <span class="u">/ ${fmt(r.t)}</span></div></div>`+
+    `<div class="bar-track" style="position:relative"><div class="bar-fill" style="width:${(100*r.t/max).toFixed(1)}%;opacity:.22"></div>`+
+    `<div class="bar-fill" style="width:${(100*r.o/max).toFixed(1)}%;position:absolute;left:0;top:0"></div></div></div>`).join('');
 }
 function secBlueprints(v){
   const car=A().career||{};
-  const all=v.blueprints||[];
-  const cats=v.bp_cats||[];
-  if(bpCat!=='all' && !cats.some(([c])=>c===bpCat)) bpCat='all';   // a filter from another scope may not exist here
+  const catalog=DATA.bp_catalog||null;
+  if(!catalog) bpMode='owned';
+  const owned=v.blueprints||[];
+  const missing=catalog?bpMissingRows():[];
+  const base=bpBase(v);
+  // category pills follow the side you're looking at
+  const catCount={}; base.forEach(r=>{ catCount[r[1]]=(catCount[r[1]]||0)+1; });
+  const cats=Object.entries(catCount).sort((a,b)=>b[1]-a[1]);
+  if(bpCat!=='all' && !cats.some(([c])=>c===bpCat)) bpCat='all';
+  const total=catalog?catalog.n:0, ownedAll=car.bp_unique||0;
+  const pct=total?Math.round(100*ownedAll/total):0;
   const K=kpiRow([
-    [icon('blueprints'), fmt(car.bp_unique||0), 'Blueprints owned', 'distinct · all-time on this account'],
+    catalog ? [icon('blueprints'), `${fmt(ownedAll)} <span class="u">/ ${fmt(total)}</span>`, 'Blueprints owned', `${pct}% of the crafting catalogue · ${esc(String(catalog.version||'').split('-')[0])}`]
+            : [icon('blueprints'), fmt(ownedAll), 'Blueprints owned', 'distinct · all-time on this account'],
     current==='all' ? [icon('import'), fmt(v.bp_receipts||0), 'Times received', `${fmt(v.bp_repeats||0)} received more than once`]
                     : [icon('import'), fmt(v.bp_unique||0), 'Received in '+esc(pLabel(current)), `${fmt(v.bp_receipts||0)} notifications`],
-    [icon('overview'), fmt(cats.length), 'Categories', cats.length?esc(cats[0][0])+' is the largest':'—'],
+    catalog ? [icon('overview'), fmt(missing.length), 'Still missing', 'never seen received in your logs']
+            : [icon('overview'), fmt(cats.length), 'Categories', cats.length?esc(cats[0][0])+' is the largest':'—'],
     v.bp_since ? [icon('day'), ddmm(v.bp_since), 'First blueprint', 'earliest receipt in this scope']
                : [icon('day'), 'N/A', 'First blueprint', 'not logged before patch 4.7', 'na'],
   ]);
-  const pills=`<button class="vpill sm ${bpCat==='all'?'on':''}" data-bpc="all">All <span class="vc">${fmt(all.length)}</span></button>`+
+  const modes = catalog ? `<button class="vpill sm ${bpMode==='owned'?'on':''}" data-bpm="owned">Owned <span class="vc">${fmt(owned.length)}</span></button>`+
+    `<button class="vpill sm ${bpMode==='missing'?'on':''}" data-bpm="missing">Missing <span class="vc">${fmt(missing.length)}</span></button><span class="bpsep"></span>` : '';
+  const pills=`<button class="vpill sm ${bpCat==='all'?'on':''}" data-bpc="all">All <span class="vc">${fmt(base.length)}</span></button>`+
     cats.map(([c,n])=>`<button class="vpill sm ${bpCat===c?'on':''}" data-bpc="${esc(c)}">${esc(c)} <span class="vc">${fmt(n)}</span></button>`).join('');
-  const bar=`<div class="bpbar">${pills}<input class="bpq" id="bpQ" type="search" placeholder="Search blueprints…" value="${esc(bpQ)}" spellcheck="false" autocomplete="off"></div>`;
-  const listTitle = current==='all' ? `Your library <span class="u">— every blueprint you've received, newest first</span>`
-                                     : `Received in ${esc(pLabel(current))} <span class="u">— newest first</span>`;
+  const bar=`<div class="bpbar">${modes}${pills}<input class="bpq" id="bpQ" type="search" placeholder="Search blueprints…" value="${esc(bpQ)}" spellcheck="false" autocomplete="off"></div>`;
+  const listTitle = bpMode==='missing' ? `Not yet in your library <span class="u">— every catalogue blueprint you haven't been seen to receive</span>`
+    : current==='all' ? `Your library <span class="u">— every blueprint you've received, newest first</span>`
+                      : `Received in ${esc(pLabel(current))} <span class="u">— newest first</span>`;
   $('#content').innerHTML=metaLine(v)+
-    group(1,'blueprints','Blueprint library','Everything the game has told you it handed over',
+    group(1,'blueprints','Blueprint library','Everything the game has told you it handed over — and what it hasn\u2019t',
       K+`<div class="card"><h3>${listTitle}</h3>${bar}<div id="bpList">${bpListHTML(v)}</div></div>`)+
-    group(2,'activity','Unlock history','When the blueprints arrived, and what kind',
+    group(2,'activity','Unlock history','When the blueprints arrived, and how far along each category is',
       `<div class="grid2">`+cardHTML('Received per month','notifications, not distinct blueprints','bpMonths')+
-      barsCard('By category','distinct blueprints in this scope','bpCats')+`</div>`)+
-    `<div class="note"><b>What this is.</b> Every blueprint Star Citizen has announced to you — the <i>Received Blueprint</i> notification — collected across your logs and counted once per name. <b>What it isn't:</b> an audited inventory. The client log holds <b>no list of what you own</b>; the crafting library is fetched from CIG's servers and never written down, so CSR can only know about blueprints received <b>while a log existed on this PC</b>. Anything unlocked before <b>patch 4.7</b> (when blueprints first appeared in the log), or on another machine whose logs were never imported, is invisible here — treat the count as a floor. A blueprint received again (a duplicate drop) is still one blueprint; <span class="bpx">×2</span> marks the repeats. PTU and Tech-Preview run on a copy of your account, so their libraries are shown separately under those channels. <b>Category</b> comes from the game's own item id where the name resolves to one (about 9 in 10 do); the rest are judged from the name alone.</div>`;
+      cardHTML(catalog?'Progress by category':'By category', catalog?'owned / in the catalogue':'distinct blueprints in this scope','bpCats')+`</div>`)+
+    `<div class="note"><b>What this is.</b> Every blueprint Star Citizen has announced to you — the <i>Received Blueprint</i> notification — collected across your logs and counted once per blueprint. Names are the game\u2019s own: if you run a language pack (StarStrings, ScCompLangPack) the notification carries <i>its</i> wording, so CSR matches each one back to the real item and shows the original name, keeping what your UI said as a search alias. <b>What it isn\u2019t:</b> an audited inventory. The client log holds <b>no list of what you own</b>; the crafting library is fetched from CIG\u2019s servers and never written down, so CSR can only know about blueprints received <b>while a log existed on this PC</b>. Anything unlocked before <b>patch 4.7</b> (when blueprints first appeared in the log), or on another machine whose logs were never imported, is invisible here — treat the count as a floor. A blueprint received again (a duplicate drop) is still one blueprint; <span class="bpx">×2</span> marks the repeats. PTU and Tech-Preview run on a copy of your account, so their libraries are shown separately under those channels.${catalog?` <b>Missing</b> is measured against the <b>SC-Wiki\u2019s extraction of the game data</b> (${fmt(catalog.n)} blueprints as of ${esc(String(catalog.version||''))}), which includes blueprints that exist in the files but may not be obtainable right now — so it is a wish-list, not a to-do list. "Missing" means <i>never seen received in your logs</i>, nothing stronger.`:''} <b>Category</b> comes from the game\u2019s own item id; a handful of names that resolve to no id are judged from the name alone.</div>`;
   const draw=()=>{ const el=$('#bpList'); if(!el) return; el.innerHTML=bpListHTML(v); wire(); };
   const wire=()=>document.querySelectorAll('#content [data-bpg]').forEach(b=>b.onclick=()=>{
     bpPage=+b.dataset.bpg; draw();
     const el=$('#bpList'); if(el) scrollToY(el.getBoundingClientRect().top+window.pageYOffset-160);
   });
-  // a pill re-renders the whole section (cheap); the search box only redraws the list,
-  // so typing never loses focus
+  // pills re-render the whole section (cheap); the search box only redraws the list, so
+  // typing never loses focus
   document.querySelectorAll('#content [data-bpc]').forEach(b=>b.onclick=()=>{ bpCat=b.dataset.bpc; bpPage=0; secBlueprints(v); });
+  document.querySelectorAll('#content [data-bpm]').forEach(b=>b.onclick=()=>{ bpMode=b.dataset.bpm; bpCat='all'; bpPage=0; secBlueprints(v); });
   const q=$('#bpQ'); if(q) q.oninput=()=>{ bpQ=q.value; bpPage=0; draw(); };
   wire();
   const months=v.bp_months||[];
   if(months.length) vbars($('#bpMonths'), months.map(([m,n])=>({label:MON[+m.slice(5,7)-1]+' '+m.slice(2,4), full:m, value:n})), {w:560,h:200,rot:months.length>9});
   else $('#bpMonths').innerHTML='<div style="color:var(--dim);font-size:12px;padding:8px 2px">Nothing in this scope</div>';
-  hbars($('#bpCats'), cats.map(([c,n])=>({label:c, value:n, disp:fmt(n)})));
+  if(catalog){
+    const totals={}; catalog.rows.forEach(r=>{ totals[r[3]]=(totals[r[3]]||0)+1; });
+    const ownedCats={}; ((car.blueprints)||[]).forEach(r=>{ ownedCats[r[1]]=(ownedCats[r[1]]||0)+1; });
+    $('#bpCats').innerHTML='<div class="bars">'+bpProgressHTML(Object.entries(ownedCats), Object.entries(totals))+'</div>';
+  } else {
+    $('#bpCats').innerHTML='<div class="bars" id="bpCatsBars"></div>';
+    hbars($('#bpCatsBars'), (v.bp_cats||[]).map(([c,n])=>({label:c, value:n, disp:fmt(n)})));
+  }
 }
 
 function secMissions(v){
@@ -7447,6 +7645,11 @@ def load_resolvers():
         cstep(f"munitions database synced — {len(ITEMS.idx):,} entries on file")
     else:
         cwarn("munitions database offline — using curated arms table")
+    BPS.cache_path = cache_file("sc_blueprints.json")
+    if BPS.load():
+        cstep(f"crafting catalogue synced — {len(BPS.rows):,} blueprints ({BPS.version or 'unknown build'})")
+    else:
+        cwarn("crafting catalogue offline — blueprints shown without the missing list")
     _RESOLVERS_LOADED = True
 
 

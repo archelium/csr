@@ -10,6 +10,7 @@ sc_names  —  turn Star Citizen backend class IDs into real in-fiction names.
              name is always reasonable and never fabricated.
 """
 
+import datetime
 import json
 import os
 import re
@@ -190,6 +191,63 @@ class ItemIndex:
         if variants:
             return _skin_strip(min(variants, key=len))
         return None
+
+
+class BlueprintIndex:
+    """Every crafting blueprint in the game, from the SC-Wiki API's extraction of the
+    game data (/api/v2/blueprints — 1,606 rows in 4.10). Kept by the OUTPUT item's class
+    id, so an owned blueprint matches whatever a language pack has renamed the item to.
+
+    The cache holds only what the page needs (key, name, class, default-availability,
+    number of unlocking missions, category id) — ~150 KB rather than the ~1.5 MB the
+    API returns with every ingredient list attached."""
+
+    API = "https://api.star-citizen.wiki/api/v2/blueprints?limit=200&page="
+
+    def __init__(self, cache=None):
+        self.cache_path = cache or os.path.join(SCRIPT_DIR, "sc_blueprints.json")
+        self.rows = []
+        self.version = None
+        self.ok = False
+
+    def load(self, allow_fetch=True):
+        if os.path.isfile(self.cache_path):
+            try:
+                d = json.load(open(self.cache_path, encoding="utf-8"))
+                self.rows, self.version = d.get("rows") or [], d.get("version")
+            except Exception:
+                self.rows = []
+        if not self.rows and allow_fetch:
+            self._fetch()
+        self.ok = bool(self.rows)
+        return self.ok
+
+    def _fetch(self):
+        try:
+            rows, page, last, ver = [], 1, 1, None
+            while page <= last:
+                req = urllib.request.Request(self.API + str(page), headers=_UA)
+                d = json.loads(urllib.request.urlopen(req, timeout=40, context=_SSL).read())
+                for b in d.get("data", []):
+                    name = b.get("output_name")
+                    cls = (b.get("output_class") or "").lower()
+                    # three rows have no name, and CIG's own test/placeholder entries are
+                    # in the data too — none of those is a blueprint anyone can be missing
+                    if not name or not cls or re.search(r"placeholder|test #", name, re.I):
+                        continue
+                    ver = ver or b.get("game_version")
+                    rows.append({"k": b.get("key"), "n": name.replace("\xa0", " ").strip(),
+                                 "c": cls, "d": bool(b.get("is_available_by_default")),
+                                 "m": int(b.get("unlocking_missions_count") or 0),
+                                 "g": (b.get("category_uuid") or "")[:8]})
+                last = d.get("meta", {}).get("last_page", 1)
+                page += 1
+            if rows:
+                self.rows, self.version = rows, ver
+                json.dump({"version": ver, "fetched": datetime.date.today().isoformat(), "rows": rows},
+                          open(self.cache_path, "w", encoding="utf-8"))
+        except Exception as e:
+            print(f"[sc_names] blueprint catalogue fetch failed: {e}")
 
 
 TOOL_MARKERS = ("multitool", "tractor", "medgun", "scanner", "flashlight",

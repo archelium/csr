@@ -64,5 +64,5 @@ desktop.ini
 # ---------------------------------------------------------------------------
 # KEPT (intentionally NOT ignored) so `build_exe.bat` bundles them and a fresh
 # clone builds an exe with data ready (delete-to-refetch still works):
-#   sc_ship_matrix.json   sc_item_names.json   sc_fonts_embed.css   csr.ico
+#   sc_ship_matrix.json   sc_item_names.json   sc_blueprints.json   sc_fonts_embed.css   csr.ico
 # ---------------------------------------------------------------------------

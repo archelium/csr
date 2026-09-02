@@ -10,7 +10,7 @@
 import os
 
 datas = []
-for f in ("sc_ship_matrix.json", "sc_item_names.json", "sc_fonts_embed.css"):
+for f in ("sc_ship_matrix.json", "sc_item_names.json", "sc_blueprints.json", "sc_fonts_embed.css"):
     if os.path.isfile(f):
         datas.append((f, "."))
 
