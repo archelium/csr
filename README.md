@@ -2,8 +2,8 @@
 
 A **career-stats dashboard for Star Citizen**. CSR mines your entire client-log
 history and builds a single, interactive, HUD-styled web page: playtime, ships
-flown, missions, favorite guns, quantum travel, aUEC spent — broken down by
-patch and by account.
+flown, missions, favorite guns, quantum travel, aUEC spent, crafting blueprints —
+broken down by patch and by account.
 
 Pure Python **standard library** (no pip installs to run from source).
 
@@ -18,7 +18,16 @@ builds, so expect gaps or misparsed figures outside that range — and please
 ![Overview — profile, career snapshot and playtime by patch](docs/img/overview.png)
 
 <details>
-<summary><b>More screenshots</b> — Stability, Your Machine, Flight &amp; Travel</summary>
+<summary><b>More screenshots</b> — Blueprints, Stability, Your Machine, Flight &amp; Travel</summary>
+
+### Blueprints
+
+Every crafting blueprint the game has handed you, and every one it hasn't, against the
+full ~1,600-blueprint catalogue. Armour is shown as **sets** — a square per slot, sorted by
+pieces to go, so you can see which set is one drop from complete — ship weapons as
+**S1–S6 ladders**, and components as a **type × size grid**.
+
+![Blueprints — armour sets, ship-weapon ladders and the component grid](docs/img/blueprints.png)
 
 ### Stability
 
@@ -255,7 +264,9 @@ drop a `csr.ico` next to `csr.spec` and rebuild.
 | `Start CSR.bat` | Double-click launcher for the source app. |
 | `sc_*.json`, `sc_fonts_embed.css` | Cached game data / fonts (delete to refetch). |
 | `sc_analyzer.py` | **Deprecated** live death-tracker (kept for reference; not maintained). |
+| `make_release.py` | Assembles the download zip: the exe plus the docs as plain `.txt`. |
 | `tools/make_icon.py` | Draws the chevron mark → `csr.ico`. Developer tool, **not** part of the app: it's the one file needing a package (Pillow), and the generated `.ico` is committed so a clone builds without it. |
+| `tools/make_social.py`, `tools/shoot.py` | Developer tools: the GitHub social-preview card, and the README screenshots (headless Edge over DevTools, standard library only). |
 
 ---
 
