@@ -1752,8 +1752,9 @@ _BP_COMP_KIND = (("cool_", "Cooler"), ("shld_", "Shield generator"), ("powr_", "
                  ("qtank", "Quantum fuel tank"), ("fueltank", "Fuel tank"))
 _BP_SHIPGUN_KIND = (("laserrepeater", "Laser repeater"), ("lasercannon", "Laser cannon"),
                     ("ballisticcannon", "Ballistic cannon"), ("ballisticgatling", "Ballistic gatling"),
-                    ("neutronrepeater", "Neutron repeater"), ("massdriver", "Mass driver"),
-                    ("scattergun", "Scattergun"), ("distortion", "Distortion"),
+                    ("neutronrepeater", "Neutron repeater"), ("neutroncannon", "Neutron cannon"),
+                    ("tachyoncannon", "Tachyon cannon"), ("massdriver", "Mass driver"),
+                    ("tractorbeam", "Tractor beam"), ("scattergun", "Scattergun"), ("distortion", "Distortion"),
                     ("repeater", "Repeater"), ("cannon", "Cannon"), ("gatling", "Gatling"))
 _BP_SLOT = (("helmet", "Helmet"), ("backpack", "Backpack"), ("_core", "Core"),
             ("_torso", "Core"), ("_arms", "Arms"), ("_legs", "Legs"), ("jacket", "Jacket"))
@@ -1967,16 +1968,122 @@ def blueprint_info(name):
     return out
 
 
+# ship-weapon makers, for a family that has no name of its own (Behring's M3A..M8A
+# share nothing but "Cannon"); unknown codes fall back to the code itself
+_BP_SHIP_MAN = {"amrs": "Amon & Reese", "apar": "Apocalypse Arms", "asad": "ASAD", "banu": "Banu",
+                "behr": "Behring", "espr": "Esperia", "gats": "Gallenson Tactical", "grin": "Greycat",
+                "hrst": "Hurston Dynamics", "jokr": "Joker Engineering", "kbar": "Knightbridge Arms",
+                "klwe": "Klaus & Werner", "krig": "Kruger Intergalactic", "kron": "Kroneg",
+                "mxox": "MaxOx"}
+_BP_ARM_SLOTS = ("helmet", "core", "arms", "legs", "backpack")
+_BP_SETSLOT_RE = re.compile(r"\b(Racing Flight Suit|Racing Helmet|Flight Helmet|Flight Suit|Undersuit|Helmet|Core|Arms|Legs|Backpack|Armor|Suit)\b", re.I)
+_BP_FAM_DROP = re.compile(r"^(?:[IVX]+|\d+|Mark|Mk\.?|\(S\d+\)|S\d+)$", re.I)
+_BP_FAM_GENERIC = frozenset(("cannon", "repeater", "gatling", "scattergun", "tractor", "beam", "mass",
+                             "driver", "ballistic", "laser", "series", "distortion", "neutron", "tachyon"))
+
+
+def _bp_set_name(name):
+    return re.sub(r"\s{2,}", " ", _BP_SETSLOT_RE.sub("", name)).strip()
+
+
+def _bp_sets(rows):
+    """Armour sets, read off the class ids: `cds_legacy_armor_heavy_arms_01_01_17` is
+    slot *arms* of set `cds_legacy_armor_heavy_01_01_17` — the pieces of one set share
+    the variant number, so grouping on it holds even where the names don't (the ADP
+    set's helmet is the "Balor HCH"). Flight suits pair helmet and suit by name instead;
+    their variant numbers don't line up. Returns [name, category, weight, pieces] with
+    pieces [[slot index, key, piece name]]; single-piece groups are not sets and are
+    left out."""
+    groups = {}
+    for key, name, cls, cat, kind, _d, _m in rows:
+        low = (cls or "").lower()
+        if cat == "Armor":
+            toks = low.split("_")
+            slot = next((s for s in _BP_ARM_SLOTS if s in toks), None)
+            if not slot:
+                continue
+            g = groups.setdefault(("Armor", "_".join(t for t in toks if t != slot)), [])
+            g.append((_BP_ARM_SLOTS.index(slot), key, name, kind))
+        elif cat == "Flight suits":
+            si = 0 if ("helmet" in low or "helmet" in name.lower()) else 1
+            groups.setdefault(("Flight suits", _bp_set_name(name).lower()), []).append((si, key, name, kind))
+    out = []
+    for (cat, _base), pcs in groups.items():
+        if len(pcs) < 2:
+            continue
+        pcs.sort()
+        # what the non-helmet pieces call themselves, slot word dropped; helmets don't vote
+        names = [_bp_set_name(n) for si, _k, n, _ in pcs if si != 0] or [_bp_set_name(pcs[0][2])]
+        cnt = Counter(names)
+        name = max(cnt, key=lambda x: (cnt[x], len(x)))
+        weight = next((k.split(" \u00b7 ")[0] for _s, _k, _n, k in pcs
+                       if k.split(" \u00b7 ")[0] in ("Light", "Medium", "Heavy")), "")
+        out.append([name, cat, weight, [[si, k, n] for si, k, n, _ in pcs]])
+    out.sort(key=lambda s: (s[1], s[0].lower()))
+    return out
+
+
+def _bp_fam_name(names, maker, kind):
+    """A name for a size family: the words every member shares once the size tells
+    (III, -1, Mark 2, (S1), HV-S1) are dropped. If nothing distinctive survives, the
+    maker fronts it: M3A..M8A become "Behring Cannon"."""
+    if len(names) == 1:
+        return names[0]
+    per = []
+    for n in names:
+        toks = []
+        for t in n.split():
+            t = re.sub(r"-(?:\d+|S\d+|[IVX]+)$", "", t)
+            t = re.sub(r"^\d+-", "", t)
+            if t and not _BP_FAM_DROP.match(t) and t.lower() != "series":
+                toks.append(t)
+        per.append(toks)
+    common = [t for t in per[0] if all(t in p for p in per[1:])]
+    own = [t for t in common if t.strip('"\u201c\u201d').lower() not in _BP_FAM_GENERIC]
+    # a bare model code ("FL", "GT", "NN") isn't a name either — front it with the maker
+    if not own or max(len(t) for t in own) < 4:
+        common = [maker] + (common or [kind or "weapon"])
+    return " ".join(common)
+
+
+def _bp_families(rows):
+    """Ship weapons grouped by class with the size token removed: `klwe_laserrepeater_s1`
+    .. `_s6` is one family, the Hazard-Zone `_s1_mr01` variants another. Returns
+    [name, kind, sizes] with sizes [[size, key, item name]]; one-size families included
+    (the page counts them separately)."""
+    fam = {}
+    for key, name, cls, cat, kind, _d, _m in rows:
+        if cat != "Ship weapons":
+            continue
+        m = re.search(r"_s(\d{1,2})(?=_|$)", cls or "")
+        if not m:
+            continue
+        base = cls[:m.start()] + cls[m.end():]
+        fam.setdefault(base, []).append((int(m.group(1)), key, name, kind))
+    out = []
+    for base, members in fam.items():
+        members.sort()
+        code = base.split("_")[0]
+        maker = _BP_SHIP_MAN.get(code, code.upper())
+        typ = (members[0][3] or "").split(" \u00b7 ")[0]
+        out.append([_bp_fam_name([n for _s, _k, n, _ in members], maker, typ), typ,
+                    [[s, k, n] for s, k, n, _ in members]])
+    out.sort(key=lambda f: f[0].lower())
+    return out
+
+
 def _bp_catalog_payload():
     """The whole crafting catalogue for the page, classified the same way owned rows
-    are: [key, name, class, category, kind, default?, unlocking missions]."""
+    are: [key, name, class, category, kind, default?, unlocking missions] — plus the
+    armour sets and ship-weapon size families the collection board is drawn from."""
     if not BPS.ok:
         return None
     rows = []
     for r in BPS.rows:
         cat, kind = _bp_classify(r["c"], r["n"])
         rows.append([r["k"], r["n"], r["c"], cat, kind, 1 if r["d"] else 0, r["m"]])
-    return {"version": BPS.version, "n": len(rows), "rows": rows}
+    return {"version": BPS.version, "n": len(rows), "rows": rows,
+            "sets": _bp_sets(rows), "fams": _bp_families(rows)}
 
 
 def _pretty_shop(name, cats=None):
@@ -4726,6 +4833,29 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
   .bpx{color:var(--amber);font-weight:600}
   .bph{font-family:var(--font-mono);font-size:10px;color:var(--dim)}
   .bpsep{width:1px;height:22px;background:var(--line);margin:0 4px}
+  /* collection board: armour sets, weapon size ladders, component grid */
+  .bsets{display:flex;flex-direction:column}
+  .bset,.blad{display:flex;gap:12px;align-items:center;padding:7px 2px;border-bottom:1px dashed var(--line);font-size:12.5px}
+  .bset .bsn,.blad .bsn{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .bsl{display:flex;gap:4px;flex:none}
+  .bsq,.bdot{display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border:1px solid var(--dim);
+    font-family:var(--font-mono);font-size:10px;font-style:normal;color:var(--dim);box-sizing:border-box}
+  .bsq{border-radius:3px} .bdot{border-radius:50%;width:17px;height:17px}
+  .bsq.on,.bdot.on{background:var(--cyan);border-color:var(--cyan);color:var(--bg);font-weight:700}
+  .bsq.na,.bdot.na{border-style:dotted;opacity:.3}
+  .bsc{font-family:var(--font-mono);font-size:11px;width:34px;text-align:right;flex:none}
+  .bsgo{font-size:11px;color:var(--amber);width:150px;flex:none;text-align:right;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .bsgo.done{color:var(--green)} .bsgo.dim{color:var(--dim)}
+  .bsets .foot-link{align-self:flex-start;margin-top:8px}
+  .bgrid-wrap{overflow-x:auto}
+  .bgrid{border-collapse:separate;border-spacing:3px;width:100%;font-size:12px}
+  .bgrid th{font-family:var(--font-mono);font-weight:400;font-size:10px;letter-spacing:.08em;color:var(--dim);text-transform:uppercase;padding:4px 6px;text-align:left;white-space:nowrap}
+  .bgrid thead th{text-align:center}
+  .bgrid td{text-align:center;padding:9px 4px;border:1px solid var(--line);border-radius:4px;font-family:var(--font-mono);
+    background:rgba(var(--heat-rgb),calc(var(--f,0)*.5))}
+  .bgrid td b{font-weight:700;color:var(--txt)} .bgrid td span{color:var(--dim);font-size:10px}
+  .bgrid td.full{border-color:var(--cyan)} .bgrid td.na{border-style:dotted;background:transparent}
+  @media (max-width:900px){ .bsgo{display:none} }
   /* pager under a long list */
   .pager{display:flex;align-items:center;gap:12px;margin-top:12px;flex-wrap:wrap}
   .pager .pgi{font-family:var(--font-mono);font-size:10.5px;letter-spacing:.09em;color:var(--dim)}
@@ -6175,6 +6305,70 @@ function bpListHTML(v){
     `<button class="foot-link" data-bpg="${bpPage+1}" ${bpPage<pages-1?'':'disabled'}>${bpMode==='missing'?'Next':'Older'} →</button></div>`:'';
   return `<div class="tline">${body}${pad}</div>${nav}`;
 }
+// ---- the collection board ----
+// A collector's question is not "how far along is Armour" but "which set am I one
+// piece from finishing" — so armour is shown as sets with a square per slot, ship
+// weapons as size ladders (one family per row, S1..S6), and components as a type × size
+// grid. Sets and families come from the catalogue (DATA.bp_catalog.sets / .fams); the
+// page only decides which squares are filled. Singles are not sets and stay in the list.
+let bpSetTab='partial', bpSetAll=false, bpFamAll=false;
+const BP_SLOTS={'Armor':['Helmet','Core','Arms','Legs','Backpack'], 'Flight suits':['Helmet','Suit']};
+function bpBoardHTML(catalog){
+  const own=bpOwnedKeys(); const has=(k,n)=>own.has(k)||own.has('n:'+(n||'').toLowerCase());
+  // --- armour sets
+  const sets=(catalog.sets||[]).map(s=>{ const pcs=s[3].map(p=>({si:p[0],key:p[1],n:p[2],on:has(p[1],p[2])}));
+    const o=pcs.filter(p=>p.on).length; return {name:s[0],cat:s[1],w:s[2],pcs,o,t:pcs.length}; });
+  const B={partial:sets.filter(s=>s.o&&s.o<s.t), complete:sets.filter(s=>s.o===s.t), untouched:sets.filter(s=>!s.o)};
+  B.partial.sort((a,b)=>(a.t-a.o)-(b.t-b.o)||b.o-a.o||a.name.localeCompare(b.name));
+  B.complete.sort((a,b)=>b.t-a.t||a.name.localeCompare(b.name));
+  B.untouched.sort((a,b)=>b.t-a.t||a.name.localeCompare(b.name));
+  if(!B[bpSetTab].length) bpSetTab=B.partial.length?'partial':B.complete.length?'complete':'untouched';
+  const tabs=[['partial','Started'],['complete','Complete'],['untouched','Untouched']].map(([k,l])=>
+    `<button class="vpill sm ${bpSetTab===k?'on':''}" data-bpst="${k}">${l} <span class="vc">${fmt(B[k].length)}</span></button>`).join('');
+  const LIM=24, list=B[bpSetTab], shown=bpSetAll?list:list.slice(0,LIM);
+  const setRow=s=>{ const labels=BP_SLOTS[s.cat]||[];
+    const sq=labels.map((L,i)=>{ const p=s.pcs.filter(x=>x.si===i);
+      if(!p.length) return `<i class="bsq na" title="no ${L.toLowerCase()} in the catalogue for this set"></i>`;
+      return p.map(x=>`<i class="bsq ${x.on?'on':''}" title="${esc(x.n)} — ${x.on?'owned':'missing'}">${L[0]}</i>`).join(''); }).join('');
+    const togo=s.pcs.filter(p=>!p.on).map(p=>labels[p.si]||'').filter(Boolean);
+    const tail= s.o===s.t ? `<span class="bsgo done">complete</span>`
+      : s.o ? `<span class="bsgo" title="${esc(togo.join(', '))}">${esc(togo.join(', '))} to go</span>`
+      : `<span class="bsgo dim">${s.t} pieces</span>`;
+    const sub=[s.w, s.cat==='Flight suits'?'Flight suit':''].filter(Boolean).join(' · ');
+    return `<div class="bset"><span class="bsn">${esc(s.name)}${sub?`<span class="bpk">${esc(sub)}</span>`:''}</span>`+
+      `<span class="bsl">${sq}</span><span class="bsc">${s.o}<span class="u">/${s.t}</span></span>${tail}</div>`; };
+  const more=list.length>LIM?`<button class="foot-link" data-bpsa="1">${bpSetAll?'Show fewer':`Show all ${fmt(list.length)}`}</button>`:'';
+  const setsCard=`<div class="card"><h3>Armour sets <span class="u">— ${fmt(B.complete.length)} complete · ${fmt(B.partial.length)} started · ${fmt(B.untouched.length)} untouched</span></h3>`+
+    `<div class="bpbar">${tabs}</div><div class="bsets">${shown.map(setRow).join('')||'<div class="empty">Nothing here.</div>'}${more}</div></div>`;
+  // --- ship-weapon size ladders
+  const fams=(catalog.fams||[]).map(f=>{ const sz=f[2].map(p=>({s:p[0],key:p[1],n:p[2],on:has(p[1],p[2])}));
+    return {name:f[0],kind:f[1],sz,o:sz.filter(p=>p.on).length,t:sz.length}; });
+  const ladders=fams.filter(f=>f.t>1), singles=fams.filter(f=>f.t===1);
+  const maxS=Math.max(1,...ladders.flatMap(f=>f.sz.map(p=>p.s)));
+  ladders.sort((a,b)=>(b.o/b.t)-(a.o/a.t)||b.o-a.o||b.t-a.t||a.name.localeCompare(b.name));
+  const started=ladders.filter(f=>f.o), rest=ladders.filter(f=>!f.o);
+  const lad=f=>{ const dots=Array.from({length:maxS},(_,i)=>i+1).map(s=>{ const p=f.sz.find(x=>x.s===s);
+      if(!p) return `<i class="bdot na"></i>`;
+      return `<i class="bdot ${p.on?'on':''}" title="${esc(p.n)} — ${p.on?'owned':'missing'}">${s}</i>`; }).join('');
+    return `<div class="blad"><span class="bsn">${esc(f.name)}<span class="bpk">${esc(f.kind)}</span></span><span class="bsl">${dots}</span><span class="bsc">${f.o}<span class="u">/${f.t}</span></span></div>`; };
+  const restH=rest.length?(bpFamAll?rest.map(lad).join(''):'')+`<button class="foot-link" data-bpfa="1">${bpFamAll?'Hide':'Show'} the ${fmt(rest.length)} you haven\u2019t started</button>`:'';
+  const singlesOwned=singles.filter(f=>f.o).length;
+  const ladCard=`<div class="card"><h3>Ship weapons by size <span class="u">— one family per row, S1 to S${maxS}</span></h3>`+
+    `<div class="bsets">${started.map(lad).join('')||'<div class="empty">No ladder started yet.</div>'}${restH}</div>`+
+    (singles.length?`<div class="bph" style="margin-top:10px">+ ${fmt(singles.length)} one-size weapons, ${fmt(singlesOwned)} owned</div>`:'')+`</div>`;
+  // --- component grid
+  const cell={}, types={}, sizes=new Set();
+  catalog.rows.forEach(r=>{ if(r[3]!=='Ship components') return;
+    const parts=(r[4]||'').split(' \u00b7 '); const typ=parts[0]||'Other'; const sz=parts.slice(1).find(p=>/^S\d+$/.test(p))||'\u2014';
+    sizes.add(sz); const c=cell[typ+'|'+sz]=cell[typ+'|'+sz]||{o:0,t:0}; c.t++; if(has(r[0],r[1])) c.o++; types[typ]=(types[typ]||0)+1; });
+  const cols=[...sizes].sort((a,b)=>a==='\u2014'?1:b==='\u2014'?-1:+a.slice(1)-+b.slice(1));
+  const trows=Object.entries(types).sort((a,b)=>b[1]-a[1]).map(([typ])=>`<tr><th>${esc(typ)}</th>`+cols.map(s=>{ const c=cell[typ+'|'+s];
+    if(!c) return `<td class="na"></td>`;
+    return `<td style="--f:${(c.o/c.t).toFixed(2)}" class="${c.o===c.t?'full':''}" title="${esc(typ)} ${s}: ${c.o} of ${c.t} owned"><b>${c.o}</b><span>/${c.t}</span></td>`; }).join('')+'</tr>').join('');
+  const gridCard=`<div class="card"><h3>Ship components <span class="u">— owned / in the catalogue, by type and size</span></h3>`+
+    `<div class="bgrid-wrap"><table class="bgrid"><thead><tr><th></th>${cols.map(s=>`<th>${s}</th>`).join('')}</tr></thead><tbody>${trows}</tbody></table></div></div>`;
+  return setsCard+`<div class="grid2">${ladCard}${gridCard}</div>`;
+}
 // owned / total per category, on one shared scale so the bars are comparable
 function bpProgressHTML(ownedCats, totalCats){
   const cats=[...new Set([...totalCats.map(c=>c[0]), ...ownedCats.map(c=>c[0])])];
@@ -6220,13 +6414,15 @@ function secBlueprints(v){
                       : `Received in ${esc(pLabel(current))} <span class="u">— newest first</span>`;
   $('#content').innerHTML=metaLine(v)+
     group(1,'blueprints','Blueprint library','Everything the game has told you it handed over — and what it hasn\u2019t',
-      K+`<div class="card"><h3>${listTitle}</h3>${bar}<div id="bpList">${bpListHTML(v)}</div></div>`)+
-    group(2,'activity','Unlock history','When the blueprints arrived, and how far along each category is',
+      K+(catalog?`<div id="bpBoard">${bpBoardHTML(catalog)}</div>`:''))+
+    group(2,'overview','Every blueprint','The whole list, searchable — what you have, or what you\u2019re still missing',
+      `<div class="card"><h3>${listTitle}</h3>${bar}<div id="bpList">${bpListHTML(v)}</div></div>`)+
+    group(3,'activity','Unlock history','When the blueprints arrived, and how far along each category is',
       `<div class="grid2">`+cardHTML('Received per month','notifications, not distinct blueprints','bpMonths')+
       cardHTML(catalog?'Progress by category':'By category', catalog?'owned / in the catalogue':'distinct blueprints in this scope','bpCats')+`</div>`)+
     noteFold(
       `Blueprints the game announced to you, counted once each. The log has no ownership list, so this is a minimum.`,
-      `Only the Received Blueprint notice is logged; the library itself sits on CIG\u2019s servers. Blueprints from before 4.7, or from another PC whose logs weren\u2019t imported, won\u2019t appear. Language packs (StarStrings, ScCompLangPack) rename items in the notice; CSR matches them back to the real item and keeps your wording as a search alias. <span class="bpx">\u00d72</span> marks a duplicate drop. PTU and Tech Preview run a copy of your account and get their own libraries.${catalog?` Missing is measured against the SC-Wiki\u2019s extraction of the game data (${fmt(catalog.n)} blueprints, ${esc(String(catalog.version||'').split('-')[0])}), which includes blueprints you can\u2019t get yet — a wish-list, not a to-do list.`:''}`);
+      `Only the Received Blueprint notice is logged; the library itself sits on CIG\u2019s servers. Blueprints from before 4.7, or from another PC whose logs weren\u2019t imported, won\u2019t appear. Language packs (StarStrings, ScCompLangPack) rename items in the notice; CSR matches them back to the real item and keeps your wording as a search alias. <span class="bpx">\u00d72</span> marks a duplicate drop. PTU and Tech Preview run a copy of your account and get their own libraries. Armour sets are read off the game\u2019s item ids (pieces of one set share a variant number), ship-weapon families off the class with the size removed; single pieces aren\u2019t sets and only show in the list.${catalog?` Missing is measured against the SC-Wiki\u2019s extraction of the game data (${fmt(catalog.n)} blueprints, ${esc(String(catalog.version||'').split('-')[0])}), which includes blueprints you can\u2019t get yet — a wish-list, not a to-do list.`:''}`);
   const draw=()=>{ const el=$('#bpList'); if(!el) return; el.innerHTML=bpListHTML(v); wire(); };
   const wire=()=>document.querySelectorAll('#content [data-bpg]').forEach(b=>b.onclick=()=>{
     bpPage=+b.dataset.bpg; draw();
@@ -6238,6 +6434,14 @@ function secBlueprints(v){
   document.querySelectorAll('#content [data-bpm]').forEach(b=>b.onclick=()=>{ bpMode=b.dataset.bpm; bpCat='all'; bpPage=0; secBlueprints(v); });
   const q=$('#bpQ'); if(q) q.oninput=()=>{ bpQ=q.value; bpPage=0; draw(); };
   wire();
+  // the board redraws on its own; nothing else on the page depends on its tabs
+  const board=()=>{ const el=$('#bpBoard'); if(!el||!catalog) return; el.innerHTML=bpBoardHTML(catalog); wireBoard(); };
+  const wireBoard=()=>{
+    document.querySelectorAll('#bpBoard [data-bpst]').forEach(b=>b.onclick=()=>{ bpSetTab=b.dataset.bpst; bpSetAll=false; board(); });
+    document.querySelectorAll('#bpBoard [data-bpsa]').forEach(b=>b.onclick=()=>{ bpSetAll=!bpSetAll; board(); });
+    document.querySelectorAll('#bpBoard [data-bpfa]').forEach(b=>b.onclick=()=>{ bpFamAll=!bpFamAll; board(); });
+  };
+  wireBoard();
   const months=v.bp_months||[];
   if(months.length) vbars($('#bpMonths'), months.map(([m,n])=>({label:MON[+m.slice(5,7)-1]+' '+m.slice(2,4), full:m, value:n})), {w:560,h:200,rot:months.length>9});
   else $('#bpMonths').innerHTML='<div style="color:var(--dim);font-size:12px;padding:8px 2px">Nothing in this scope</div>';

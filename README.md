@@ -152,7 +152,7 @@ Patch* to filter to that patch (and *↩ View career* to reset).
   Commander toggle) — the only builds that still logged combat client-side
 - **Missions** — outcomes, completion rate, mission types, and contracts by name (4.5+)
 - **Economy** — **real aUEC spent**, top items bought, what you buy, cargo & commodities
-- **Blueprints** — every crafting blueprint the game has handed you (4.7+), by category and searchable, plus what you're still missing against the full ~1,600-blueprint catalogue
+- **Blueprints** — every crafting blueprint the game has handed you (4.7+), searchable, plus what you're still missing against the full ~1,600-blueprint catalogue; armour as sets (which one is a piece from complete), ship weapons as S1–S6 ladders, components as a type × size grid
 - **Activity** — playtime by month, weekday×hour heatmap, session-length mix, streaks
 - **Your Machine** — the rig you played on (CPU, GPU + VRAM, memory, driver, renderer,
   Windows build) and when it changed; a **configuration check** that flags measurable

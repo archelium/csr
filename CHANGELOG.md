@@ -28,6 +28,16 @@ uses [Semantic Versioning](https://semver.org/) (MAJOR.MINOR.PATCH).
     matches each back to the real item — by game id first, then by the catalogue's
     spelling, then by the one entry containing every word of the logged name — and
     shows the original name, keeping what your UI said as a search alias.
+  - **The collection board.** A collector's question isn't "how far along is Armour"
+    but "which set am I one piece from finishing" — so the section now opens with
+    **armour sets** (a square per slot, filled or hollow, sorted by pieces to go, with
+    Started / Complete / Untouched tabs), **ship weapons as size ladders** (one family
+    per row, S1 to S6 — Omnisky 6/6, Deadbolt 2/6) and a **ship-component grid** of
+    type × size, each cell owned / in the catalogue. Sets are read off the game's item
+    ids — the pieces of one set share a variant number, which holds even where the
+    names don't (the ADP set's helmet is the *Balor HCH*); flight suits pair helmet and
+    suit by name; weapon families are the class with the size token removed. Single
+    pieces aren't sets and stay in the list, which now sits below the board.
   - **Categories** — armor, FPS weapons, magazines & batteries, ship weapons, ship
     components, flight suits, mining & salvage, and for the catalogue also attachments,
     clothing, medical, food, tools and flair — come from the game's item id, so owned
