@@ -48,25 +48,37 @@ uses [Semantic Versioning](https://semver.org/) (MAJOR.MINOR.PATCH).
     the text and lost 15 blueprints to that wrapping. Nothing is anchored on it now, and
     repeats of one notification are deduplicated by its id.
   - Parser version **13**: the first run after updating re-reads your logs.
+- **Where you've been** (Flight & Travel). Star Citizen writes every HUD notice to the
+  log from patch 4.5 — *Entered microTech Jurisdiction*, *Entering Armistice Zone*,
+  *Hangar Request Completed* — and CSR now reads them: **hangars requested**,
+  **landing-zone visits** (armistice stays ten or more minutes apart), and the
+  **jurisdictions** whose space you entered, with sessions in Pyro's lawless space
+  (Ungoverned, Rough & Ready, People's Alliance) called out. Klescher counts too.
+- **Contracts by name** (Missions). The *Contract Accepted* / *Complete* / *Failed*
+  notices carry the game's own titles — *Combat Gauntlet - Scenario #1*, *Help Protect
+  Site* — so the Missions tab now lists what you actually took and finished, alongside
+  the category view. Language-pack decorations (`[100 Rep]`, `[BP]*`) are stripped.
 
 ### Changed
+- **Quantum jumps now count arrivals, not targets.** *Player Selected Quantum Target*
+  is an intention; *Quantum Drive Arrived — Final Destination* is a jump. Across the
+  2026 archive selections outrun arrivals by about 1.4× (re-targeting, aborted
+  spool-ups), and in a session the player recalled as "two jumps" there were three
+  arrivals — the one to a mission beacon had slipped their mind, the log had not.
+  Expect the figure to drop by roughly a third; targets set are still shown beside it.
 - **4.10 log format.** Read against the first 4.10 LIVE sessions (build 12545750),
   every signal CSR depends on was checked line by line against 4.9:
   - **Inventory requests were renamed** — `<InventoryManagementRequest>` is now
     `<Inventory Mgmt Request Queued>`, with the request text itself unchanged. Reloads
     and inventory transfers keyed on the old tag and would have read as zero for every
     4.10 session; both tags are accepted now.
-  - **Reloads may be gone from the log.** The 4.10 sessions read so far contain no
-    `AmmoRepool` request at all — the request types seen are QueryInventory, Interaction,
-    Store and Move. That matches what players saw on the 4.10 PTU. CSR counts them if
-    they appear; if they don't, the reload figures simply stop growing at 4.9.
-  - **Quantum jumps look gone too.** The whole navigation event family — *Player
-    Selected Quantum Target*, *Calculate Route*, *Quantum Drive Arrived* — is absent
-    from the 4.10 sessions, leaving only routing noise. Not yet confirmed against a
-    session with a known jump. A patch scope with no jumps already shows **N/A** rather
-    than 0, so nothing false is displayed either way.
-  - **Missions are unverified** — the 4.10 sessions took none, so the `<EndMission>`
-    and contract lines had no chance to appear. Mission *generation* lines are present.
+  - **Reloads no longer arrive as `AmmoRepool` requests** — a session with six
+    magazines fired had none. They are read from the weapon's magazine port instead
+    (see *Corrected*).
+  - **Quantum jumps and missions are unchanged.** The first two 4.10 sessions had
+    neither, which read as the events being gone; a session with three jumps and two
+    completed contracts showed the whole navigation family and the mission lifecycle
+    lines exactly as in 4.9.
   - Unchanged and confirmed working in 4.10: sessions and playtime, ships flown,
     weapons drawn and carried, purchases and aUEC spend, fleet size, loot access
     tokens, the machine profile and launch benchmark, per-session frame statistics,
@@ -93,6 +105,11 @@ uses [Semantic Versioning](https://semver.org/) (MAJOR.MINOR.PATCH).
   Parser version **14**.
 
 ### Fixed
+- **A slow log-off counted as a return to the menu.** The rule was "the log kept
+  growing for two minutes after the disconnect", and a player who sat in the front end
+  for 2½ minutes before quitting passed it. A return now counts only if the client
+  then **finished joining a server again**. The live watcher confirms on that join too,
+  instead of on the log growing.
 - **The "latest build" could never be 4.10.** CIG rebranded the client's FileVersion
   from `4.9.188.x` to `1.0.191.x` in 4.10, and CSR picked the numerically largest
   version as the scope's build — so 4.9.188 would have stayed "latest" for as long as
@@ -389,6 +406,13 @@ new players actually ask — *"is it the game, or is it my PC?"*
   archive that is 68 and 41 respectively, previously lumped as 109.
 
 ### Notes on honesty
+- **Kills are still not in the log — checked against a session with known kills.**
+  Three NPC ships and around eight NPCs on foot produced no kill, death or destruction
+  event of any kind in 4.10. The mission objective lines that do exist (*Hostiles
+  Remaining*, *Waves Defeated*, *Defeat Hostile Ships*) are re-pushed on every change,
+  but they tick on spawns and new waves as well as kills, and the number itself is never
+  written — so they are not used as a kill count. Grenade throws and medpen use are not
+  logged either; only equipping them is.
 These were deliberate design choices, not omissions:
 - **Frame rate is a whole-session average**, written once per level rather than sampled
   continuously — a session that ran at 90 FPS in space and 30 in a city averages out in

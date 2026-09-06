@@ -48,7 +48,7 @@ CSR_CONTACT = "support@archelium.com"      # publisher/contact (archelium.com)
 # Bump whenever scan_log() learns to extract something new or fixes an extraction bug.
 # A quick refresh reuses archived sessions only when they were parsed by THIS version,
 # so improved parsing always re-reads old logs instead of silently keeping stale numbers.
-PARSER_VERSION = 14
+PARSER_VERSION = 15
 
 
 # --------------------------------------------------------------------------- #
@@ -927,6 +927,17 @@ def _scan_chunk(text, channel, test=False):
     # yet — so the drop is only PARKED here. watch_tick() raises it once the log has
     # grown again, which is the player back in the game. If they had simply quit, the
     # log stops and the parked drop is discarded when the next session rotates it.
+    # A parked return is confirmed by the client finishing a join to a PU server in a
+    # later chunk — the player is back in. Checked before parking, so a fresh event in
+    # this chunk cannot confirm itself.
+    _pend = _WATCH["boot_pending"].get(channel)
+    if _pend and all(k in text for k in PU_JOIN):
+        _WATCH["boot_pending"].pop(channel, None)
+        _push_event("boot", "warn", f"Back to the main menu — {channel}",
+                    "Star Citizen returned you to the front end mid-session and you carried "
+                    "on. It logs this as you asking to disconnect whether you did or the "
+                    "server dropped you — since the 2026 builds the log cannot tell them apart.",
+                    {"test": _pend[1]})
     if BOOT_FRONTEND in text and BOOT_DISCO_RE.search(text):
         cut = BOOT_DISCO_RE.search(text).start()
         if not any(k in text[max(0, cut - 4000):cut] for k in BOOT_INTENT):
@@ -977,14 +988,10 @@ def watch_tick():
         # A parked drop is confirmed by the log growing again well after it: the
         # player rejoined. Checked BEFORE this chunk is scanned, so a fresh drop in
         # this same chunk doesn't confirm itself.
+        # A parked return that never sees a server join again was a log-off: forget it.
         _pend = _WATCH["boot_pending"].get(label)
-        if _pend and now - _pend[0] >= BOOT_TAIL_GAP:
+        if _pend and now - _pend[0] >= 1200:
             _WATCH["boot_pending"].pop(label, None)
-            _push_event("boot", "warn", f"Back to the main menu — {label}",
-                        "Star Citizen returned you to the front end mid-session and you carried "
-                        "on. It logs this as you asking to disconnect whether you did or the "
-                        "server dropped you — since the 2026 builds the log cannot tell them apart.",
-                        {"test": _pend[1]})
         _scan_chunk(chunk.decode("utf-8", "replace"), label)
     # second, independent trigger: SC's crash folder being rewritten
     cd = crashes_dir()
@@ -1278,6 +1285,28 @@ ATTACH_ID_RE = re.compile(r"AttachmentReceived> Player\[[^\]]+\] Attachment\[[^\
 _GEAR_WORDS = ("_armor_", "_combat_", "_backpack", "_legs", "_core", "_helmet",
                "_utility_", "_flightsuit", "_arms", "_undersuit", "_pants", "_torso")
 QT_RE = "Player Selected Quantum Target - Local"
+# A selected target is an intention; the drive ARRIVING is a jump. Across the 2026
+# archive selections outrun arrivals ~1.4x (re-targeting, aborted spool-ups), and a
+# player who recalled "two jumps" had three arrivals — the one to a mission beacon
+# had slipped their mind. Arrivals are the count; selections are kept as context.
+QT_ARRIVE = "Quantum Drive Arrived - Arrived at Final Destination"
+# HUD notifications (logged since 4.5) — the queue line appears once per notification id.
+# Language packs decorate contract titles ([100 Rep], [BP]*, <EM4>…</EM4>); all stripped.
+NOTIF_RE = re.compile(r'Added notification "(.*?)" \[(\d+)\]')
+JURIS_RE = re.compile(r"^(?:Entered (.+?) Jurisdiction|Journal Entry Added: Jurisdiction: (.+?))\s*$")
+CONTRACT_NOTIF_RE = re.compile(r"^Contract (Accepted|Complete|Failed):\s*(.+?)\s*$")
+PU_JOIN = ('Context Establisher Done', 'gamerules="SC_Default"', 'establisher="Network"')
+LZ_VISIT_GAP = 600           # armistice-zone entries closer than this are one visit
+
+
+def _notif_clean(text):
+    """A HUD notification's text as the player read it, minus markup and language-pack
+    decorations: '<EM4>Help Protect Site [500 Rep] [BP]*</EM4>: ' -> 'Help Protect Site'."""
+    t = re.sub(r"</?EM\d>", "", text or "").replace("\xa0", " ")
+    t = re.sub(r"\[[^\]]*\bRep\]\*?", "", t)
+    t = re.sub(r"\[BP\]\*?", "", t)
+    t = re.sub(r"\s+", " ", t).strip()
+    return t.rstrip(":").strip()
 DEAD_RE = "ActorState] Dead"
 LOGIN_RE = re.compile(r"Handle\[([^\]]+)\]")
 # Fallback for reduced-logging builds (e.g. some 4.10 PTU) that drop the Handle[…]
@@ -1414,7 +1443,8 @@ BOOT_DISCO_RE = re.compile(
     r'[^\n]*?gamerules="SC_Default"')
 BOOT_INTENT_WINDOW = 20      # seconds a quit request stays "recent"
 BOOT_FRONTEND_WINDOW = 15    # seconds allowed between the drop and the menu load
-BOOT_TAIL_GAP = 120          # play must continue this long after, or it was the end
+# (a return to the menu counts only if a PU server join follows it — see PU_JOIN; the old
+#  "log kept growing for 120 s" test also passed a slow log-off)
 #: codes that fire during EVERY normal session — 30010 alone appears ~5× per log.
 #: Alerting on these would bury a real fault in noise, so they are never raised.
 BENIGN_NET_CODES = {"30010", "30016", "30028"}
@@ -2160,6 +2190,18 @@ def detect_patch(fh):
     return (branch or fver), build
 
 
+def _lz_visits(stamps):
+    """Distinct landing-zone visits from armistice-zone entries. The notification fires
+    on every re-entry — walking in and out of a hangar gave twelve in one stay — so
+    entries closer together than LZ_VISIT_GAP are one visit."""
+    n, last = 0, None
+    for t in sorted(stamps):
+        if last is None or (t - last).total_seconds() > LZ_VISIT_GAP:
+            n += 1
+        last = t
+    return n
+
+
 def scan_log(path):
     """Extract one session's stats from a single Game.log file."""
     try:
@@ -2192,7 +2234,16 @@ def scan_log(path):
     venue = "pu"                       # current mode: 'pu' | 'ac' (from gamerules)
     deaths = 0
     collisions = 0
-    qt = 0
+    qt = 0                             # quantum jumps completed (drive arrived)
+    qt_targets = 0                     # quantum targets selected (intentions)
+    hangars = 0                        # 'Hangar Request Completed' notifications
+    juris = Counter()                  # jurisdiction -> times entered (HUD notification)
+    lz_entries = []                    # armistice-zone entry stamps -> visits after dedupe
+    contracts_acc = Counter()          # contract display name -> accepted
+    contracts_done = Counter()         # contract display name -> completed
+    contracts_failed = Counter()
+    hud_n = 0                          # HUD notifications seen at all (era detection)
+    pu_joins = []                      # times the client finished joining a PU server
     fleet_max = 0
     purchases = 0
     spend = 0.0                        # aUEC across item + commodity buys
@@ -2361,6 +2412,10 @@ def scan_log(path):
                 if "Quit" in line or "Disconnect" in line:
                     if any(k in line for k in BOOT_INTENT):
                         boot_intent = parse_dt(p) if p else boot_intent
+                if all(k in line for k in PU_JOIN):
+                    _pj = parse_dt(p) if p else None
+                    if _pj:
+                        pu_joins.append(_pj)
                 # cheap substring gates before any regex
                 if channel is None and "Bin64" in line:      # the Executable: line
                     m = EXE_CHANNEL_RE.search(line)
@@ -2407,8 +2462,31 @@ def scan_log(path):
                         death_ships[m.group(1)] += 1
                 elif COLLISION_RE in line and "PlayerPilot: 1" in line:
                     collisions += 1
-                elif QT_RE in line:
+                elif QT_ARRIVE in line:
                     qt += 1
+                elif QT_RE in line:
+                    qt_targets += 1
+                elif 'Added notification "' in line:
+                    nm = NOTIF_RE.search(line)
+                    if nm:
+                        hud_n += 1
+                        txt = _notif_clean(nm.group(1))
+                        if txt.startswith("Hangar Request Completed"):
+                            hangars += 1
+                        elif txt.startswith("Entering Armistice Zone"):
+                            _lz = parse_dt(p) if p else None
+                            if _lz:
+                                lz_entries.append(_lz)
+                        else:
+                            jm = JURIS_RE.match(txt)
+                            if jm:
+                                juris[(jm.group(1) or jm.group(2)).strip()] += 1
+                            else:
+                                cm = CONTRACT_NOTIF_RE.match(txt)
+                                if cm:
+                                    (contracts_acc if cm.group(1) == "Accepted" else
+                                     contracts_done if cm.group(1) == "Complete" else
+                                     contracts_failed)[cm.group(2)] += 1
                 elif "AttachmentReceived" in line:
                     if mag_method:
                         sec = line[1:20]                       # <YYYY-MM-DDTHH:MM:SS
@@ -2577,9 +2655,10 @@ def scan_log(path):
             dt1 += timedelta(seconds=tz_off)
     # A drop counts only if play carried on afterwards. One that lands within two
     # minutes of the last line is the player quitting, which looks identical.
-    _end = parse_dt(last)
-    boots = [b for b in boots
-             if _end and (_end - b).total_seconds() > BOOT_TAIL_GAP]
+    # A return to the menu counts only if the player then joined a server again. The old
+    # test — "the log kept growing for two minutes" — also passed a slow log-off that sat
+    # in the front end for 2½ minutes before quitting.
+    boots = [b for b in boots if any(j > b for j in pu_joins)]
     boots = [(b + timedelta(seconds=tz_off)).isoformat(timespec="seconds") for b in boots]
 
     dur = 0.0
@@ -2648,7 +2727,11 @@ def scan_log(path):
         "reloads": reloads, "carried": carried,
         "loot_boxes": loot_boxes, "transfers": transfers, "corpse_loots": corpse_loots,
         "deaths": deaths, "collisions": collisions, "death_ships": death_ships,
-        "qt": qt, "contracts": contracts, "systems": systems,
+        "qt": qt, "qt_targets": qt_targets, "contracts": contracts, "systems": systems,
+        "hangars": hangars, "juris": dict(juris), "hud_n": hud_n,
+        "lz_visits": _lz_visits(lz_entries),
+        "contracts_acc": dict(contracts_acc), "contracts_done": dict(contracts_done),
+        "contracts_failed": dict(contracts_failed),
         "fleet_max": fleet_max, "purchases": purchases, "claims": claims,
         "blueprints": dict(blueprints),
         "shops": shops, "combat": combat,
@@ -2699,7 +2782,10 @@ def blank_patch():
         "loot_boxes": Counter(), "transfers": 0, "corpse_loots": 0,
         "contracts": Counter(), "systems": Counter(),
         "death_ships": Counter(),
-        "deaths": 0, "collisions": 0, "qt": 0, "fleet_max": 0,
+        "deaths": 0, "collisions": 0, "qt": 0, "qt_targets": 0, "fleet_max": 0,
+        "hangars": 0, "lz_visits": 0, "hud_n": 0,
+        "juris": Counter(), "juris_sessions": Counter(),
+        "contracts_acc": Counter(), "contracts_done": Counter(), "contracts_failed": Counter(),
         "purchases": 0, "claims": 0, "shops": Counter(),
         # blueprints (4.7+): receipts per name, first/last date, sessions seen in, per month
         "bp_recv": Counter(), "bp_first": {}, "bp_last": {}, "bp_sessions": Counter(),
@@ -2735,6 +2821,17 @@ def fold(agg, s):
     agg["deaths"] += s["deaths"]
     agg["collisions"] += s["collisions"]
     agg["qt"] += s["qt"]
+    agg["qt_targets"] += s.get("qt_targets", 0)
+    agg["hangars"] += s.get("hangars", 0)
+    agg["lz_visits"] += s.get("lz_visits", 0)
+    agg["hud_n"] += s.get("hud_n", 0)
+    _j = s.get("juris") or {}
+    agg["juris"].update(_j)
+    for k in _j:
+        agg["juris_sessions"][k] += 1
+    agg["contracts_acc"].update(s.get("contracts_acc") or {})
+    agg["contracts_done"].update(s.get("contracts_done") or {})
+    agg["contracts_failed"].update(s.get("contracts_failed") or {})
     agg["fleet_max"] = max(agg["fleet_max"], s["fleet_max"])
     agg["purchases"] += s["purchases"]
     agg["claims"] += s["claims"]
@@ -3163,6 +3260,16 @@ def finalize(agg):
         # area — including other players' — so it can't be counted as yours. A scope
         # with no jumps at all therefore means "not recorded", shown as N/A not 0.
         "qt_known": agg["qt"] > 0,
+        "qt_targets": agg["qt_targets"],
+        # ---- HUD-notification metrics (logged from 4.5) ----
+        "hud_known": agg["hud_n"] > 0,
+        "hangars": agg["hangars"],
+        "lz_visits": agg["lz_visits"],
+        "juris": [[k, agg["juris_sessions"][k], agg["juris"][k]]
+                  for k, _ in agg["juris_sessions"].most_common()],
+        "contracts_named": [[n, c, agg["contracts_done"].get(n, 0), agg["contracts_failed"].get(n, 0)]
+                            for n, c in agg["contracts_acc"].most_common(14)],
+        "contracts_named_total": sum(agg["contracts_acc"].values()),
         "fleet_max": agg["fleet_max"],
         "purchases": agg["purchases"],
         "spend": round(agg["spend"]),
@@ -5440,7 +5547,7 @@ function kpiRow(cards){
 function qtTile(v){
   return v.qt_known===false
     ? [icon('space'), 'N/A', 'Quantum jumps', 'not logged before patch 4.4', 'na']
-    : [icon('space'), fmt(v.qt), 'Quantum jumps', 'travel initiated'];
+    : [icon('space'), fmt(v.qt), 'Quantum jumps', v.qt_targets ? `arrivals · ${fmt(v.qt_targets)} targets set` : 'arrivals'];
 }
 // Your ASOP vehicle count only appears in the log from 4.8 ("Retrieved N entitlements
 // out of M vehicules"). Older builds report an "entitlements" figure that counts pledge
@@ -5818,7 +5925,18 @@ function secFlight(v){
       ])+
       barsCard('Systems visited','sessions with location activity there','sysBars')+
       `<div class="note">Systems are read from in-world location names (<b>Stanton, Pyro, Nyx</b> — the only live systems). It reflects sessions where a location in that system appeared in the log; exact per-POI counts and travel distance aren't recorded. <b>Fuel isn't in the client log.</b> Actual refueling (mobiGlas → pad service or docking to a fuel ship) is a <b>server-side</b> transaction — the client only logs a "server-only" error with no amount or cost — so hydrogen/quantum fuel used and refuel spend can't be shown. (Buying <b>fuel pods</b> at a shop is different and does count under Economy, but that's not the same as refueling your ship.)</div>`
-    );
+    )+
+    group(3,'planet','Where you\u2019ve been','Read from the HUD notices the game shows you — jurisdictions, armistice zones, hangar requests',
+      (v.hud_known ? kpiRow([
+        [icon('hall'), fmt(v.hangars||0), 'Hangars requested', 'ASOP hangar calls completed'],
+        [icon('planet'), fmt(v.lz_visits||0), 'Landing-zone visits', 'armistice-zone stays, 10 min apart or more'],
+        [icon('space'), fmt((v.juris||[]).length), 'Jurisdictions', 'whose space you entered'],
+        (()=>{ const p=(v.juris||[]).filter(([k])=>/Ungoverned|Rough & Ready|People/.test(k)).reduce((a,[,s])=>a+s,0);
+               return p ? [icon('warning'), fmt(p), 'Pyro sessions', 'entered Ungoverned / Rough & Ready / People\u2019s Alliance space'] : [icon('warning'), '0', 'Pyro sessions', 'no lawless space entered', 'na']; })(),
+      ])+barsCard('Jurisdictions entered','sessions · total entries','jurisBars')
+      : `<div class="card"><div class="empty">The HUD notices these come from are only in the log from patch 4.5 onward.</div></div>`)+
+      `<div class="note"><b>Where these come from.</b> Star Citizen writes every HUD notice to the log — <i>Entered microTech Jurisdiction</i>, <i>Entering Armistice Zone</i>, <i>Hangar Request Completed</i> — from patch 4.5. A jurisdiction is who owns the space: UEE for open Stanton space, the four corporations for their planets, <i>Ungoverned</i>, <i>Rough &amp; Ready</i> and <i>People\u2019s Alliance</i> for Pyro, <i>Klescher Rehabilitation</i> for prison. Armistice-zone entries fire on every hangar door, so stays closer than ten minutes count once.</div>`)
+  ;
   const shipItems=(v.ships_top||[]).map(([n,c,first,last,to])=>({label:n, full:n, value:c,
     disp:`${fmt(c)} <span class="vv-u">sess</span>`, href:wikiURL(n),
     subHtml: shipMetaHTML(to,first,last)}));
@@ -5827,6 +5945,7 @@ function secFlight(v){
   donut($('#sizeChart'), sz, {big:v.ships_unique, small:'ships'});
   hbars($('#roleBars'), toItems(v.ship_role,'#5bd1e6'));
   hbars($('#sysBars'), toItems(v.systems,'#b98bff'));
+  const jb=$('#jurisBars'); if(jb) hbars(jb, (v.juris||[]).map(([k,s,n])=>({label:k, value:s, disp:`${fmt(s)} <span class="vv-u">sess</span> · ${fmt(n)} entries`})));
 }
 
 function secCombat(v){
@@ -6129,9 +6248,13 @@ function secMissions(v){
   ]);
   $('#content').innerHTML=metaLine(v)+K+
     cardHTML('Outcomes','completed / failed / abandoned','missionChart')+
-    `<div style="margin-top:16px">`+barsCard('Mission types','by contract category','typeBars')+`</div>`;
+    `<div style="margin-top:16px">`+barsCard('Mission types','by contract category','typeBars')+`</div>`+
+    ((v.contracts_named||[]).length ? `<div style="margin-top:16px">`+
+      barsCard('Contracts by name','accepted · completed — as the game titled them (4.5+)','contractBars')+`</div>`+
+      `<div class="note">Contract names come from the <i>Contract Accepted</i> / <i>Contract Complete</i> notices the HUD shows, logged from patch 4.5. Language-pack decorations such as reputation tags are stripped. An accepted contract with no completion here was failed, abandoned, or finished in a session that ended before the notice.</div>` : '');
   donut($('#missionChart'), [{label:'Completed',value:m.complete,color:'#4ade80'},{label:'Failed',value:m.fail,color:'#ff5468'},{label:'Abandoned',value:m.abandon,color:'#f4a92a'}], {big:(m.rate||0)+'%', small:m.total+' total'});
   hbars($('#typeBars'), toItems(v.mission_types,'#4ade80'));
+  const cb=$('#contractBars'); if(cb) hbars(cb, (v.contracts_named||[]).map(([n,a,d,f])=>({label:n, full:n, value:a, disp:`${fmt(a)} <span class="vv-u">acc</span> · ${fmt(d)} done${f?` · ${fmt(f)} failed`:''}`})));
 }
 
 
