@@ -5,7 +5,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and CSR
 uses [Semantic Versioning](https://semver.org/) (MAJOR.MINOR.PATCH).
 
 
-## [Unreleased]
+## [1.4.0] — 2026-09-06
 
 ### Added
 - **Blueprints.** A new section listing every crafting blueprint the game has handed
