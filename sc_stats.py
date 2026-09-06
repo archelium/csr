@@ -4741,6 +4741,12 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
   details.fold>summary:hover{color:var(--txt)}
   details.fold>summary b{color:var(--txt);font-weight:600}
   details.fold>summary .cnt{margin-left:auto;font-family:var(--font-mono);font-size:10px;color:var(--dim)}
+  /* section footnotes: one line, folded detail */
+  details.fold.nf{margin-top:26px;background:transparent;border:0;border-top:1px solid var(--line);border-radius:0;overflow:visible}
+  details.fold.nf>summary{padding:14px 0 0;font-size:11.5px;color:var(--dim);line-height:1.6;align-items:baseline}
+  details.fold.nf>summary .nfm{margin-left:auto;padding-left:12px;font-family:var(--font-mono);font-size:10px;letter-spacing:.09em;color:var(--dim);text-transform:uppercase;flex:none}
+  details.fold.nf[open]>summary .nfm{opacity:.45}
+  details.fold.nf .nfb{padding:10px 0 2px 17px;font-size:11.5px;color:var(--dim);line-height:1.6}
   details.fold .foldbody{padding:2px 13px 11px}
   /* ---- setting level meter ---- */
   .setg2{display:grid;grid-template-columns:repeat(auto-fit,minmax(216px,1fr));gap:8px}
@@ -5801,9 +5807,9 @@ function donut(el, parts, center){
   el.innerHTML=`<div class="donut-wrap">${s}</div>`;
 }
 
-const NOTE = 'Built from your Star Citizen client logs. <b>Playtime, ships, missions, deaths, travel and loadout are real.</b> '+
-  'Kills, K/D and accuracy are <b>not shown — SC no longer writes them to the client log</b> (2026 builds moved combat server-side). '+
-  'A weapon’s <b>“drawn”</b> count is how often you pulled it into your hand (not shots fired); <b>reloads</b> come from ammo-repool events and <b>carried</b> from your stow/holster slots. Armour, weapon attachments and props are excluded from the loadout lists. Ship deaths are the only death type logged.';
+const NOTE = noteFold(
+  `Built from your client logs. Playtime, ships, missions, deaths, travel and loadout are real; kills, K/D and accuracy aren't in the log any more.`,
+  `CIG moved combat server-side in the 2026 builds. A weapon's drawn count is how often you pulled it into your hand, not shots fired. Reloads come from the game's reload events (magazine swaps from 4.10), carried from your stow and holster slots. Armour, attachments and props are left out of the loadout lists. Ship deaths are the only death type logged.`);
 // Patch labels. A numeric version reads "Patch 4.8"; a Tech-Preview feature branch
 // carries no version at all (Branch: scp-crafting) so it is named after the feature
 // it was previewing, and 'unknown' is the catch-all for anything else.
@@ -5831,6 +5837,12 @@ function pBuild(p){
 }
 const scopeLabel = () => current==='all' ? 'entire career' : pLabel(current).toLowerCase();
 function metaLine(v){ return `<div class="patch-meta">${scopeLabel()} · ${v.first?ddmm(v.first):'—'} → ${v.last?ddmm(v.last):'—'} · ${fmt(v.hours)} h · ${fmt(v.sessions)} sessions · ${v.active_days} active days</div>`; }
+// One plain sentence on the page; the detail one click away. Most people only need to
+// know whether to trust the number. The rest can open it.
+function noteFold(line, more){
+  if(!more) return `<div class="note">${line}</div>`;
+  return `<details class="fold nf"><summary>${line}<span class="nfm">more</span></summary><div class="nfb">${more}</div></details>`;
+}
 function callout(icon, html){ return `<div class="callout"><span class="ci">${icon}</span><div>${html}</div></div>`; }
 
 // ==== SECTION RENDERERS ====
@@ -5882,7 +5894,7 @@ function secOverview(v){
     `<div id="patchChart"></div></div>`;
   $('#content').innerHTML = profileHTML()+
     `<div class="row-title">Snapshot <span class="tag">${scopeLabel()}</span></div>`+K+
-    chartCard+showcaseHTML()+`<div class="note">${NOTE}</div>`;
+    chartCard+showcaseHTML()+`${NOTE}`;
   // axis gets the short name; the hover card carries the full name, the build string
   // (a feature preview's only version) and when you played it
   const pfull = k => {
@@ -5924,7 +5936,9 @@ function secFlight(v){
                     : [icon('time'), 'N/A', 'Jumps / hour', `no jump data`, 'na']),
       ])+
       barsCard('Systems visited','sessions with location activity there','sysBars')+
-      `<div class="note">Systems are read from in-world location names (<b>Stanton, Pyro, Nyx</b> — the only live systems). It reflects sessions where a location in that system appeared in the log; exact per-POI counts and travel distance aren't recorded. <b>Fuel isn't in the client log.</b> Actual refueling (mobiGlas → pad service or docking to a fuel ship) is a <b>server-side</b> transaction — the client only logs a "server-only" error with no amount or cost — so hydrogen/quantum fuel used and refuel spend can't be shown. (Buying <b>fuel pods</b> at a shop is different and does count under Economy, but that's not the same as refueling your ship.)</div>`
+      noteFold(
+        `Systems come from location names in the log. Fuel and distance aren't logged.`,
+        `Stanton, Pyro and Nyx are the only live systems; a session counts for one if any location there shows up. Refuelling is a server-side transaction and the client only logs an error with no amount, so fuel used and refuel spend can't be shown. Fuel pods bought at a shop count under Economy — that's a purchase, not a refuel.`)
     )+
     group(3,'planet','Where you\u2019ve been','Read from the HUD notices the game shows you — jurisdictions, armistice zones, hangar requests',
       (v.hud_known ? kpiRow([
@@ -5935,7 +5949,9 @@ function secFlight(v){
                return p ? [icon('warning'), fmt(p), 'Pyro sessions', 'entered Ungoverned / Rough & Ready / People\u2019s Alliance space'] : [icon('warning'), '0', 'Pyro sessions', 'no lawless space entered', 'na']; })(),
       ])+barsCard('Jurisdictions entered','sessions · total entries','jurisBars')
       : `<div class="card"><div class="empty">The HUD notices these come from are only in the log from patch 4.5 onward.</div></div>`)+
-      `<div class="note"><b>Where these come from.</b> Star Citizen writes every HUD notice to the log — <i>Entered microTech Jurisdiction</i>, <i>Entering Armistice Zone</i>, <i>Hangar Request Completed</i> — from patch 4.5. A jurisdiction is who owns the space: UEE for open Stanton space, the four corporations for their planets, <i>Ungoverned</i>, <i>Rough &amp; Ready</i> and <i>People\u2019s Alliance</i> for Pyro, <i>Klescher Rehabilitation</i> for prison. Armistice-zone entries fire on every hangar door, so stays closer than ten minutes count once.</div>`)
+      noteFold(
+        `From the HUD notices the game writes to the log, 4.5 onward.`,
+        `A jurisdiction is who owns the space: UEE for open Stanton space, the four corporations for their planets, Ungoverned, Rough &amp; Ready and People\u2019s Alliance for Pyro, Klescher for prison. Armistice-zone notices fire at every hangar door, so entries within ten minutes count as one visit.`))
   ;
   const shipItems=(v.ships_top||[]).map(([n,c,first,last,to])=>({label:n, full:n, value:c,
     disp:`${fmt(c)} <span class="vv-u">sess</span>`, href:wikiURL(n),
@@ -5954,12 +5970,9 @@ function secCombat(v){
   const lb=v.loot_boxes||{};
   const lootSub=['Small','Medium','Large','Other'].filter(k=>lb[k]).map(k=>fmt(lb[k])+' '+k[0]).join(' · ')||'crates & lockers';
   const info = callout(icon('satellite'),
-    `<b>This is current-patch combat (${scopeLabel()}).</b> Star Citizen’s 2026 builds only write your `+
-    `<b class="ct">ship deaths</b> to the client log — not kills, K/D, accuracy or damage (those moved server-side). `+
-    `So this tab shows <b>how your ship was destroyed</b> and your <b>loadout</b> (guns &amp; tools ranked by how `+
-    `often you drew them into your hand, not shots fired). <b>On-foot / FPS deaths aren’t recorded</b>, so they can’t be shown. `+
-    `Want your old kills &amp; K/D? Those exist only in <b>pre-4.4 patches (4.3 and below)</b> — see `+
-    `<a class="clink" onclick="gotoSec('legacy')">Legacy Combat →</a>.`);
+    `Current-patch combat (${scopeLabel()}). The 2026 builds only log your ship deaths — no kills, K/D or damage, and no on-foot deaths. `+
+    `Loadout is ranked by how often you drew each weapon. Your old kills are under `+
+    `<a class="clink" onclick="gotoSec('legacy')">Legacy Combat</a> →.`);
   $('#content').innerHTML=metaLine(v)+info+
     group(1,'ship','Ship combat','How you lost ships — all the client log records',
       kpiRow([
@@ -5989,7 +6002,7 @@ function secCombat(v){
         [icon('deaths'), fmt(v.corpse_loots||0), 'Corpse loots (approx.)', `gear stripped off NPC bodies`],
       ])
     )+
-    `<div class="note">${NOTE}</div>`;
+    `${NOTE}`;
   hbars($('#gunBars'), toItems(guns.map(w=>[w[0],w[1]]), null, true));
   hbars($('#toolBars'), toItems(tools.map(w=>[w[0],w[1]]), null, true).map(x=>({...x,tool:true})));
   donut($('#causeChart'), [{label:'Collision',value:dc.collision,color:'#ff9147'},{label:'Destroyed / other',value:dc.other,color:'#ff5468'}], {big:v.deaths, small:'ship deaths'});
@@ -6054,13 +6067,9 @@ function secLegacy(v){
     `${label}<span class="vc">${has?fmt(_lgKills(L))+' kills':'no data'}</span></button>`;
   const anyData = puHas || acHas;
   const info = callout(icon('legacy'),
-    `<b>Your real kills, deaths &amp; K/D — but only from pre-4.4 patches (4.3 and below).</b> Those older builds `+
-    `still wrote full combat records to the client log; CIG <b>removed client-side combat logging from 4.4 onward</b>, `+
-    `so 4.4+ (including the current patch) show nothing here — that’s why the `+
-    `<a class="clink" onclick="gotoSec('combat')">Combat</a> tab can only `+
-    `show ship deaths. Use the toggle to separate the two worlds: <b class="ct">Persistent Universe</b> is the real `+
-    `’verse; <b class="ct">Arena Commander</b> is instanced practice/arena, where lopsided scores (reward farming, `+
-    `feeding a friend) live — kept out of your PU record.`);
+    `Real kills, deaths and K/D — but only from 4.3 and earlier; CIG stopped logging combat client-side in 4.4, which is why `+
+    `<a class="clink" onclick="gotoSec('combat')">Combat</a> can only show ship deaths. The toggle keeps the `+
+    `<b class="ct">Persistent Universe</b> apart from <b class="ct">Arena Commander</b>, where scores get lopsided by design.`);
   const prefix=`<div class="row-title">Legacy combat <span class="tag">real PvP / PvE — pre-4.4 patches (4.3 &amp; below)</span></div>`+
     (anyData ? info : '')+
     `<div class="vtoggle">${pill('pu',icon('space')+' Persistent Universe',pu,puHas)}${pill('ac',icon('combat')+' Arena Commander',ac,acHas)}</div>`;
@@ -6069,11 +6078,11 @@ function secLegacy(v){
   const opts = legacyVenue==='pu' ? {
       prefix, after:wire, rivalsTag:'open-world PvP · ship + on-foot',
       empty:`No <b>persistent-universe</b> combat for <b>${scopeLabel()}</b> — pick a pre-4.4 patch (4.3 or below) or Career.`,
-      note:`Your real open-world combat. Arena Commander is on the other toggle so practice matches don't inflate this. Ship vs FPS is split by the killing blow. Nothing shows for 4.4+ — CIG stopped logging combat client-side.`
+      note:`Open-world combat only; Arena Commander is on the other toggle. Ship vs FPS is split by the killing blow. Nothing after 4.3 — CIG stopped logging combat client-side.`
     } : {
       prefix, after:wire, rivalsTag:'lobby PvP · ship + on-foot',
       empty:`No <b>Arena Commander</b> matches for <b>${scopeLabel()}</b> — pick a pre-4.4 patch (4.3 or below) or Career.`,
-      note:`Arena Commander (instanced practice / arena modes), kept out of your real PU record. Scorelines here can be lopsided by design — private matches, reward farming, or feeding a friend all live here, not in the 'verse.`
+      note:`Arena Commander matches, kept out of your PU record. Scores here get lopsided by design — private matches, reward farming, feeding a friend.`
     };
   renderCombat(v, lg[legacyVenue], opts);
 }
@@ -6099,7 +6108,9 @@ function secEconomy(v){
     group(1,'spend','Spending','Where your aUEC went — every shop purchase your client sent',
       K+`<div class="grid2">`+barsCard('Top items bought','ranked by aUEC spent · qty shown','itemBars')+
       barsCard('What you buy','purchases by item category','catBars')+`</div>`)+commRow+
-    `<div class="note"><b>These aUEC totals are real</b> — Star Citizen writes the price of every shop purchase your client sends (<code>client_price</code>), so this sums what you actually spent on items, ship components, gun magazines, consumables and (yes) whole ships bought for aUEC. What's still <b>not</b> in the log: your <b>balance</b>, <b>earnings</b>, and money from <b>selling</b> — so this is spend, not net worth. <b>What you buy</b> groups every purchase by item category — FPS weapons/armor vs ship weapons/components (decided by the item's weapon type and size class), medical, cargo, ships, etc. — rather than by store, since the internal shop codes aren't reliable storefront brands. <b>Fleet size</b> is your <b>ASOP</b> vehicle list read at a terminal — the ships you can claim/spawn, which includes both pledged (real-money) ships <b>and</b> ships bought with aUEC in-game — not a pledged-only count.</div>`;
+    noteFold(
+      `Spend is real — the log carries the price of every purchase. Balance, earnings and sales aren't logged.`,
+      `Purchases are grouped by item category rather than store; the shop codes in the log aren't reliable brand names. Fleet size is your ASOP list read at a terminal, so it includes ships bought with aUEC as well as pledges.`);
   hbars($('#itemBars'), (v.top_items||[]).map(([n,amt,q])=>({label:n, value:amt, disp:auec(amt)+' · ×'+fmt(q), href:wikiURL(n)})));
   hbars($('#catBars'), (v.buy_cats||[]).map(([n,c])=>({label:n, value:c, disp:fmt(c)+' buys'})));
 }
@@ -6213,7 +6224,9 @@ function secBlueprints(v){
     group(2,'activity','Unlock history','When the blueprints arrived, and how far along each category is',
       `<div class="grid2">`+cardHTML('Received per month','notifications, not distinct blueprints','bpMonths')+
       cardHTML(catalog?'Progress by category':'By category', catalog?'owned / in the catalogue':'distinct blueprints in this scope','bpCats')+`</div>`)+
-    `<div class="note"><b>What this is.</b> Every blueprint Star Citizen has announced to you — the <i>Received Blueprint</i> notification — collected across your logs and counted once per blueprint. Names are the game\u2019s own: if you run a language pack (StarStrings, ScCompLangPack) the notification carries <i>its</i> wording, so CSR matches each one back to the real item and shows the original name, keeping what your UI said as a search alias. <b>What it isn\u2019t:</b> an audited inventory. The client log holds <b>no list of what you own</b>; the crafting library is fetched from CIG\u2019s servers and never written down, so CSR can only know about blueprints received <b>while a log existed on this PC</b>. Anything unlocked before <b>patch 4.7</b> (when blueprints first appeared in the log), or on another machine whose logs were never imported, is invisible here — treat the count as a floor. A blueprint received again (a duplicate drop) is still one blueprint; <span class="bpx">×2</span> marks the repeats. PTU and Tech-Preview run on a copy of your account, so their libraries are shown separately under those channels.${catalog?` <b>Missing</b> is measured against the <b>SC-Wiki\u2019s extraction of the game data</b> (${fmt(catalog.n)} blueprints as of ${esc(String(catalog.version||''))}), which includes blueprints that exist in the files but may not be obtainable right now — so it is a wish-list, not a to-do list. "Missing" means <i>never seen received in your logs</i>, nothing stronger.`:''} <b>Category</b> comes from the game\u2019s own item id; a handful of names that resolve to no id are judged from the name alone.</div>`;
+    noteFold(
+      `Blueprints the game announced to you, counted once each. The log has no ownership list, so this is a minimum.`,
+      `Only the Received Blueprint notice is logged; the library itself sits on CIG\u2019s servers. Blueprints from before 4.7, or from another PC whose logs weren\u2019t imported, won\u2019t appear. Language packs (StarStrings, ScCompLangPack) rename items in the notice; CSR matches them back to the real item and keeps your wording as a search alias. <span class="bpx">\u00d72</span> marks a duplicate drop. PTU and Tech Preview run a copy of your account and get their own libraries.${catalog?` Missing is measured against the SC-Wiki\u2019s extraction of the game data (${fmt(catalog.n)} blueprints, ${esc(String(catalog.version||'').split('-')[0])}), which includes blueprints you can\u2019t get yet — a wish-list, not a to-do list.`:''}`);
   const draw=()=>{ const el=$('#bpList'); if(!el) return; el.innerHTML=bpListHTML(v); wire(); };
   const wire=()=>document.querySelectorAll('#content [data-bpg]').forEach(b=>b.onclick=()=>{
     bpPage=+b.dataset.bpg; draw();
@@ -6251,7 +6264,7 @@ function secMissions(v){
     `<div style="margin-top:16px">`+barsCard('Mission types','by contract category','typeBars')+`</div>`+
     ((v.contracts_named||[]).length ? `<div style="margin-top:16px">`+
       barsCard('Contracts by name','accepted · completed — as the game titled them (4.5+)','contractBars')+`</div>`+
-      `<div class="note">Contract names come from the <i>Contract Accepted</i> / <i>Contract Complete</i> notices the HUD shows, logged from patch 4.5. Language-pack decorations such as reputation tags are stripped. An accepted contract with no completion here was failed, abandoned, or finished in a session that ended before the notice.</div>` : '');
+      noteFold(`Contract names come from the HUD notices (4.5 onward), language-pack tags stripped. Accepted but not completed covers failed, abandoned, lost on log-off, or still open.`) : '');
   donut($('#missionChart'), [{label:'Completed',value:m.complete,color:'#4ade80'},{label:'Failed',value:m.fail,color:'#ff5468'},{label:'Abandoned',value:m.abandon,color:'#f4a92a'}], {big:(m.rate||0)+'%', small:m.total+' total'});
   hbars($('#typeBars'), toItems(v.mission_types,'#4ade80'));
   const cb=$('#contractBars'); if(cb) hbars(cb, (v.contracts_named||[]).map(([n,a,d,f])=>({label:n, full:n, value:a, disp:`${fmt(a)} <span class="vv-u">acc</span> · ${fmt(d)} done${f?` · ${fmt(f)} failed`:''}`})));
@@ -6833,14 +6846,10 @@ function bootsHTML(v){
     : '';
   return kpis+
     callout(icon('satellite'),
-      `Star Citizen logs every one of these as <b>“Player requested disconnect”</b> — whether the `+
-      `server dropped you or you chose <i>Exit to menu</i>. Up to the 2025 builds the client wrote `+
-      `its own quit request <b>before</b> a deliberate exit, which let CSR tell the two apart. `+
-      `<b>In every 2026 build that line comes about 7 s <i>after</i> the disconnect, for drops and `+
-      `exits alike</b> — checked across 274 events and one session where the player knew which was `+
-      `which — so the log no longer separates them. What is counted here is every time you were `+
-      `back at the front end mid-session and then kept playing. If you never use <i>Exit to menu</i>, `+
-      `these are all drops; since 4.10 lets you switch shards from the menu, some will be you.`)+
+      `The game logs every one of these as “Player requested disconnect”, whether the server dropped you or you chose Exit to menu. `+
+      `Since the 2026 builds the log can't tell the two apart, so both are counted. If you never use Exit to menu, these are all drops.`)+
+    noteFold(`Why drops and exits can't be separated any more`,
+      `Up to the 2025 builds the client wrote its own quit request before a deliberate exit, which is how CSR told them apart. In every 2026 build that line comes about 7 s after the disconnect, for drops and exits alike — checked across 274 events and one session where I knew which was which. 4.10 lets you switch shards from the menu, so some of these will be you.`)+
     trend+recent;
 }
 // One renderer, two tabs: `STAB` picks which half of System & Stability to draw.
@@ -6971,7 +6980,7 @@ function secSystem(v, STAB){
                       :'<div class="card"><div class="empty">Only one patch in this scope.</div></div>')+
         `</div>`
         : `<div class="card"><div class="empty">No completed sessions rated yet.</div></div>`)+
-    `<div class="note">${NOTE}</div>`
+    `${NOTE}`
   ) : (metaLine(v)+
     group(1,'system','Your machine','What the game reports your rig as',
       specs+changeCard+driverCard)+
@@ -6986,7 +6995,7 @@ function secSystem(v, STAB){
       (pi&&hasPatchTrend?`<div style="margin-top:16px">`+
         barsCard('Score per patch','differences this small are noise','gpuByPatch')+`</div>`:'')+
       shareCard)+
-    `<div class="note">${NOTE}</div>`);
+    `${NOTE}`);
 
   // ---- apply / revert settings (app mode only) ----
   const msg=(t,bad)=>{ const e=$('#setMsg'); if(e){ e.innerHTML=t; e.style.color=bad?'#ff5468':'var(--dim)'; } };
