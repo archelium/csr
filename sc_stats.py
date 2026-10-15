@@ -4952,13 +4952,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     background:linear-gradient(90deg,transparent,rgba(120,220,245,.16),transparent);
     animation:hudsweep 6s ease-in-out infinite}
   @keyframes hudsweep{0%{left:-60%}55%,100%{left:165%}}
-  /* periodic scanner sweep over charts (donuts + bars) */
-  .hud-sweep{position:relative}
-  .hud-sweep::after{content:"";position:absolute;inset:0;pointer-events:none;z-index:3;border-radius:inherit;
-    background:linear-gradient(100deg,transparent 42%,rgba(120,220,245,.12) 50%,transparent 58%);
-    background-size:260% 100%;background-repeat:no-repeat;animation:chartsweep 6.5s ease-in-out infinite}
-  @keyframes chartsweep{0%{background-position:190% 0}58%,100%{background-position:-90% 0}}
-  @media(prefers-reduced-motion:reduce){.show-img::after,.hud-sweep::after{animation:none;display:none}}
+  @media(prefers-reduced-motion:reduce){.show-img::after{animation:none;display:none}}
   .show-img.placeholder{display:flex;align-items:center;justify-content:center;font-size:44px;
     background:radial-gradient(120px 80px at 50% 40%,var(--panel),var(--tile))}
   /* manufacturer logo badge (bottom-right of the art) — on a light "placard" so
@@ -5309,12 +5303,6 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     cursor:pointer;color:var(--cyan);background:transparent;border:1px solid var(--line);
     border-radius:7px;padding:5px 11px;transition:.13s;white-space:nowrap}
   .chart-reset:hover{border-color:var(--cyan);background:rgba(91,209,230,.09)}
-  /* donut: tilted 3D ring + leader-line labels (one wide SVG) */
-  .donut-wrap{display:block;padding-top:6px}
-  .donut-svg{width:100%;max-width:640px;margin:0 auto;display:block;
-    filter:drop-shadow(0 0 14px rgba(91,209,230,.12)) drop-shadow(0 8px 16px rgba(0,0,0,.3))}
-  .dseg{transition:opacity .12s}
-  .dseg:hover{opacity:.85;cursor:default}
   .patch-meta{color:var(--muted);font-size:12.5px;margin:2px 0 0}
 
   /* app shell: sidebar + main */
@@ -6053,7 +6041,7 @@ nav a::after{background:var(--menu-bg);border-color:var(--glass-line);box-shadow
 .sb-seg{min-width:4px;height:100%}
 .sb-seg:first-child{border-radius:999px 0 0 999px}.sb-seg:last-child{border-radius:0 999px 999px 0}
 .sb-seg:only-child{border-radius:999px}
-.sb-legend{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:8px 24px}
+.sb-legend{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:8px 24px}
 .sb-row{display:flex;align-items:center;gap:10px;padding:6px 0;border-bottom:1px solid var(--glass-line);font-size:14px}
 .sb-sw{width:10px;height:10px;border-radius:3px;flex:none}
 .sb-l{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--txt)}
@@ -6521,7 +6509,6 @@ function niceMax(v){
   return p*10;
 }
 function vbars(el, items, opts={}){
-  el.classList.add('hud-sweep');
   const rot=!!opts.rot;
   const W=opts.w||380, H=opts.h||210;
   const padL=36, padR=12, padT=14, padB=rot?52:26;
@@ -6576,12 +6563,11 @@ function hbars(el, items, opts={}){
 }
 
 // ---- donut: tilted 3D ring with leader-line labels (SC star-map vibe) ----
-let _dn=0;
-// ---- flat split bar (Hybrid redesign, spec 4). Same signature as donut(), so any
-// donut call switches by renaming the call. The 3D donut's leader labels collide when
-// there are several small slices and the tilt misreports area; one 100% bar plus a
-// legend shows the same shares exactly. Hull-size colours are keyed by NAME so a size
-// keeps its colour across patches — the palette the .chip-c.sz.* chips use.
+// ---- flat split bar (Hybrid redesign, spec 4) — the share chart on Flight, Combat,
+// Missions and Stability. It replaced a tilted 3D ring whose leader labels collided
+// when there were several small slices and whose tilt misreported area; one 100% bar
+// plus a legend shows the same shares exactly. Hull-size colours are keyed by NAME so
+// a size keeps its colour across patches — the palette the .chip-c.sz.* chips use.
 const SIZE_COLOR={Small:'#6fbf7f',Medium:'#42d0e6',Large:'#f4a92a',Capital:'#ff5468',
   Vehicle:'#8aa0b8',Gravlev:'#8aa0b8',Snub:'#b98bff'};
 function splitbar(el, parts, center){
@@ -6596,76 +6582,6 @@ function splitbar(el, parts, center){
   const rows=all.map(p=>`<li class="sb-row"><i class="sb-sw" style="background:${p.color}"></i>`+
     `<span class="sb-l">${esc(p.label)}</span><span class="sb-v">${fmt(p.value)}</span><span class="sb-p">${lbl(p)}</span></li>`).join('');
   el.innerHTML=`<div class="sb">${head}<div class="sb-bar" aria-hidden="true">${segs}</div><ul class="sb-legend">${rows}</ul></div>`;
-}
-function donut(el, parts, center){
-  el.classList.add('hud-sweep');
-  const total=parts.reduce((a,p)=>a+p.value,0);
-  const active=parts.filter(p=>p.value>0);
-  const id='dn'+(++_dn);
-  const W=400, H=250, cx=200, cy=112, tilt=0.58,
-        Rx=76, Ry=Rx*tilt, rin=0.56, rx=Rx*rin, ry=Ry*rin, depth=18;
-  const O=a=>[cx+Rx*Math.cos(a), cy+Ry*Math.sin(a)];
-  const I=a=>[cx+rx*Math.cos(a), cy+ry*Math.sin(a)];
-  const F=n=>(+n).toFixed(2);
-  let s=`<svg class="donut-svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet">`+
-    `<defs><linearGradient id="${id}" x1="0" y1="0" x2="0" y2="1">`+
-    `<stop offset="0" style="stop-color:var(--track-line)"/><stop offset="1" style="stop-color:var(--bg)"/></linearGradient></defs>`;
-
-  if(total<=0 || !active.length){
-    s+=`<ellipse cx="${cx}" cy="${cy}" rx="${F((Rx+rx)/2)}" ry="${F((Ry+ry)/2)}" fill="none" `+
-       `stroke-width="${F(Rx-rx)}" style="stroke:var(--track-line)"/>`+
-       `<text x="${cx}" y="${F(cy+6)}" text-anchor="middle" style="fill:var(--muted);font-size:24px;font-weight:800;font-family:var(--font-display)">${center.big}</text></svg>`;
-    el.innerHTML=`<div class="donut-wrap">${s}</div>`; return;
-  }
-
-  // 3D depth rim — extrude the front (lower) half of the outer silhouette
-  const [ax,ay]=O(0), [bx,by]=O(Math.PI);
-  s+=`<path d="M${F(ax)} ${F(ay)} A${F(Rx)} ${F(Ry)} 0 0 1 ${F(bx)} ${F(by)} L${F(bx)} ${F(by+depth)} `+
-     `A${F(Rx)} ${F(Ry)} 0 0 0 ${F(ax)} ${F(ay+depth)} Z" fill="url(#${id})" stroke="rgba(0,0,0,.28)" stroke-width="0.5"/>`;
-
-  // top faces (annular elliptical sectors)
-  const segs=[]; let ang=-Math.PI/2;
-  if(active.length===1){
-    const p=active[0];
-    s+=`<path class="dseg" fill-rule="evenodd" fill="${p.color}" d="`+
-       `M${F(cx-Rx)} ${F(cy)} a${F(Rx)} ${F(Ry)} 0 1 0 ${F(2*Rx)} 0 a${F(Rx)} ${F(Ry)} 0 1 0 ${F(-2*Rx)} 0 Z `+
-       `M${F(cx-rx)} ${F(cy)} a${F(rx)} ${F(ry)} 0 1 0 ${F(2*rx)} 0 a${F(rx)} ${F(ry)} 0 1 0 ${F(-2*rx)} 0 Z">`+
-       `<title>${esc(p.label)}: ${fmt(p.value)} (100%)</title></path>`;
-    segs.push({p, am:-Math.PI/2});
-  } else {
-    active.forEach(p=>{
-      const a1=ang, a2=ang+2*Math.PI*p.value/total, am=(a1+a2)/2; ang=a2;
-      const large=(a2-a1)>Math.PI?1:0;
-      const [o1x,o1y]=O(a1),[o2x,o2y]=O(a2),[i2x,i2y]=I(a2),[i1x,i1y]=I(a1);
-      s+=`<path class="dseg" fill="${p.color}" d="M${F(o1x)} ${F(o1y)} A${F(Rx)} ${F(Ry)} 0 ${large} 1 ${F(o2x)} ${F(o2y)} `+
-         `L${F(i2x)} ${F(i2y)} A${F(rx)} ${F(ry)} 0 ${large} 0 ${F(i1x)} ${F(i1y)} Z">`+
-         `<title>${esc(p.label)}: ${fmt(p.value)} (${Math.round(100*p.value/total)}%)</title></path>`;
-      segs.push({p, am});
-    });
-  }
-  // center total (sits in the hole)
-  s+=`<text x="${cx}" y="${F(cy+7)}" text-anchor="middle" style="fill:var(--txt);font-size:27px;font-weight:800;font-family:var(--font-display)">${center.big}</text>`;
-
-  // leader lines + labels, de-collided vertically on each side
-  const en=segs.map(g=>{ const [ex,ey]=O(g.am); return {...g, ex, ey,
-    side:(Math.cos(g.am)>=0?1:-1), ideal:cy+(Ry+8)*Math.sin(g.am)}; });
-  [1,-1].forEach(side=>{
-    const grp=en.filter(g=>g.side===side).sort((a,b)=>a.ideal-b.ideal);
-    if(!grp.length) return;
-    const gap=26, top=18, bot=H-16; let prev=-1e9;
-    grp.forEach(g=>{ g.ly=Math.max(g.ideal, prev+gap); prev=g.ly; });
-    const over=grp[grp.length-1].ly-bot; if(over>0) grp.forEach(g=>g.ly-=over);
-    const un=top-grp[0].ly; if(un>0) grp.forEach(g=>g.ly+=un);
-    grp.forEach(g=>{
-      const labelX=side===1?W-6:6, knee=side===1?cx+Rx+16:cx-Rx-16, anchor=side===1?'end':'start';
-      s+=`<polyline points="${F(g.ex)},${F(g.ey)} ${F(knee)},${F(g.ly)} ${F(labelX+(side===1?-2:2))},${F(g.ly)}" fill="none" stroke="${g.p.color}" stroke-width="1.4" opacity="0.6"/>`+
-         `<circle cx="${F(g.ex)}" cy="${F(g.ey)}" r="2.4" fill="${g.p.color}"/>`+
-         `<text x="${labelX}" y="${F(g.ly-3)}" text-anchor="${anchor}" style="fill:var(--txt);font-size:12.5px;font-weight:600;font-family:var(--font-display)">${esc(g.p.label)}</text>`+
-         `<text x="${labelX}" y="${F(g.ly+11)}" text-anchor="${anchor}" style="fill:var(--muted);font-size:11px;font-family:var(--font-mono)">${fmt(g.p.value)} · ${Math.round(100*g.p.value/total)}%</text>`;
-    });
-  });
-  s+='</svg>';
-  el.innerHTML=`<div class="donut-wrap">${s}</div>`;
 }
 
 const NOTE = noteFold(
@@ -6924,7 +6840,7 @@ function secCombat(v){
     `${NOTE}`;
   hbars($('#gunBars'), toItems(guns.map(w=>[w[0],w[1]]), null, true));
   hbars($('#toolBars'), toItems(tools.map(w=>[w[0],w[1]]), null, true).map(x=>({...x,tool:true})));
-  donut($('#causeChart'), [{label:'Collision',value:dc.collision,color:'#ff9147'},{label:'Destroyed / other',value:dc.other,color:'#ff5468'}], {big:v.deaths, small:'ship deaths'});
+  splitbar($('#causeChart'), [{label:'Collision',value:dc.collision,color:'#ff9147'},{label:'Destroyed / other',value:dc.other,color:'#ff5468'}], {big:v.deaths, small:'ship deaths'});
   hbars($('#deathShips'), toItems(v.death_ships,'#ff5468', true));
   const ib=$('#injBars'); if(ib) hbars(ib, (v.injury_parts||[]).map(([k,n])=>({label:k, value:n, disp:fmt(n), color:'#ff9147'})));
   const mb=$('#medBars'); if(mb) hbars(mb, ((v.medbed||{}).parts||[]).map(([k,n])=>({label:k, value:n, disp:fmt(n), color:'#4ade80'})));
@@ -7335,7 +7251,7 @@ function secMissions(v){
     ((v.contracts_named||[]).length ? `<div style="margin-top:16px">`+
       barsCard('Contracts by name','accepted · completed — as the game titled them (4.5+)','contractBars')+`</div>`+
       noteFold(`Contract names come from the HUD notices (4.5 onward), language-pack tags stripped. Accepted but not completed covers failed, abandoned, lost on log-off, or still open.`) : '');
-  donut($('#missionChart'), [{label:'Completed',value:m.complete,color:'#4ade80'},{label:'Failed',value:m.fail,color:'#ff5468'},{label:'Abandoned',value:m.abandon,color:'#f4a92a'}], {big:(m.rate||0)+'%', small:m.total+' total'});
+  splitbar($('#missionChart'), [{label:'Completed',value:m.complete,color:'#4ade80'},{label:'Failed',value:m.fail,color:'#ff5468'},{label:'Abandoned',value:m.abandon,color:'#f4a92a'}], {big:(m.rate||0)+'%', small:m.total+' total'});
   hbars($('#typeBars'), toItems(v.mission_types,'#4ade80'));
   const cb=$('#contractBars'); if(cb) hbars(cb, (v.contracts_named||[]).map(([n,a,d,f])=>({label:n, full:n, value:a, disp:`${fmt(a)} <span class="vv-u">acc</span> · ${fmt(d)} done${f?` · ${fmt(f)} failed`:''}`})));
   const hc=$('#haulComBars'); if(hc) hbars(hc, (h.com||[]).map(([k,n])=>({label:k, value:n, disp:fmt(n)+' SCU', color:'#f4a92a'})));
@@ -8142,7 +8058,7 @@ function secSystem(v, STAB){
     };
   }
   if(rated && STAB){
-    donut($('#outcomeChart'), [
+    splitbar($('#outcomeChart'), [
       {label:'Normal exit', value:oc.clean||0, color:'#4ade80'},
       {label:'Crash (reported)', value:oc.crash||0, color:'#ff5468'},
       {label:'Died, no report', value:oc.died||0, color:'#c2557a'},
