@@ -240,15 +240,128 @@ class BlueprintIndex:
                     rows.append({"k": b.get("key"), "n": name.replace("\xa0", " ").strip(),
                                  "c": cls, "d": bool(b.get("is_available_by_default")),
                                  "m": int(b.get("unlocking_missions_count") or 0),
-                                 "g": (b.get("category_uuid") or "")[:8]})
+                                 "g": (b.get("category_uuid") or "")[:8],
+                                 "_l": b.get("link")})
                 last = d.get("meta", {}).get("last_page", 1)
                 page += 1
+            # The list endpoint never includes the unlocking missions; only the detail
+            # does. ~700 blueprints carry missions, one call each (~0.13 s), so they are
+            # fetched eight at a time. A row keeps "u": [[debug name, chance, title]].
+            self._fill_unlocks([r for r in rows if r["m"] and r.get("_l")])
+            for r in rows:
+                r.pop("_l", None)
             if rows:
                 self.rows, self.version = rows, ver
                 json.dump({"version": ver, "fetched": datetime.date.today().isoformat(), "rows": rows},
                           open(self.cache_path, "w", encoding="utf-8"))
         except Exception as e:
             print(f"[sc_names] blueprint catalogue fetch failed: {e}")
+
+    @staticmethod
+    def _fill_unlocks(rows):
+        import concurrent.futures
+
+        def one(r):
+            try:
+                req = urllib.request.Request(r["_l"] + "?include=unlocking_missions", headers=_UA)
+                d = json.loads(urllib.request.urlopen(req, timeout=40, context=_SSL).read()).get("data", {})
+                r["u"] = [[m.get("debug_name") or "", round(float(m.get("chance") or 0), 3), m.get("title") or ""]
+                          for m in (d.get("unlocking_missions") or []) if m.get("debug_name")]
+            except Exception:
+                r["u"] = []
+        with concurrent.futures.ThreadPoolExecutor(max_workers=8) as ex:
+            list(ex.map(one, rows))
+
+
+class MissionIndex:
+    """Every mission the SC-Wiki API lists (/api/v2/missions, ~1,800 rows), kept by its
+    debug name — the same string the client log writes as the contract class. Holds what
+    a blueprint planner needs: faction, the standing a mission needs and its reputation
+    threshold, the reputation a completion gives, and each faction's rank ladder.
+
+    Rows: [debug, title, faction, rank index, standing name, standing threshold,
+           reputation amount, [[faction, amount] …], has blueprints?, [systems], url]."""
+
+    API = "https://api.star-citizen.wiki/api/v2/missions?limit=200&page="
+    FACTIONS = "https://api.star-citizen.wiki/api/v2/factions?limit=200&page="
+
+    def __init__(self, cache=None):
+        self.cache_path = cache or os.path.join(SCRIPT_DIR, "sc_missions.json")
+        self.rows = []
+        self.factions = {}
+        self.version = None
+        self.ok = False
+
+    def load(self, allow_fetch=True):
+        fetched = None
+        if os.path.isfile(self.cache_path):
+            try:
+                d = json.load(open(self.cache_path, encoding="utf-8"))
+                self.rows, self.factions = d.get("rows") or [], d.get("factions") or {}
+                self.version, fetched = d.get("version"), d.get("fetched")
+            except Exception:
+                self.rows = []
+        if allow_fetch and (not self.rows or cache_is_stale(fetched)):
+            self._fetch()
+        self.ok = bool(self.rows)
+        return self.ok
+
+    def _fetch(self):
+        try:
+            rows, page, last, ver, flinks = [], 1, 1, None, {}
+            while page <= last:
+                req = urllib.request.Request(self.API + str(page), headers=_UA)
+                d = json.loads(urllib.request.urlopen(req, timeout=40, context=_SSL).read())
+                for m in d.get("data", []):
+                    dbg = m.get("debug_name")
+                    if not dbg:
+                        continue
+                    ver = ver or m.get("game_version")
+                    fac = (m.get("faction") or {}).get("name") or ""
+                    if fac and (m.get("faction") or {}).get("link"):
+                        flinks[fac] = m["faction"]["link"]
+                    ms = m.get("min_standing") or {}
+                    gains = [[g.get("faction") or "", int(g.get("amount") or 0)]
+                             for g in (m.get("reputation_gained") or []) if g.get("amount")]
+                    rows.append([dbg, (m.get("title") or "").strip(), fac, m.get("rank_index"),
+                                 ms.get("name") or "", int(ms.get("min_reputation") or 0),
+                                 int(m.get("reputation_amount") or 0), gains,
+                                 bool(m.get("has_blueprints")),
+                                 [x.get("name") if isinstance(x, dict) else str(x) for x in (m.get("star_systems") or [])],
+                                 m.get("web_url") or ""])
+                last = d.get("meta", {}).get("last_page", 1)
+                page += 1
+            factions = self._ladders(flinks)
+            if rows:
+                self.rows, self.factions, self.version = rows, factions, ver
+                json.dump({"version": ver, "fetched": datetime.date.today().isoformat(),
+                           "rows": rows, "factions": factions},
+                          open(self.cache_path, "w", encoding="utf-8"))
+        except Exception as e:
+            print(f"[sc_names] mission index fetch failed: {e}")
+
+    @staticmethod
+    def _ladders(flinks):
+        """faction name -> {"c": ceiling, "l": [[rank name, min reputation] …]}"""
+        import concurrent.futures
+        out = {}
+
+        def one(item):
+            name, link = item
+            try:
+                req = urllib.request.Request(link, headers=_UA)
+                d = json.loads(urllib.request.urlopen(req, timeout=40, context=_SSL).read()).get("data", {})
+                lad = d.get("reputation_ladder") or {}
+                steps = [[st.get("display_name") or st.get("name") or "", int(st.get("min_reputation") or 0)]
+                         for st in (lad.get("standings") or [])
+                         if st.get("display_name") and "PLACEHOLDER" not in st["display_name"]]
+                if steps:
+                    out[name] = {"c": int(lad.get("reputation_ceiling") or 0), "l": sorted(steps, key=lambda x: x[1])}
+            except Exception:
+                pass
+        with concurrent.futures.ThreadPoolExecutor(max_workers=8) as ex:
+            list(ex.map(one, list(flinks.items())))
+        return out
 
 
 TOOL_MARKERS = ("multitool", "tractor", "medgun", "scanner", "flashlight",

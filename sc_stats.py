@@ -48,7 +48,7 @@ CSR_CONTACT = "support@archelium.com"      # publisher/contact (archelium.com)
 # Bump whenever scan_log() learns to extract something new or fixes an extraction bug.
 # A quick refresh reuses archived sessions only when they were parsed by THIS version,
 # so improved parsing always re-reads old logs instead of silently keeping stale numbers.
-PARSER_VERSION = 17
+PARSER_VERSION = 18
 
 
 # --------------------------------------------------------------------------- #
@@ -492,6 +492,7 @@ def cache_file(name):
 SHIPS = sc_names.ShipIndex()
 ITEMS = sc_names.ItemIndex()
 BPS = sc_names.BlueprintIndex()
+MIS = sc_names.MissionIndex()
 
 # --------------------------------------------------------------------------- #
 #  Log discovery
@@ -1326,6 +1327,7 @@ LOGIN_RE = re.compile(r"Handle\[([^\]]+)\]")
 # won't pick up the OTHER players whose names also appear in the log.
 LOCAL_HANDLE_RE = re.compile(r"LocalPlayer\w*.*?owned by '([^']+)'")
 CONTRACT_RE = re.compile(r"contract \[([A-Za-z][A-Za-z0-9_]+?)(?:_\d+)?\]")
+MARKER_MID_RE = re.compile(r"missionId \[([0-9a-f-]{36})\]")
 FLEET_RE = re.compile(r"Retrieved \d+ entitlements out of (\d+) vehic")
 # Crafting blueprints (4.7+) reach the log ONLY as HUD notifications, and not in one
 # shape: most builds queue each one ("Added notification … [id]") and then log its
@@ -2006,7 +2008,7 @@ def _bp_sets(rows):
     pieces [[slot index, key, piece name]]; single-piece groups are not sets and are
     left out."""
     groups = {}
-    for key, name, cls, cat, kind, _d, _m in rows:
+    for key, name, cls, cat, kind, _d, _m, *_ in rows:
         low = (cls or "").lower()
         if cat == "Armor":
             toks = low.split("_")
@@ -2063,7 +2065,7 @@ def _bp_families(rows):
     [name, kind, sizes] with sizes [[size, key, item name]]; one-size families included
     (the page counts them separately)."""
     fam = {}
-    for key, name, cls, cat, kind, _d, _m in rows:
+    for key, name, cls, cat, kind, _d, _m, *_ in rows:
         if cat != "Ship weapons":
             continue
         m = re.search(r"_s(\d{1,2})(?=_|$)", cls or "")
@@ -2083,6 +2085,121 @@ def _bp_families(rows):
     return out
 
 
+_mis_by_dbg = None
+
+
+def _mis_index():
+    """debug name (lower) -> row index, built once."""
+    global _mis_by_dbg
+    if _mis_by_dbg is None:
+        _mis_by_dbg = {}
+        for i, r in enumerate(MIS.rows if MIS.ok else []):
+            _mis_by_dbg.setdefault(r[0].lower(), i)
+    return _mis_by_dbg
+
+
+_CLS_TAIL = re.compile(r"(_(stanton|pyro|nyx)\d|_\d+|_rank\d|_(veryeasy|easy|medium|hard|veryhard|super|local|choice))+$")
+
+
+def _mis_match(cls):
+    """Row index of the mission a logged contract class belongs to, or None. Exact
+    first; then with the trailing variant tokens dropped; then the longest API name
+    the class starts with. Missions CIG has retired are not in the API and stay None."""
+    idx = _mis_index()
+    low = cls.lower()
+    if low in idx:
+        return idx[low]
+    base = _CLS_TAIL.sub("", low)
+    if base in idx:
+        return idx[base]
+    cands = [k for k in idx if len(k) >= 12 and low.startswith(k)]
+    if cands:
+        return idx[max(cands, key=len)]
+    cands = [k for k in idx if len(low) >= 12 and k.startswith(low)]
+    if cands:
+        return idx[min(cands, key=len)]
+    return None
+
+
+_fam_cache = {}
+
+
+def _mis_family(cls):
+    """A generated contract (Red Wind writes a route+commodity into every class name,
+    the API lists a few dozen of them) matched to its FAMILY: the API rows sharing the
+    longest token prefix of three or more tokens, when they all agree on faction and
+    reputation. Returns a row index to take faction and rep from, or None. Never used
+    to say "you completed this mission" — only to feed the reputation floor."""
+    low = cls.lower()
+    if low in _fam_cache:
+        return _fam_cache[low]
+    toks = low.split("_")
+    idx = _mis_index()
+    out = None
+    for n in range(len(toks) - 1, 2, -1):
+        pre = "_".join(toks[:n]) + "_"
+        cands = [i for k, i in idx.items() if k.startswith(pre)]
+        if cands:
+            sig = {(MIS.rows[i][2], MIS.rows[i][6]) for i in cands}
+            if len(sig) == 1 and MIS.rows[cands[0]][2]:
+                out = cands[0]
+            break
+    _fam_cache[low] = out
+    return out
+
+
+def _rep_payload(contracts_cls):
+    """{"rep_floor": [[faction, rep, completions, rank now, next rank, rep to next]],
+        "contracts_matched": {mission row index: completions}}
+    The floor is the reputation the matched completions alone would have earned —
+    missions CIG has retired, event bonuses and any resets are invisible, so it is a
+    minimum, never the standing itself."""
+    if not MIS.ok or not contracts_cls:
+        return {"rep_floor": [], "contracts_matched": {}}
+    rep, done, matched = Counter(), Counter(), Counter()
+    for cls, n in contracts_cls.items():
+        i = _mis_match(cls)
+        if i is not None:
+            matched[i] += n
+        else:
+            i = _mis_family(cls)
+            if i is None:
+                continue
+        row = MIS.rows[i]
+        gains = row[7] or ([[row[2], row[6]]] if row[2] and row[6] else [])
+        if row[2]:                     # event missions have no faction and give no rep
+            done[row[2]] += n
+        for fac, amt in gains:
+            if fac:
+                rep[fac] += amt * n
+    out = []
+    for fac in sorted(set(rep) | set(done), key=lambda f: -rep[f]):
+        lad = (MIS.factions.get(fac) or {}).get("l") or []
+        now, nxt = "", None
+        for name, thr in lad:
+            if rep[fac] >= thr:
+                now = name
+            elif nxt is None:
+                nxt = [name, thr - rep[fac]]
+        out.append([fac, rep[fac], done[fac], now, (nxt or ["", 0])[0], (nxt or ["", 0])[1]])
+    return {"rep_floor": out, "contracts_matched": {str(i): n for i, n in matched.items()}}
+
+
+def _missions_payload():
+    """The mission index for the page: rows as cached (debug, title, faction, rank,
+    standing, threshold, rep, gains, has blueprints, systems, url), standings that are
+    CIG placeholders blanked, plus every faction's ladder."""
+    if not MIS.ok:
+        return None
+    rows = []
+    for r in MIS.rows:
+        r = list(r)
+        if "PLACEHOLDER" in (r[4] or ""):
+            r[4], r[5] = "", 0
+        rows.append(r)
+    return {"version": MIS.version, "n": len(rows), "rows": rows, "factions": MIS.factions}
+
+
 def _bp_catalog_payload():
     """The whole crafting catalogue for the page, classified the same way owned rows
     are: [key, name, class, category, kind, default?, unlocking missions] — plus the
@@ -2090,9 +2207,16 @@ def _bp_catalog_payload():
     if not BPS.ok:
         return None
     rows = []
+    idx = _mis_index()
     for r in BPS.rows:
         cat, kind = _bp_classify(r["c"], r["n"])
-        rows.append([r["k"], r["n"], r["c"], cat, kind, 1 if r["d"] else 0, r["m"]])
+        # unlocking missions as [mission row index, chance]; a mission the index
+        # doesn't know (retired, or the two caches out of step) keeps its title
+        un = []
+        for dbg, chance, title in (r.get("u") or []):
+            i = idx.get((dbg or "").lower())
+            un.append([i if i is not None else title, chance])
+        rows.append([r["k"], r["n"], r["c"], cat, kind, 1 if r["d"] else 0, r["m"], un])
     return {"version": BPS.version, "n": len(rows), "rows": rows,
             "sets": _bp_sets(rows), "fams": _bp_families(rows)}
 
@@ -2360,6 +2484,7 @@ def scan_log(path):
     party_secs = 0.0                   # seconds spent in someone's party
     crimestat = 0                      # CrimeStat Rating Increased notices
     haul_obj = {}                      # (mission, objective) -> (SCU, commodity, destination)
+    contract_cls = {}                  # mission id -> contract class (from its marker line)
     mag_method = False                 # True once the patch is known to be 4.10+
     carried = Counter()                # weapon class -> times CARRIED (stowed/holstered)
     loot_boxes = Counter()             # container size -> crates looted (unique instances)
@@ -2729,6 +2854,9 @@ def scan_log(path):
                     m = CONTRACT_RE.search(line)
                     if m:
                         contracts[m.group(1)] += 1
+                        mi = MARKER_MID_RE.search(line)
+                        if mi:
+                            contract_cls[mi.group(1)] = m.group(1)
                 elif "entitlements out of" in line:
                     m = FLEET_RE.search(line)
                     if m:
@@ -2929,6 +3057,9 @@ def scan_log(path):
             haul_lost += n
     haul_runs = len(_per)
     haul_max = max(_per.values()) if _per else 0
+    # contracts COMPLETED by class — `contracts` above counts markers, i.e. contracts
+    # taken; this one is what a reputation estimate can be built on
+    contracts_cls = Counter(c for mid, c in contract_cls.items() if missions.get(mid) == "Complete")
     return {
         "patch": patch, "build": build, "start": dt0, "dur": dur,
         "ships": ships, "ship_events": ship_events, "missions": missions, "weapons": weapons,
@@ -2945,6 +3076,7 @@ def scan_log(path):
         "party_acc": party_acc, "party_secs": round(party_secs), "crimestat": crimestat,
         "haul_scu": haul_scu, "haul_runs": haul_runs, "haul_lost": haul_lost, "haul_max": haul_max,
         "haul_com": dict(haul_com), "haul_dest": dict(haul_dest),
+        "contracts_cls": dict(contracts_cls),
         "fleet_max": fleet_max, "purchases": purchases, "claims": claims,
         "blueprints": dict(blueprints),
         "shops": shops, "combat": combat,
@@ -3004,6 +3136,7 @@ def blank_patch():
         "party_acc": 0, "party_secs": 0.0, "party_sessions": 0, "crimestat": 0,
         "haul_scu": 0, "haul_runs": 0, "haul_lost": 0, "haul_max": 0, "haul_sessions": 0,
         "haul_com": Counter(), "haul_dest": Counter(),
+        "contracts_cls": Counter(),
         "purchases": 0, "claims": 0, "shops": Counter(),
         # blueprints (4.7+): receipts per name, first/last date, sessions seen in, per month
         "bp_recv": Counter(), "bp_first": {}, "bp_last": {}, "bp_sessions": Counter(),
@@ -3071,6 +3204,7 @@ def fold(agg, s):
         agg["haul_sessions"] += 1
     agg["haul_com"].update(s.get("haul_com") or {})
     agg["haul_dest"].update(s.get("haul_dest") or {})
+    agg["contracts_cls"].update(s.get("contracts_cls") or {})
     agg["fleet_max"] = max(agg["fleet_max"], s["fleet_max"])
     agg["purchases"] += s["purchases"]
     agg["claims"] += s["claims"]
@@ -3528,6 +3662,8 @@ def finalize(agg):
         "haul": {"scu": agg["haul_scu"], "runs": agg["haul_runs"], "lost": agg["haul_lost"],
                  "max": agg["haul_max"], "sessions": agg["haul_sessions"],
                  "com": agg["haul_com"].most_common(10), "dest": agg["haul_dest"].most_common(10)},
+        # reputation floors + matched completions, for the blueprint planner
+        **_rep_payload(agg["contracts_cls"]),
         "fleet_max": agg["fleet_max"],
         "purchases": agg["purchases"],
         "spend": round(agg["spend"]),
@@ -3818,6 +3954,7 @@ def build_from_sessions(sessions, fresh_profile=False):
         "generated": datetime.now().strftime("%d-%b-%Y %H:%M"),
         "log_count": total,
         "bp_catalog": _bp_catalog_payload(),
+        "missions": _missions_payload(),
     }
 
 
@@ -4989,6 +5126,13 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
   .bpx{color:var(--amber);font-weight:600}
   .bph{font-family:var(--font-mono);font-size:10px;color:var(--dim)}
   .bpsep{width:1px;height:22px;background:var(--line);margin:0 4px}
+  /* planner */
+  .bppl{font-family:var(--font-mono);font-size:10px;letter-spacing:.06em;color:var(--cyan);cursor:pointer;margin-left:9px;text-transform:uppercase}
+  .bppl:hover{text-decoration:underline}
+  .bpph{display:flex;gap:10px;align-items:baseline;flex-wrap:wrap;padding:4px 2px 10px;font-size:13.5px}
+  .bpok{font-family:var(--font-mono);font-size:10px;letter-spacing:.06em;color:var(--green);text-transform:uppercase}
+  .bpst{font-family:var(--font-mono);font-size:10px;letter-spacing:.04em;padding:2px 7px;border-radius:4px;margin-left:8px;white-space:nowrap}
+  .bpst.ok{color:var(--green);border:1px solid var(--green)} .bpst.no{color:var(--amber);border:1px solid var(--amber)}
   /* collection board: armour sets, weapon size ladders, component grid */
   .bsets{display:flex;flex-direction:column}
   .bset,.blad{display:flex;gap:12px;align-items:center;padding:7px 2px;border-bottom:1px dashed var(--line);font-size:12.5px}
@@ -6468,14 +6612,15 @@ function bpListHTML(v){
     const [n,cat,kind,first,recv,sess,key,alias,dflt,missions]=r;
     const nm=link(wikiURL(bpSkin(n)),esc(n),'lk');
     const aka=alias?`<span class="bpk" title="as your UI showed it">shown as ${esc(alias)}</span>`:'';
+    const plan=(DATA.missions&&key)?` <a class="bppl" data-bpplan="${esc(key)}" title="which missions drop it, and what they need">plan</a>`:'';
     if(bpMode==='missing'){
       const how = dflt ? 'known from the start' : (missions ? `${missions} unlocking mission${missions===1?'':'s'}` : 'no mission source listed');
       return `<div class="tev"><span class="td" style="color:var(--dim)">missing</span>`+
-        `<span class="tw">${nm}${kind?`<span class="bpk">${esc(kind)}</span>`:''}</span>`+
+        `<span class="tw">${nm}${kind?`<span class="bpk">${esc(kind)}</span>`:''}${plan}</span>`+
         `<span class="tv">${esc(cat)} <span class="bph">· ${how}</span></span></div>`;
     }
     return `<div class="tev"><span class="td">${first?ddmm(first):'—'}</span>`+
-      `<span class="tw">${nm}${kind?`<span class="bpk">${esc(kind)}</span>`:''}${aka}</span>`+
+      `<span class="tw">${nm}${kind?`<span class="bpk">${esc(kind)}</span>`:''}${aka}${plan}</span>`+
       `<span class="tv">${esc(cat)}${recv>1?` <span class="bpx" title="received ${recv} times across ${sess} session${sess===1?'':'s'}">×${recv}</span>`:''}</span></div>`;
   }).join('');
   const nav=pages>1?`<div class="pager"><button class="foot-link" data-bpg="${bpPage-1}" ${bpPage?'':'disabled'}>← ${bpMode==='missing'?'Back':'Newer'}</button>`+
@@ -6490,6 +6635,55 @@ function bpListHTML(v){
 // grid. Sets and families come from the catalogue (DATA.bp_catalog.sets / .fams); the
 // page only decides which squares are filled. Singles are not sets and stay in the list.
 let bpSetTab='partial', bpSetAll=false, bpFamAll=false;
+// ---- the planner ----
+// A blueprint drops from missions; a mission needs a standing with a faction; a
+// standing is reputation, which the game never writes to the log. So the planner shows
+// the gate from the SC-Wiki's mission data and, against it, the reputation your
+// MATCHED completions alone would have earned — a floor, never your standing.
+let bpPlanKey='', bpPlanQ='';
+const MIS_F = {DBG:0, TITLE:1, FAC:2, RANK:3, STAND:4, THR:5, REP:6, GAINS:7, HASBP:8, SYS:9, URL:10};
+function bpFloorOf(fac){ const r=((A().career||{}).rep_floor||[]).find(x=>x[0]===fac); return r ? r[1] : 0; }
+function bpRankAt(fac, rep){ const lad=((DATA.missions||{}).factions||{})[fac]; if(!lad) return ''; let now=''; (lad.l||[]).forEach(([n,t])=>{ if(rep>=t) now=n; }); return now; }
+function bpPlanHTML(){
+  const M=DATA.missions, cat=DATA.bp_catalog; if(!M||!cat) return '';
+  const own=bpOwnedKeys(), matched=(A().career||{}).contracts_matched||{};
+  const q=bpPlanQ.trim().toLowerCase();
+  const hits=q ? cat.rows.filter(r=>r[1].toLowerCase().includes(q)).slice(0,8) : [];
+  const hitsH=hits.map(r=>`<button class="vpill sm ${bpPlanKey===r[0]?'on':''}" data-bpplan="${esc(r[0])}">${esc(r[1])}${r[7]&&r[7].length?'':' <span class="vc">no mission</span>'}</button>`).join('');
+  const row=bpPlanKey ? cat.rows.find(r=>r[0]===bpPlanKey) : null;
+  let out='';
+  if(row){
+    const owned=own.has(row[0])||own.has('n:'+row[1].toLowerCase());
+    const head=`<div class="bpph"><b>${link(wikiURL(bpSkin(row[1])),esc(row[1]),'lk')}</b><span class="bpk">${esc(row[3])}${row[4]?' · '+esc(row[4]):''}</span>`+
+      (owned?`<span class="bpok">in your library</span>`:row[5]?`<span class="bpok">known from the start</span>`:'')+`</div>`;
+    const uns=row[7]||[];
+    if(!uns.length) out=head+`<div class="empty">No unlocking mission is listed for this blueprint${row[5]?' — it is available by default':''}.</div>`;
+    else out=head+`<div class="tline">`+uns.map(([mi,chance])=>{
+      if(typeof mi!=='number') return `<div class="tev"><span class="tw">${esc(String(mi))}</span><span class="tv"><span class="bph">retired or unknown mission</span></span></div>`;
+      const m=M.rows[mi]; const fac=m[MIS_F.FAC], thr=m[MIS_F.THR]||0, stand=m[MIS_F.STAND];
+      const floor=fac?bpFloorOf(fac):0, done=matched[String(mi)]||0;
+      const gate = !fac ? `<span class="bph">no faction</span>` : stand ? `${esc(stand)} <span class="bph">· ${fmt(thr)} rep</span>` : `<span class="bph">no standing needed</span>`;
+      let st;
+      if(!fac||!thr) st=`<span class="bpst ok">open</span>`;
+      else if(floor>=thr) st=`<span class="bpst ok">open at your floor</span>`;
+      else st=`<span class="bpst no">${fmt(thr-floor)} more rep with ${esc(fac)}</span>`;
+      const ch = chance>=1 ? 'guaranteed' : chance>0 ? Math.round(chance*100)+'% drop' : '';
+      return `<div class="tev"><span class="td">${ch}</span>`+
+        `<span class="tw">${m[MIS_F.URL]?link(m[MIS_F.URL],esc(m[MIS_F.TITLE]),'lk'):esc(m[MIS_F.TITLE])}<span class="bpk">${esc(fac||'')}${m[MIS_F.REP]?` · +${fmt(m[MIS_F.REP])} rep`:''}${done?` · done ×${fmt(done)}`:''}</span></span>`+
+        `<span class="tv">${gate} ${st}</span></div>`; }).join('')+`</div>`;
+  } else if(q && !hits.length) out=`<div class="empty">Nothing in the catalogue matches that.</div>`;
+  else if(!q) out=`<div class="empty">Type a blueprint name, or press <i>plan</i> on any row of the list below.</div>`;
+  return `<div class="bpbar"><input class="bpq" id="bpPlanQ" type="search" placeholder="Which blueprint?" value="${esc(bpPlanQ)}" spellcheck="false" autocomplete="off"></div>`+
+    (hitsH?`<div class="bpbar" style="margin-top:-4px">${hitsH}</div>`:'')+`<div id="bpPlanOut">${out}</div>`;
+}
+function bpFloorsHTML(){
+  const rows=(A().career||{}).rep_floor||[];
+  if(!rows.length) return `<div class="empty">No completed contract matched a mission the SC-Wiki lists.</div>`;
+  return `<div class="tline">`+rows.slice(0,14).map(([fac,rep,done,now,nxt,togo])=>
+    `<div class="tev"><span class="td">${fmt(rep)} <span class="bph">rep</span></span>`+
+    `<span class="tw">${esc(fac)}<span class="bpk">${now?esc(now):'no rank yet'}${nxt?` · ${fmt(togo)} to ${esc(nxt)}`:''}</span></span>`+
+    `<span class="tv"><span class="bph">${fmt(done)} completed</span></span></div>`).join('')+`</div>`;
+}
 const BP_SLOTS={'Armor':['Helmet','Core','Arms','Legs','Backpack'], 'Flight suits':['Helmet','Suit']};
 function bpBoardHTML(catalog){
   const own=bpOwnedKeys(); const has=(k,n)=>own.has(k)||own.has('n:'+(n||'').toLowerCase());
@@ -6593,19 +6787,33 @@ function secBlueprints(v){
   $('#content').innerHTML=metaLine(v)+
     group(1,'blueprints','Blueprint library','Everything the game has told you it handed over — and what it hasn\u2019t',
       K+(catalog?`<div id="bpBoard">${bpBoardHTML(catalog)}</div>`:''))+
-    group(2,'overview','Every blueprint','The whole list, searchable — what you have, or what you\u2019re still missing',
+    (DATA.missions && catalog ? group(2,'missions','Planner','Which missions drop a blueprint, what standing they need, and where your completed contracts put you',
+      `<div class="grid2"><div class="card"><h3>Plan a blueprint <span class="u">— its missions and their gates</span></h3><div id="bpPlan">${bpPlanHTML()}</div></div>`+
+      `<div class="card"><h3>Standing floors <span class="u">— rep your matched completions alone would have earned</span></h3>${bpFloorsHTML()}</div></div>`+
+      noteFold(`A floor, not your standing: the game never writes reputation to the log. Missions CIG has retired, event bonuses and resets are invisible here.`,
+        `Each completed contract in your log is matched to the SC-Wiki\u2019s mission list by its class name and credited with that mission\u2019s reputation. Generated hauling contracts are matched by family. Gates and ladders come from the same data (${esc(String(DATA.missions.version||'').split('-')[0])}). If you know your real rank is higher, the plan is at least that good.`)) : '')+
+    group(3,'overview','Every blueprint','The whole list, searchable — what you have, or what you\u2019re still missing',
       `<div class="card"><h3>${listTitle}</h3>${bar}<div id="bpList">${bpListHTML(v)}</div></div>`)+
-    group(3,'activity','Unlock history','When the blueprints arrived, and how far along each category is',
+    group(4,'activity','Unlock history','When the blueprints arrived, and how far along each category is',
       `<div class="grid2">`+cardHTML('Received per month','notifications, not distinct blueprints','bpMonths')+
       cardHTML(catalog?'Progress by category':'By category', catalog?'owned / in the catalogue':'distinct blueprints in this scope','bpCats')+`</div>`)+
     noteFold(
       `Blueprints the game announced to you, counted once each. The log has no ownership list, so this is a minimum.`,
       `Only the Received Blueprint notice is logged; the library itself sits on CIG\u2019s servers. Blueprints from before 4.7, or from another PC whose logs weren\u2019t imported, won\u2019t appear. Language packs (StarStrings, ScCompLangPack) rename items in the notice; CSR matches them back to the real item and keeps your wording as a search alias. <span class="bpx">\u00d72</span> marks a duplicate drop. PTU and Tech Preview run a copy of your account and get their own libraries. Armour sets are read off the game\u2019s item ids (pieces of one set share a variant number), ship-weapon families off the class with the size removed; single pieces aren\u2019t sets and only show in the list.${catalog?` Missing is measured against the SC-Wiki\u2019s extraction of the game data (${fmt(catalog.n)} blueprints, ${esc(String(catalog.version||'').split('-')[0])}), which includes blueprints you can\u2019t get yet — a wish-list, not a to-do list.`:''}`);
-  const draw=()=>{ const el=$('#bpList'); if(!el) return; el.innerHTML=bpListHTML(v); wire(); };
+  const plan=()=>{ const el=$('#bpPlan'); if(!el) return; el.innerHTML=bpPlanHTML(); wirePlan(); };
+  const wirePlan=()=>{
+    document.querySelectorAll('#content [data-bpplan]').forEach(b=>b.onclick=()=>{
+      bpPlanKey=b.dataset.bpplan; const r=(DATA.bp_catalog.rows||[]).find(x=>x[0]===bpPlanKey); if(r) bpPlanQ=r[1];
+      plan(); const el=$('#bpPlan'); if(el) scrollToY(el.getBoundingClientRect().top+window.pageYOffset-160);
+    });
+    const pq=$('#bpPlanQ'); if(pq){ pq.oninput=()=>{ bpPlanQ=pq.value; bpPlanKey=''; const o=$('#bpPlan'); if(o){ o.innerHTML=bpPlanHTML(); wirePlan(); const nq=$('#bpPlanQ'); if(nq){ nq.focus(); nq.setSelectionRange(nq.value.length,nq.value.length); } } }; }
+  };
+  const draw=()=>{ const el=$('#bpList'); if(!el) return; el.innerHTML=bpListHTML(v); wire(); wirePlan(); };
   const wire=()=>document.querySelectorAll('#content [data-bpg]').forEach(b=>b.onclick=()=>{
     bpPage=+b.dataset.bpg; draw();
     const el=$('#bpList'); if(el) scrollToY(el.getBoundingClientRect().top+window.pageYOffset-160);
   });
+  wirePlan();
   // pills re-render the whole section (cheap); the search box only redraws the list, so
   // typing never loses focus
   document.querySelectorAll('#content [data-bpc]').forEach(b=>b.onclick=()=>{ bpCat=b.dataset.bpc; bpPage=0; secBlueprints(v); });
@@ -8223,6 +8431,11 @@ def load_resolvers():
         cstep(f"munitions database synced — {len(ITEMS.idx):,} entries on file")
     else:
         cwarn("munitions database offline — using curated arms table")
+    MIS.cache_path = cache_file("sc_missions.json")
+    if MIS.load():
+        cstep(f"contract registry synced — {len(MIS.rows):,} missions · {len(MIS.factions)} factions")
+    else:
+        cwarn("contract registry offline — blueprint planner unavailable")
     BPS.cache_path = cache_file("sc_blueprints.json")
     if BPS.load():
         cstep(f"crafting catalogue synced — {len(BPS.rows):,} blueprints ({BPS.version or 'unknown build'})")

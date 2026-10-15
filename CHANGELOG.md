@@ -8,6 +8,20 @@ uses [Semantic Versioning](https://semver.org/) (MAJOR.MINOR.PATCH).
 ## [Unreleased]
 
 ### Added
+- **Blueprint planner** (Blueprints). Pick a blueprint — type its name, or press *plan*
+  on any row of the list — and CSR shows the missions that drop it, the faction and
+  standing each one needs with the reputation threshold behind it, the drop chance,
+  the reputation a completion gives, and how many times you've completed that mission.
+  Beside it, **Standing floors**: for every faction, the reputation your matched
+  completions alone would have earned, the rank that implies, and what's left to the
+  next one. The game never writes reputation to the log, so a floor is a minimum —
+  missions CIG has retired, event bonuses and resets are invisible — and the planner
+  marks a gate *open at your floor* rather than claiming your rank. Mission data,
+  gates and ladders come from the SC-Wiki's mission index (~1,800 missions, 35
+  factions), cached and refreshed with the other catalogues; the blueprint catalogue
+  now carries each blueprint's unlocking missions.
+  - Parser version **18**: completed contracts are now kept by class, not just taken
+    ones, which is what the floors are built on.
 - **Cargo hauling** (Missions). The delivery objective of a hauling contract is written
   to the log as *Deliver 0/183 SCU of Potassium to Ruin Station*, so CSR now adds up the
   SCU on every hauling contract you completed: total, biggest single run, SCU per
@@ -23,7 +37,6 @@ uses [Semantic Versioning](https://semver.org/) (MAJOR.MINOR.PATCH).
   is a crew jump — with a list of the pilots you flew under. Party time runs from
   accepting an invite to leaving the group (a party you host leaves no trace in your
   log). CrimeStat rises are the HUD's *Rating Increased* notices.
-  - Parser version **17**: the first run after updating re-reads your logs.
 
 ### Fixed
 - **The Constellation Mk V Centaurus was filed as a Phoenix Emerald.** The RSI ship
