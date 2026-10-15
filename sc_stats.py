@@ -6048,6 +6048,48 @@ nav a::after{background:var(--menu-bg);border-color:var(--glass-line);box-shadow
 .sb-v{font-family:var(--font-mono);font-size:13px;color:var(--muted);font-variant-numeric:tabular-nums}
 .sb-p{font-family:var(--font-mono);font-size:13px;color:var(--txt);min-width:4ch;text-align:right;font-variant-numeric:tabular-nums}
 .sb-empty{opacity:.5}
+
+/* ==== CSR Hybrid — Blueprints polish (spec 5) — after the spec-4 block ====
+   CSS only (plus BP_PAGE 25 -> 20 in the JS). No markup or id changes. */
+
+/* 1. Armour sets: two columns that read DOWN then across (CSS columns, not grid), so
+      the progress-sorted order is kept. Only the armour card has .bpbar right before
+      .bsets — the ship-weapon ladders card has no tabs and is untouched. */
+.bpbar + .bsets{display:block;columns:2 460px;column-gap:44px}
+.bpbar + .bsets>.bset{break-inside:avoid}
+.bpbar + .bsets>.foot-link,.bpbar + .bsets>.empty{column-span:all;display:inline-flex;margin-top:12px}
+.bsgo{width:150px}                 /* fixed, so the slot squares line up row to row */
+#bpBoard>.grid2{margin-top:20px}    /* armour card no longer touches the ladders/grid row */
+
+/* 2. Slot squares: a slot the set doesn't have reads as "no such piece", not as an
+      empty (missing) box — faint centre dot, no border. */
+.bsq.na,.bdot.na{border-color:transparent;opacity:1;position:relative}
+.bsq.na::after,.bdot.na::after{content:"";position:absolute;inset:0;margin:auto;width:4px;height:4px;border-radius:50%;background:var(--glass-line)}
+.bsq,.bdot{width:20px;height:20px;font-size:11px}
+.bsq{border-radius:5px}
+.bsq.on,.bdot.on{color:#06121f}
+:root[data-theme="light"] .bsq.on,:root[data-theme="light"] .bdot.on{color:#fff}
+
+/* 3. Ship components grid: a complete cell (owned = total) gets a SOLID fill with
+      dark text — the 50% heat tint left "8/8" at ~1.5:1. */
+.bgrid td{border-radius:var(--r-sm);border-color:var(--glass-line)}
+.bgrid td.full{background:var(--cyan);border-color:var(--cyan)}
+.bgrid td.full b,.bgrid td.full span{color:#06121f}
+:root[data-theme="light"] .bgrid td.full b,:root[data-theme="light"] .bgrid td.full span{color:#fff}
+.bgrid td.na{border-color:transparent}
+
+/* 4. Planner: "Plan a blueprint" no longer stretches to the height of Standing floors
+      (it was ~600px of empty card before a search). */
+.grid2:has(#bpPlan){align-items:start}
+/* ...and stays in view (sticky under the topbar) while you scroll Standing floors */
+.grid2:has(#bpPlan)>.card:first-child{position:sticky;top:104px}
+#bpPlanQ{width:100%}
+.bppl{font-size:11px}
+
+/* 5. Library list: date column, name and category align on one baseline grid */
+#bpList .tev{display:grid;grid-template-columns:96px minmax(0,1fr) auto;align-items:baseline;column-gap:16px}
+#bpList .tev .tw{min-width:0}
+#bpList .tev .tv{margin-left:0}
 </style>
 </head>
 <body>
@@ -6958,9 +7000,9 @@ function secEconomy(v){
 // against. Owned rows are the ones CSR has seen you receive. The Missing side comes from
 // the SC-Wiki's extraction of the game data (DATA.bp_catalog, ~1,600 blueprints), so
 // "missing" means "never seen received in your logs on this PC", not "confirmed absent".
-// 25 to a page for the same reason the crash list pages: 1,600 rows in a scroll box is
+// 20 to a page for the same reason the crash list pages: 1,600 rows in a scroll box is
 // a haystack.
-const BP_PAGE=25;
+const BP_PAGE=20;
 let bpPage=0, bpCat='all', bpQ='', bpMode='owned';
 const bpSkin = n => (n||'').replace(/\s*"[^"]*"\s*/g,' ').replace(/\s+/g,' ').trim();   // 'Arclight "Midnight" Pistol' -> wiki page for the gun
 function bpOwnedKeys(){
