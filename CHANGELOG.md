@@ -5,6 +5,44 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and CSR
 uses [Semantic Versioning](https://semver.org/) (MAJOR.MINOR.PATCH).
 
 
+## [Unreleased]
+
+### Added
+- **Cargo hauling** (Missions). The delivery objective of a hauling contract is written
+  to the log as *Deliver 0/183 SCU of Potassium to Ruin Station*, so CSR now adds up the
+  SCU on every hauling contract you completed: total, biggest single run, SCU per
+  contract, and the split by commodity and by destination. SCU on runs that failed or
+  were abandoned is shown separately and not counted. From the HUD notices, 4.5 onward.
+- **Injuries & treatment** (Combat). The HUD's *Injury Detected* warnings (severity,
+  body part, tier — 4.4 onward) and the med-bed surgery event (every patch) make a new
+  group: injuries, how many were severe or worse, treatments that went through, and
+  whether the bed was in a hospital or a ship's medbay, with bars for where it hurt and
+  what the bed fixed.
+- **Jumps as crew, time in a party, CrimeStat rises** (Flight & Travel → Where you've
+  been). The quantum-calibration notice names the pilot, so a jump someone else started
+  is a crew jump — with a list of the pilots you flew under. Party time runs from
+  accepting an invite to leaving the group (a party you host leaves no trace in your
+  log). CrimeStat rises are the HUD's *Rating Increased* notices.
+  - Parser version **17**: the first run after updating re-reads your logs.
+
+### Fixed
+- **A tractor beam counted as 19 reloads.** The 4.10 reload rule took every quiet
+  re-attach of a magazine as a swap, and the tractor beam re-attaches its battery with
+  the same id every few seconds while in use. A reload now needs a *different* magazine
+  id in the port. Checked against a session with a known six magazines fired: still six.
+- **Ammo repools were being added to reloads in 4.10.** The *AmmoRepool* request is
+  still written in 4.10 (an earlier read of the first 4.10 sessions found none), and
+  topping a magazine up from a box is not a reload. From 4.10 reloads are magazine
+  swaps only; repools are shown beside them. Before 4.10 the repool stays the reload
+  signal, as it was.
+
+### Checked, not changed
+- **4.10.2 logs** (builds 12881860 and 12913470) parse into the 4.10 scope with every
+  existing metric firing. The client's FileVersion is back to the `4.10.197.x` form.
+- **Still no kills** — a week of sessions with ship and NPC kills produced no kill,
+  death or destruction line of any kind. Ship deaths still log and still count.
+- **Zero blueprints in a week** was confirmed by the player: none were received.
+
 ## [1.4.0] — 2026-09-06
 
 ### Added

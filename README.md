@@ -151,15 +151,16 @@ Patch* to filter to that patch (and *↩ View career* to reset).
 
 - **Overview** — RSI profile, snapshot KPIs, click-to-filter playtime-by-patch,
   signature top-3 ships & guns with artwork
-- **Flight & Travel** — where you've been (jurisdictions, landing-zone visits, hangars requested — from the HUD notices, 4.5+), *ships & hulls* (distinct ships, boardings, take-offs, fleet
+- **Flight & Travel** — where you've been (jurisdictions, landing-zone visits, hangars requested, jumps as crew and the pilots you flew under, time in a party, CrimeStat rises — from the HUD notices, 4.5+), *ships & hulls* (distinct ships, boardings, take-offs, fleet
   size, most-flown with first/last flown dates, hull-size mix, roles) and
   *travel & navigation* (quantum jumps, jumps per session/hour, systems visited)
 - **Combat** — *ship combat* (how you lost ships), *FPS combat* (loadout ranked by
-  how often each weapon was drawn, plus reloads and carry), and *looting & inventory*
+  how often each weapon was drawn, plus reloads and carry), *injuries & treatment*
+  (what hurt you, med-bed surgeries, hospital vs ship medbay), and *looting & inventory*
   (containers looted, items transferred, corpse loots)
 - **Legacy Combat** — real PvP/PvE kills & K/D from patches 4.1–4.3 (PU vs Arena
   Commander toggle) — the only builds that still logged combat client-side
-- **Missions** — outcomes, completion rate, mission types, and contracts by name (4.5+)
+- **Missions** — outcomes, completion rate, mission types, contracts by name (4.5+), and cargo hauling: SCU delivered by commodity and destination
 - **Economy** — **real aUEC spent**, top items bought, what you buy, cargo & commodities
 - **Blueprints** — every crafting blueprint the game has handed you (4.7+), searchable, plus what you're still missing against the full ~1,600-blueprint catalogue; armour as sets (which one is a piece from complete), ship weapons as S1–S6 ladders, components as a type × size grid
 - **Activity** — playtime by month, weekday×hour heatmap, session-length mix, streaks

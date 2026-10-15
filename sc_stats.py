@@ -48,7 +48,7 @@ CSR_CONTACT = "support@archelium.com"      # publisher/contact (archelium.com)
 # Bump whenever scan_log() learns to extract something new or fixes an extraction bug.
 # A quick refresh reuses archived sessions only when they were parsed by THIS version,
 # so improved parsing always re-reads old logs instead of silently keeping stale numbers.
-PARSER_VERSION = 15
+PARSER_VERSION = 17
 
 
 # --------------------------------------------------------------------------- #
@@ -1295,6 +1295,17 @@ QT_ARRIVE = "Quantum Drive Arrived - Arrived at Final Destination"
 NOTIF_RE = re.compile(r'Added notification "(.*?)" \[(\d+)\]')
 JURIS_RE = re.compile(r"^(?:Entered (.+?) Jurisdiction|Journal Entry Added: Jurisdiction: (.+?))\s*$")
 CONTRACT_NOTIF_RE = re.compile(r"^Contract (Accepted|Complete|Failed):\s*(.+?)\s*$")
+# "Minor Injury Detected - Left arm - Tier 2 Treatment Required" (HUD, 4.4+)
+INJURY_RE = re.compile(r"^(Minor|Moderate|Severe|Critical) Injury Detected - ([A-Za-z ]+?) - Tier (\d)", re.I)
+# "Quantum Travel Calibration Started By <pilot>" — names the pilot, so a jump under
+# someone else's hands is a crew jump. The notice for one's own jumps only exists
+# from 4.8; crew jumps are there from 4.4.
+QT_CAL_RE = re.compile(r"^Quantum Travel Calibration Started By (\S+)")
+# "New Objective: Deliver 0/183 SCU of Potassium to Ruin Station above Pyro VI"
+HAUL_RE = re.compile(r"^New Objective: Deliver (\d+)/(\d+) SCU of (.+?) to (.+?):?\s*$")
+NOTIF_MISSION_RE = re.compile(r"MissionId: \[([0-9a-f-]+)\], ObjectiveId: \[([^\]]*)\]")
+# med-bed surgery: who, which bed, in which ship (none = a hospital), which parts
+MEDBED_RE = re.compile(r"<MED BED HEAL> Actor: (\S+) .*?Perform surgery event Success, med bed name: (\S+), vehicle name: (\S+), (.*)$")
 PU_JOIN = ('Context Establisher Done', 'gamerules="SC_Default"', 'establisher="Network"')
 LZ_VISIT_GAP = 600           # armistice-zone entries closer than this are one visit
 
@@ -2297,6 +2308,19 @@ def detect_patch(fh):
     return (branch or fver), build
 
 
+def _part_label(k):
+    """leftArm -> Left arm, as the HUD would say it."""
+    return re.sub(r"(?<=[a-z])([A-Z])", lambda m: " " + m.group(1).lower(), k).capitalize()
+
+
+def _sum_parts(injuries):
+    """[[part, notices]] from the Severity|Part|Tier counter, worst-hit first."""
+    c = Counter()
+    for k, n in injuries.items():
+        c[k.split("|")[1]] += n
+    return c.most_common()
+
+
 def _lz_visits(stamps):
     """Distinct landing-zone visits from armistice-zone entries. The notification fires
     on every re-entry — walking in and out of a hangar gave twelve in one stay — so
@@ -2325,7 +2349,17 @@ def scan_log(path):
     reloads = Counter()                # weapon class -> reloads (AmmoRepool to 4.9; magazine port from 4.10)
     mag_sec = None                     # second currently being counted for attachment bursts
     mag_att_n = 0                      # AttachmentReceived lines in that second
-    mag_pending = []                   # weapon classes whose magazine attached in that second
+    mag_pending = []                   # (weapon class, magazine id) attached in that second
+    mag_last = {}                      # weapon class -> magazine id currently in its port
+    repools = 0                        # AmmoRepool requests (topping a magazine up from a box)
+    injuries = Counter()               # "Severity|Part|Tier" -> notices
+    medbed = []                        # (actor, in a ship?, [parts]) per surgery
+    crew_jumps = Counter()             # pilot -> jumps under their hands
+    party_open = None                  # when the current party invite was accepted
+    party_acc = 0                      # invites accepted
+    party_secs = 0.0                   # seconds spent in someone's party
+    crimestat = 0                      # CrimeStat Rating Increased notices
+    haul_obj = {}                      # (mission, objective) -> (SCU, commodity, destination)
     mag_method = False                 # True once the patch is known to be 4.10+
     carried = Counter()                # weapon class -> times CARRIED (stowed/holstered)
     loot_boxes = Counter()             # container size -> crates looted (unique instances)
@@ -2594,19 +2628,56 @@ def scan_log(path):
                                     (contracts_acc if cm.group(1) == "Accepted" else
                                      contracts_done if cm.group(1) == "Complete" else
                                      contracts_failed)[cm.group(2)] += 1
+                                elif txt.startswith("New Objective: Deliver "):
+                                    hm = HAUL_RE.match(txt)
+                                    mo = NOTIF_MISSION_RE.search(line)
+                                    if hm and mo:
+                                        haul_obj[(mo.group(1), mo.group(2))] = (
+                                            int(hm.group(2)), hm.group(3).strip(), hm.group(4).strip())
+                                elif "Injury Detected" in txt:
+                                    im = INJURY_RE.match(txt)
+                                    if im:
+                                        injuries[f"{im.group(1).capitalize()}|{im.group(2).strip().capitalize()}|{im.group(3)}"] += 1
+                                elif txt.startswith("Quantum Travel Calibration Started By "):
+                                    qm = QT_CAL_RE.match(txt)
+                                    if qm:
+                                        crew_jumps[qm.group(1)] += 1
+                                elif txt.startswith("CrimeStat Rating Increased"):
+                                    crimestat += 1
+                elif "<MED BED HEAL>" in line:
+                    mb = MEDBED_RE.search(line)
+                    if mb:
+                        parts = [k for k, v in re.findall(r"(\w+): (true|false)", mb.group(4)) if v == "true"]
+                        medbed.append((mb.group(1), mb.group(3) != "none", parts))
+                elif "<Accept invitation>" in line:
+                    party_acc += 1
+                    party_open = party_open or (parse_dt(p) if p else None)
+                elif "<Leave group>" in line:
+                    _lv = parse_dt(p) if p else None
+                    if party_open and _lv and _lv > party_open:
+                        party_secs += min((_lv - party_open).total_seconds(), 12 * 3600)
+                    party_open = None
                 elif "AttachmentReceived" in line:
                     if mag_method:
                         sec = line[1:20]                       # <YYYY-MM-DDTHH:MM:SS
                         if sec != mag_sec:
                             if mag_att_n <= 2:                 # a quiet second: those were real swaps
-                                for wcls in mag_pending:
-                                    reloads[wcls] += 1
+                                for wcls, changed in mag_pending:
+                                    if changed:
+                                        reloads[wcls] += 1
                             mag_sec, mag_att_n, mag_pending = sec, 0, []
                         mag_att_n += 1
                         if "Port[magazine_attach]" in line and "Status[persistent]" in line:
                             mm = ATTACH_RE.search(line)
+                            mi = ATTACH_ID_RE.search(line)
                             if mm and mm.group(1).strip().endswith("_mag"):
-                                mag_pending.append(mm.group(1).strip()[:-4])
+                                # the same magazine re-attaching is the game re-syncing the
+                                # port (a tractor beam does it every few seconds while in
+                                # use); a reload brings a different one. Tracked on every
+                                # attach, counted only in a quiet second.
+                                wcls, mid = mm.group(1).strip()[:-4], (mi.group(1) if mi else None)
+                                mag_pending.append((wcls, mag_last.get(wcls) != mid))
+                                mag_last[wcls] = mid
                     mo = ATTACH_ID_RE.search(line)
                     if mo:
                         own_ids.add(mo.group(1))       # this entity is gear the player owns
@@ -2627,13 +2698,17 @@ def scan_log(path):
                 # 4.10 renamed the tag: <InventoryManagementRequest> became
                 # <Inventory Mgmt Request Queued>, with the "Queued Request[N] Type[X] …
                 # Source[class]" text unchanged. Both are accepted; the 4.10 sessions read
-                # so far show no AmmoRepool requests at all, so reloads may simply no
-                # longer be logged — if they are, this still counts them.
+                # 4.10 still writes them: a repool tops a magazine up from a box, which
+                # is not a reload. From 4.10 reloads are the magazine swaps read off the
+                # weapon's port (above) and repools are kept as their own count; before
+                # 4.10 the repool was the only reload signal there was, so it stays one.
                 elif ("<InventoryManagementRequest>" in line or "<Inventory Mgmt Request Queued>" in line) and "AmmoRepool" in line:
                     m = AMMO_RE.search(line)
                     if m:
-                        # magazine class -> weapon class (drop the trailing _mag)
-                        reloads[re.sub(r"_mag$", "", m.group(1))] += 1
+                        repools += 1
+                        if not mag_method:
+                            # magazine class -> weapon class (drop the trailing _mag)
+                            reloads[re.sub(r"_mag$", "", m.group(1))] += 1
                 elif ("<InventoryManagementRequest>" in line or "<Inventory Mgmt Request Queued>" in line) and "Type[Move]" in line:
                     if MOVE_RE.search(line):
                         transfers += 1                 # item moved between inventories
@@ -2826,12 +2901,38 @@ def scan_log(path):
         outcome = "died"
 
     if mag_method and mag_att_n <= 2:          # the last second of the log
-        for wcls in mag_pending:
-            reloads[wcls] += 1
+        for wcls, changed in mag_pending:
+            if changed:
+                reloads[wcls] += 1
+    # ---- HUD-derived extras resolved once the handle is known ----
+    _me = (handle or handle_fb or "").lower()
+    medbed_n = sum(1 for a, _ship, _p in medbed if not _me or a.lower() == _me)
+    medbed_ship = sum(1 for a, ship, _p in medbed if ship and (not _me or a.lower() == _me))
+    medbed_parts = Counter()
+    for a, _ship, parts in medbed:
+        if not _me or a.lower() == _me:
+            medbed_parts.update(parts)
+    if _me:
+        crew_jumps.pop(_me, None)
+        for k in [k for k in crew_jumps if k.lower() == _me]:
+            crew_jumps.pop(k, None)
+    _end = parse_dt(last)                      # UTC, like party_open; dt1 is already local
+    if party_open and _end and _end > party_open:
+        party_secs += min((_end - party_open).total_seconds(), 12 * 3600)
+    haul_scu = haul_lost = haul_runs = haul_max = 0
+    haul_com, haul_dest, _per = Counter(), Counter(), Counter()
+    for (mid, _oid), (n, com, dest) in haul_obj.items():
+        st = missions.get(mid)
+        if st == "Complete":
+            haul_scu += n; haul_com[com] += n; haul_dest[dest] += n; _per[mid] += n
+        elif st:
+            haul_lost += n
+    haul_runs = len(_per)
+    haul_max = max(_per.values()) if _per else 0
     return {
         "patch": patch, "build": build, "start": dt0, "dur": dur,
         "ships": ships, "ship_events": ship_events, "missions": missions, "weapons": weapons,
-        "reloads": reloads, "carried": carried,
+        "reloads": reloads, "repools": repools, "carried": carried,
         "loot_boxes": loot_boxes, "transfers": transfers, "corpse_loots": corpse_loots,
         "deaths": deaths, "collisions": collisions, "death_ships": death_ships,
         "qt": qt, "qt_targets": qt_targets, "contracts": contracts, "systems": systems,
@@ -2839,6 +2940,11 @@ def scan_log(path):
         "lz_visits": _lz_visits(lz_entries),
         "contracts_acc": dict(contracts_acc), "contracts_done": dict(contracts_done),
         "contracts_failed": dict(contracts_failed),
+        "injuries": dict(injuries), "medbed_n": medbed_n, "medbed_ship": medbed_ship,
+        "medbed_parts": dict(medbed_parts), "crew_jumps": dict(crew_jumps),
+        "party_acc": party_acc, "party_secs": round(party_secs), "crimestat": crimestat,
+        "haul_scu": haul_scu, "haul_runs": haul_runs, "haul_lost": haul_lost, "haul_max": haul_max,
+        "haul_com": dict(haul_com), "haul_dest": dict(haul_dest),
         "fleet_max": fleet_max, "purchases": purchases, "claims": claims,
         "blueprints": dict(blueprints),
         "shops": shops, "combat": combat,
@@ -2885,7 +2991,7 @@ def blank_patch():
         "ships": Counter(), "ship_set": set(), "ship_first": {}, "ship_last": {},
         "ship_events": Counter(),
         "missions": {}, "weapons": Counter(),
-        "reloads": Counter(), "carried": Counter(),
+        "reloads": Counter(), "repools": 0, "carried": Counter(),
         "loot_boxes": Counter(), "transfers": 0, "corpse_loots": 0,
         "contracts": Counter(), "systems": Counter(),
         "death_ships": Counter(),
@@ -2893,6 +2999,11 @@ def blank_patch():
         "hangars": 0, "lz_visits": 0, "hud_n": 0,
         "juris": Counter(), "juris_sessions": Counter(),
         "contracts_acc": Counter(), "contracts_done": Counter(), "contracts_failed": Counter(),
+        "injuries": Counter(), "medbed_n": 0, "medbed_ship": 0, "medbed_parts": Counter(),
+        "crew_jumps": Counter(), "crew_sessions": Counter(),
+        "party_acc": 0, "party_secs": 0.0, "party_sessions": 0, "crimestat": 0,
+        "haul_scu": 0, "haul_runs": 0, "haul_lost": 0, "haul_max": 0, "haul_sessions": 0,
+        "haul_com": Counter(), "haul_dest": Counter(),
         "purchases": 0, "claims": 0, "shops": Counter(),
         # blueprints (4.7+): receipts per name, first/last date, sessions seen in, per month
         "bp_recv": Counter(), "bp_first": {}, "bp_last": {}, "bp_sessions": Counter(),
@@ -2939,6 +3050,27 @@ def fold(agg, s):
     agg["contracts_acc"].update(s.get("contracts_acc") or {})
     agg["contracts_done"].update(s.get("contracts_done") or {})
     agg["contracts_failed"].update(s.get("contracts_failed") or {})
+    agg["injuries"].update(s.get("injuries") or {})
+    agg["medbed_n"] += s.get("medbed_n", 0)
+    agg["medbed_ship"] += s.get("medbed_ship", 0)
+    agg["medbed_parts"].update(s.get("medbed_parts") or {})
+    _cj = s.get("crew_jumps") or {}
+    agg["crew_jumps"].update(_cj)
+    for k in _cj:
+        agg["crew_sessions"][k] += 1
+    agg["party_acc"] += s.get("party_acc", 0)
+    agg["party_secs"] += s.get("party_secs", 0) or 0
+    if s.get("party_secs"):
+        agg["party_sessions"] += 1
+    agg["crimestat"] += s.get("crimestat", 0)
+    agg["haul_scu"] += s.get("haul_scu", 0)
+    agg["haul_runs"] += s.get("haul_runs", 0)
+    agg["haul_lost"] += s.get("haul_lost", 0)
+    agg["haul_max"] = max(agg["haul_max"], s.get("haul_max", 0))
+    if s.get("haul_scu"):
+        agg["haul_sessions"] += 1
+    agg["haul_com"].update(s.get("haul_com") or {})
+    agg["haul_dest"].update(s.get("haul_dest") or {})
     agg["fleet_max"] = max(agg["fleet_max"], s["fleet_max"])
     agg["purchases"] += s["purchases"]
     agg["claims"] += s["claims"]
@@ -2974,6 +3106,7 @@ def fold(agg, s):
             agg["build_at"] = st or agg.get("build_at")
     agg["weapons"].update(s["weapons"])
     agg["reloads"].update(s.get("reloads", {}))
+    agg["repools"] += s.get("repools", 0)
     agg["carried"].update(s.get("carried", {}))
     agg["loot_boxes"].update(s.get("loot_boxes", {}))
     agg["transfers"] += s.get("transfers", 0)
@@ -3377,6 +3510,24 @@ def finalize(agg):
         "contracts_named": [[n, c, agg["contracts_done"].get(n, 0), agg["contracts_failed"].get(n, 0)]
                             for n, c in agg["contracts_acc"].most_common(14)],
         "contracts_named_total": sum(agg["contracts_acc"].values()),
+        # injuries (HUD, 4.4+) and med-bed surgeries (client event, every patch)
+        "injuries": [[*k.split("|"), n] for k, n in agg["injuries"].most_common()],
+        "injuries_total": sum(agg["injuries"].values()),
+        "injuries_severe": sum(n for k, n in agg["injuries"].items() if k.split("|")[0] in ("Severe", "Critical")),
+        "injury_parts": _sum_parts(agg["injuries"]),
+        "medbed": {"n": agg["medbed_n"], "ship": agg["medbed_ship"],
+                   "parts": [[_part_label(k), n] for k, n in agg["medbed_parts"].most_common()]},
+        # crew jumps + party time (4.4+) and CrimeStat rises
+        "crew_jumps_total": sum(agg["crew_jumps"].values()),
+        "crew_pilots": [[k, agg["crew_sessions"][k], agg["crew_jumps"][k]]
+                        for k, _ in agg["crew_sessions"].most_common(12)],
+        "party": {"accepts": agg["party_acc"], "hours": round(agg["party_secs"] / 3600, 1),
+                  "sessions": agg["party_sessions"]},
+        "crimestat": agg["crimestat"],
+        # cargo hauling: SCU on delivery objectives of contracts that completed (4.5+)
+        "haul": {"scu": agg["haul_scu"], "runs": agg["haul_runs"], "lost": agg["haul_lost"],
+                 "max": agg["haul_max"], "sessions": agg["haul_sessions"],
+                 "com": agg["haul_com"].most_common(10), "dest": agg["haul_dest"].most_common(10)},
         "fleet_max": agg["fleet_max"],
         "purchases": agg["purchases"],
         "spend": round(agg["spend"]),
@@ -3404,6 +3555,7 @@ def finalize(agg):
         "gun_reloads": dict(gun_reloads),
         "gun_carried": dict(gun_carried),
         "reloads_total": sum(gun_reloads.values()),
+        "repools_total": agg["repools"],
         "carried_total": sum(gun_carried.values()),
         "drawn_total": sum(gun_named.values()),
         "loot_boxes": dict(agg["loot_boxes"]),
@@ -5645,6 +5797,7 @@ const ICON = {
   npc:_SVG('<rect x="5" y="8" width="14" height="11" rx="2.6"/><path d="M12 4.6v3.4"/><circle cx="12" cy="4" r="1.2" fill="currentColor" stroke="none"/><circle cx="9.6" cy="13" r="1.15" fill="currentColor" stroke="none"/><circle cx="14.4" cy="13" r="1.15" fill="currentColor" stroke="none"/><path d="M9.8 16h4.4"/><path d="M5 11.6H3.4M20.6 11.6H19"/>'),
   warning:_SVG('<path d="M12 4l8.5 15.2H3.5z"/><path d="M12 9.8v4.2"/><circle cx="12" cy="16.7" r="1" fill="currentColor" stroke="none"/>'),
   yes:_SVG('<circle cx="12" cy="12" r="8.4"/><path d="M8.3 12.2l2.6 2.6 4.8-5.6"/>'),
+  medical:_SVG('<rect x="4" y="6" width="16" height="13" rx="2"/><path d="M12 9.5v6M9 12.5h6"/><path d="M9 6V4.5h6V6"/>'),
   no:_SVG('<circle cx="12" cy="12" r="8.4"/><path d="M9 9l6 6M15 9l-6 6"/>'),
   day:_SVG('<circle cx="12" cy="12" r="3.9"/><path d="M12 2.6v2.5M12 18.9v2.5M2.6 12h2.5M18.9 12h2.5M5.1 5.1l1.8 1.8M17.1 17.1l1.8 1.8M18.9 5.1l-1.8 1.8M6.9 17.1l-1.8 1.8"/>'),
   night:_SVG('<path d="M20 14.4A8 8 0 019.6 4 8 8 0 1020 14.4z"/>'),
@@ -5939,7 +6092,7 @@ function donut(el, parts, center){
 
 const NOTE = noteFold(
   `Built from your client logs. Playtime, ships, missions, deaths, travel and loadout are real; kills, K/D and accuracy aren't in the log any more.`,
-  `CIG moved combat server-side in the 2026 builds. A weapon's drawn count is how often you pulled it into your hand, not shots fired. Reloads come from the game's reload events (magazine swaps from 4.10), carried from your stow and holster slots. Armour, attachments and props are left out of the loadout lists. Ship deaths are the only death type logged.`);
+  `CIG moved combat server-side in the 2026 builds. A weapon's drawn count is how often you pulled it into your hand, not shots fired. Reloads are magazine swaps read off the weapon from 4.10 (ammo-box repools are counted separately), and the repool events before that; carried comes from your stow and holster slots. Armour, attachments and props are left out of the loadout lists. Ship deaths are the only death type logged.`);
 // Patch labels. A numeric version reads "Patch 4.8"; a Tech-Preview feature branch
 // carries no version at all (Branch: scp-crafting) so it is named after the feature
 // it was previewing, and 'unknown' is the catch-all for anything else.
@@ -6077,11 +6230,17 @@ function secFlight(v){
         [icon('space'), fmt((v.juris||[]).length), 'Jurisdictions', 'whose space you entered'],
         (()=>{ const p=(v.juris||[]).filter(([k])=>/Ungoverned|Rough & Ready|People/.test(k)).reduce((a,[,s])=>a+s,0);
                return p ? [icon('warning'), fmt(p), 'Pyro sessions', 'entered Ungoverned / Rough & Ready / People\u2019s Alliance space'] : [icon('warning'), '0', 'Pyro sessions', 'no lawless space entered', 'na']; })(),
-      ])+barsCard('Jurisdictions entered','sessions · total entries','jurisBars')
+      ])+kpiRow([
+        [icon('members'), fmt(v.crew_jumps_total||0), 'Jumps as crew', `quantum jumps under someone else’s hands`],
+        (v.party&&v.party.hours ? [icon('orgs'), v.party.hours+'h', 'In a party', `${fmt(v.party.accepts)} invites accepted · ${fmt(v.party.sessions)} sessions`]
+                                : [icon('orgs'), '0', 'In a party', `no invites accepted (time as host isn’t logged)`, 'na']),
+        [icon('warning'), fmt(v.crimestat||0), 'CrimeStat rises', `times your rating went up`],
+      ])+`<div class="grid2">`+barsCard('Jurisdictions entered','sessions · total entries','jurisBars')+
+      barsCard('Pilots you flew with','sessions · jumps under their hands','crewBars')+`</div>`
       : `<div class="card"><div class="empty">The HUD notices these come from are only in the log from patch 4.5 onward.</div></div>`)+
       noteFold(
         `From the HUD notices the game writes to the log, 4.5 onward.`,
-        `A jurisdiction is who owns the space: UEE for open Stanton space, the four corporations for their planets, Ungoverned, Rough &amp; Ready and People\u2019s Alliance for Pyro, Klescher for prison. Armistice-zone notices fire at every hangar door, so entries within ten minutes count as one visit.`))
+        `A jurisdiction is who owns the space: UEE for open Stanton space, the four corporations for their planets, Ungoverned, Rough &amp; Ready and People\u2019s Alliance for Pyro, Klescher for prison. Armistice-zone notices fire at every hangar door, so entries within ten minutes count as one visit. The calibration notice names the pilot, so a jump someone else started is a crew jump. Party time runs from accepting an invite to leaving the group; a party you host leaves no trace.`))
   ;
   const shipItems=(v.ships_top||[]).map(([n,c,first,last,to])=>({label:n, full:n, value:c,
     disp:`${fmt(c)} <span class="vv-u">sess</span>`, href:wikiURL(n),
@@ -6092,6 +6251,8 @@ function secFlight(v){
   hbars($('#roleBars'), toItems(v.ship_role,'#5bd1e6'));
   hbars($('#sysBars'), toItems(v.systems,'#b98bff'));
   const jb=$('#jurisBars'); if(jb) hbars(jb, (v.juris||[]).map(([k,s,n])=>({label:k, value:s, disp:`${fmt(s)} <span class="vv-u">sess</span> · ${fmt(n)} entries`})));
+  const cw=$('#crewBars'); if(cw){ const rows=(v.crew_pilots||[]).map(([k,s,n])=>({label:k, value:s, disp:`${fmt(s)} <span class="vv-u">sess</span> · ${fmt(n)} jumps`, color:'#b98bff'}));
+    if(rows.length) hbars(cw, rows); else cw.innerHTML='<div class="empty">Every jump here was your own.</div>'; }
 }
 
 function secCombat(v){
@@ -6117,7 +6278,7 @@ function secCombat(v){
       kpiRow([
         [icon('gun'), v.guns_distinct||guns.length, 'Guns carried', `distinct weapons`],
         (v.reloads_total
-          ? [icon('reload'), fmt(v.reloads_total), 'Reloads', `magazines topped up`]
+          ? [icon('reload'), fmt(v.reloads_total), 'Reloads', v.repools_total ? `magazine swaps · ${fmt(v.repools_total)} repools from ammo boxes` : `magazine swaps`]
           : [icon('reload'), 'N/A', 'Reloads', `not logged in this patch`, 'na']),
         [icon('tools'), v.tools_distinct||tools.length, 'Tools carried', `distinct utility`],
       ])+
@@ -6125,7 +6286,18 @@ function secCombat(v){
       barsCard('Favorite guns','times drawn','gunBars')+
       barsCard('Tools & utility','times drawn','toolBars')+`</div>`
     )+
-    group(3,'cargo','Looting &amp; inventory','What you hauled — client-side events, so this spans every patch',
+    group(3,'medical','Injuries &amp; treatment','What hurt you, and where you had it fixed',
+      ((v.injuries_total||(v.medbed&&v.medbed.n)) ? kpiRow([
+        [icon('warning'), fmt(v.injuries_total||0), 'Injuries', `HUD warnings, 4.4 onward`],
+        [icon('damage'), fmt(v.injuries_severe||0), 'Severe or worse', `needed a proper bed`],
+        [icon('medical'), fmt(v.medbed.n||0), 'Med-bed treatments', `surgeries that went through`],
+        [icon('ship'), fmt(v.medbed.ship||0), 'In a ship’s medbay', `the rest in a hospital`],
+      ])+`<div class="grid2">`+
+      barsCard('Where it hurt','injury warnings by body part','injBars')+
+      barsCard('What the bed fixed','body parts treated','medBars')+`</div>`
+      : `<div class="card"><div class="empty">No injuries or treatments in this scope. Injury warnings are in the log from 4.4; med-bed surgeries from every patch.</div></div>`)
+    )+
+    group(4,'cargo','Looting &amp; inventory','What you hauled — client-side events, so this spans every patch',
       kpiRow([
         [icon('cargo'), fmt(v.containers_looted||0), 'Containers looted', lootSub],
         [icon('transfer'), fmt(v.transfers||0), 'Items transferred', `moved between inventories`],
@@ -6137,6 +6309,8 @@ function secCombat(v){
   hbars($('#toolBars'), toItems(tools.map(w=>[w[0],w[1]]), null, true).map(x=>({...x,tool:true})));
   donut($('#causeChart'), [{label:'Collision',value:dc.collision,color:'#ff9147'},{label:'Destroyed / other',value:dc.other,color:'#ff5468'}], {big:v.deaths, small:'ship deaths'});
   hbars($('#deathShips'), toItems(v.death_ships,'#ff5468', true));
+  const ib=$('#injBars'); if(ib) hbars(ib, (v.injury_parts||[]).map(([k,n])=>({label:k, value:n, disp:fmt(n), color:'#ff9147'})));
+  const mb=$('#medBars'); if(mb) hbars(mb, ((v.medbed||{}).parts||[]).map(([k,n])=>({label:k, value:n, disp:fmt(n), color:'#4ade80'})));
 }
 
 function renderCombat(v, L, o){
@@ -6463,7 +6637,18 @@ function secMissions(v){
     [icon('no'), fmt(m.fail), 'Failed', ``],
     [icon('quit'), fmt(m.abandon), 'Abandoned', ``],
   ]);
-  $('#content').innerHTML=metaLine(v)+K+
+  const h=v.haul||{};
+  const H = h.scu ? `<section class="gsec"><div class="ghead"><div class="gnum">—</div><div class="gic">${icon('cargo')}</div>`+
+      `<div class="gtx"><div class="gt">Cargo hauling</div><div class="gs">SCU delivered on hauling contracts you completed — from the delivery objectives, 4.5 onward</div></div></div><div class="gbody">`+
+      kpiRow([
+        [icon('cargo'), fmt(h.scu), 'SCU delivered', `${fmt(h.runs)} contracts · ${fmt(h.sessions)} sessions`],
+        [icon('yes'), fmt(h.max), 'Biggest contract', `SCU on one run`],
+        [icon('no'), fmt(h.lost), 'SCU not delivered', `contracts that failed or were abandoned`],
+        [icon('scales'), fmt(h.runs ? Math.round(h.scu/h.runs) : 0), 'SCU per contract', `average`],
+      ])+`<div class="grid2">`+barsCard('By commodity','SCU delivered','haulComBars')+barsCard('By destination','SCU delivered','haulDestBars')+`</div>`+
+      noteFold(`A contract counts when it completes; the SCU is its delivery target. Partial drops on a run that failed or was abandoned aren’t counted.`)+
+      `</div></section>` : '';
+  $('#content').innerHTML=metaLine(v)+K+H+
     cardHTML('Outcomes','completed / failed / abandoned','missionChart')+
     `<div style="margin-top:16px">`+barsCard('Mission types','by contract category','typeBars')+`</div>`+
     ((v.contracts_named||[]).length ? `<div style="margin-top:16px">`+
@@ -6472,6 +6657,8 @@ function secMissions(v){
   donut($('#missionChart'), [{label:'Completed',value:m.complete,color:'#4ade80'},{label:'Failed',value:m.fail,color:'#ff5468'},{label:'Abandoned',value:m.abandon,color:'#f4a92a'}], {big:(m.rate||0)+'%', small:m.total+' total'});
   hbars($('#typeBars'), toItems(v.mission_types,'#4ade80'));
   const cb=$('#contractBars'); if(cb) hbars(cb, (v.contracts_named||[]).map(([n,a,d,f])=>({label:n, full:n, value:a, disp:`${fmt(a)} <span class="vv-u">acc</span> · ${fmt(d)} done${f?` · ${fmt(f)} failed`:''}`})));
+  const hc=$('#haulComBars'); if(hc) hbars(hc, (h.com||[]).map(([k,n])=>({label:k, value:n, disp:fmt(n)+' SCU', color:'#f4a92a'})));
+  const hd=$('#haulDestBars'); if(hd) hbars(hd, (h.dest||[]).map(([k,n])=>({label:k, value:n, disp:fmt(n)+' SCU', color:'#5bd1e6'})));
 }
 
 
