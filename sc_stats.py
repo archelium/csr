@@ -5901,6 +5901,147 @@ nav a::after{background:var(--menu-bg);border-color:var(--glass-line);box-shadow
   .tb-controls{margin-left:auto;width:auto}
   .limited-note{margin:6px 14px 0}
 }
+
+/* ==== CSR Hybrid — Overview layer (spec 3) ====================================
+   Appended after the spec-2 shell block. Pairs with heroHTML / clusterHTML / pbars /
+   showCard. New classes are prefixed ov- / pb- / sig- so nothing collides with .hero
+   (kpiRow) or .bar-*.
+   ========================================================================== */
+
+/* ---- pilot hero: the ONE panel with the accent line, HUD grid and a bracket ---- */
+.ov-hero{position:relative;overflow:hidden;display:flex;align-items:center;justify-content:space-between;
+  flex-wrap:wrap;gap:28px;padding:30px 34px;margin-bottom:6px;border-radius:var(--r-lg);
+  background:var(--glass);border:1px solid var(--glass-line);box-shadow:var(--glass-shadow);
+  -webkit-backdrop-filter:blur(24px);backdrop-filter:blur(24px)}
+.ov-hero::before{content:"";position:absolute;inset:0 0 auto 0;height:3px;background:linear-gradient(90deg,var(--cyan),var(--amber))}
+.ov-hero::after{content:"";position:absolute;inset:0;pointer-events:none;
+  background-image:linear-gradient(var(--hud-grid) 1px,transparent 1px),linear-gradient(90deg,var(--hud-grid) 1px,transparent 1px);
+  background-size:48px 48px;-webkit-mask-image:radial-gradient(100% 100% at 50% 0,#000 20%,transparent 80%);
+  mask-image:radial-gradient(100% 100% at 50% 0,#000 20%,transparent 80%)}
+.ov-hero>*{position:relative;z-index:1}
+.ov-who{display:flex;align-items:center;gap:24px;min-width:0}
+.ov-ava{flex:none;width:92px;height:92px;border-radius:24px;padding:2px;background:linear-gradient(135deg,var(--cyan),var(--amber));box-shadow:0 8px 30px rgba(0,0,0,.35)}
+.ov-ava img,.ov-ava-ph{width:100%;height:100%;border-radius:22px;object-fit:cover;display:flex;align-items:center;justify-content:center;background:var(--panel2);color:var(--dim)}
+.ov-ava-ph .csr-ic{width:44px;height:44px;stroke-width:1.4}
+.ov-id{min-width:0}
+.ov-tags{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px}
+.ov-rank{font-size:17px;font-weight:500;color:var(--cyan)}
+.ov-tag{font-family:var(--font-mono);font-size:11px;letter-spacing:.1em;padding:3px 8px;border-radius:6px;border:1px solid var(--glass-line);color:var(--muted)}
+.ov-handle{margin:0 0 8px;font-size:44px;font-weight:700;line-height:1.05;letter-spacing:-.01em;color:var(--txt)}
+.ov-handle a.lk{color:inherit;text-decoration:none}
+.ov-handle a:hover{color:var(--cyan)}
+.ov-handle .ext{font-size:22px;color:var(--dim);font-weight:400}
+.ov-org{font-size:26px;font-weight:300;color:var(--dim);margin-left:12px;text-decoration:none}
+.ov-sub{font-size:14px;color:var(--muted);margin-bottom:14px}.ov-sub b{color:var(--txt);font-weight:500}
+.ov-sum{display:flex;flex-wrap:wrap;gap:4px 18px;font-family:var(--font-mono);font-size:13px;letter-spacing:.08em;text-transform:uppercase;color:var(--dim)}
+.ov-sum b{color:var(--txt);font-weight:400}
+.ov-nums{display:flex;align-items:center;gap:34px}
+.ov-ring{display:flex;flex-direction:column;align-items:center;gap:8px}
+.ov-rg{position:relative;width:76px;height:76px}
+.ov-rg svg{width:76px;height:76px;transform:rotate(-90deg)}
+.ov-rg circle{fill:none;stroke-width:4}.ov-rt{stroke:var(--glass-line)}.ov-rv{stroke:var(--cyan);stroke-linecap:round}
+.ov-rg span{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-family:var(--font-mono);font-size:18px}
+.ov-k{font-family:var(--font-mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--dim);text-align:center}
+.ov-k.c{color:var(--cyan);text-align:right;margin-top:6px}
+.ov-big{text-align:right}
+.ov-n{font-size:80px;font-weight:300;line-height:.95;letter-spacing:-.03em;font-variant-numeric:tabular-nums}
+.ov-s{font-family:var(--font-mono);font-size:12px;color:var(--dim);margin-top:3px}
+
+/* ---- chart + clusters row ---- */
+.ov-mid{display:grid;grid-template-columns:minmax(0,8fr) minmax(0,4fr);gap:20px}
+.ov-chart{display:flex;flex-direction:column}
+.ov-chart::after{display:block;content:"";position:absolute;top:12px;right:12px;width:16px;height:16px;left:auto;bottom:auto;
+  border:0;border-top:2px solid var(--cyan);border-right:2px solid var(--cyan);border-radius:0;opacity:.8}  /* the one card bracket */
+.ov-chart h3{display:flex;align-items:center;justify-content:space-between;gap:12px;padding-right:22px}
+.ov-chart #patchChart{flex:1;display:flex}
+.chart-reset{border-radius:999px;font-size:12px;min-height:30px;padding:0 12px;color:var(--amber);border-color:rgba(244,169,42,.55);background:var(--tint-amber)}
+.ov-clusters{display:grid;grid-template-rows:repeat(3,1fr);gap:16px}
+.ov-cl{padding:16px 20px;display:flex;flex-direction:column;justify-content:center;border-radius:var(--r-lg);
+  background:var(--glass);border:1px solid var(--glass-line);box-shadow:var(--glass-shadow)}
+.ov-ch{font-family:var(--font-mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--dim);
+  border-bottom:1px solid var(--glass-line);padding-bottom:6px;margin-bottom:12px}
+.ov-cp{display:flex;justify-content:space-between;gap:12px}.ov-cp>div:last-child{text-align:right}
+.ov-cv{font-family:var(--font-mono);font-size:22px;color:var(--txt);font-variant-numeric:tabular-nums}
+.ov-cv.red{color:var(--red)}.ov-cv.na{color:var(--dim);font-size:18px}
+.ov-ck{font-family:var(--font-mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+
+/* ---- pbars(): patch chart as buttons ---- */
+.pb-plot{position:relative;flex:1;min-height:270px;margin-left:36px}
+.pb-gl{position:absolute;left:0;right:0;height:1px;background:var(--grid)}
+.pb-gl span{position:absolute;right:calc(100% + 8px);top:-7px;font-family:var(--font-mono);font-size:11px;color:var(--dim)}
+.pb-bars{position:absolute;inset:0;display:flex}
+.pb-bar{flex:1;min-width:0;position:relative;display:flex;flex-direction:column;align-items:center;padding:28px 0 30px;
+  background:none;border:0;border-radius:10px;color:inherit;font:inherit;cursor:pointer}
+.pb-bar:hover{background:var(--tint-cyan)}
+.pb-trk{position:relative;flex:1;width:100%;display:flex;justify-content:center}
+.pb-col{position:absolute;bottom:0;width:min(36px,62%);border-radius:6px 6px 2px 2px;border-top:2px solid var(--cyan);
+  background:linear-gradient(180deg,color-mix(in srgb,var(--cyan) 80%,transparent),color-mix(in srgb,var(--cyan) 18%,transparent))}
+.pb-val{position:absolute;display:flex;flex-direction:column;align-items:center;gap:2px;font-family:var(--font-mono);font-size:11px;color:var(--muted);white-space:nowrap}
+.pb-peak{font-style:normal;font-size:11px;letter-spacing:.12em;color:var(--cyan);border:1px solid color-mix(in srgb,var(--cyan) 45%,transparent);border-radius:4px;padding:0 4px}
+.pb-x{position:absolute;bottom:6px;max-width:100%;padding:0 2px;font-family:var(--font-mono);font-size:12px;color:var(--dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pb-bar.sel .pb-col{border-top-color:var(--amber);box-shadow:0 0 18px color-mix(in srgb,var(--amber) 30%,transparent);
+  background:linear-gradient(180deg,var(--amber),color-mix(in srgb,var(--amber) 25%,transparent))}
+.pb-bar.sel .pb-val,.pb-bar.sel .pb-x{color:var(--amber)}
+.pb-bars.has-sel .pb-bar:not(.sel) .pb-col{opacity:.45}
+.pb-tip{display:none;position:absolute;top:-8px;left:50%;transform:translate(-50%,-100%);z-index:20;width:max-content;max-width:260px;
+  padding:9px 11px;border-radius:10px;background:var(--menu-bg);border:1px solid var(--glass-line);box-shadow:var(--menu-shadow);
+  font-family:var(--font-mono);font-size:12px;line-height:1.5;color:var(--muted);text-align:left;white-space:normal;pointer-events:none}
+.pb-tip b{color:var(--txt);font-weight:400}
+.pb-bar:hover .pb-tip,.pb-bar:focus-visible .pb-tip{display:block}
+.pb-bar:first-child .pb-tip{left:0;transform:translate(0,-100%)}
+.pb-bar:last-child .pb-tip{left:auto;right:0;transform:translate(0,-100%)}
+
+/* ---- signature cards (ships + guns share .sig) ---- */
+.showcase{gap:20px}
+.sig{display:flex;flex-direction:column;overflow:hidden;border-radius:var(--r-lg);
+  background:var(--glass);border:1px solid var(--glass-line);box-shadow:var(--glass-shadow)}
+.sig-art{position:relative;height:172px;background-size:cover;background-position:center;background-color:var(--panel2)}
+.sig-art::after{content:"";position:absolute;inset:auto 0 0 0;height:60px;background:linear-gradient(0deg,var(--panel2),transparent);opacity:.9}
+:root[data-theme="light"] .sig-art::after{display:none}
+.sig-art.ph{display:flex;align-items:center;justify-content:center;color:var(--dim)}
+.sig-art.ph .csr-ic{width:60px;height:60px;stroke-width:1.4;opacity:.6}
+.sig-rank{position:absolute;top:12px;left:12px;z-index:2;font-family:var(--font-mono);font-size:12px;padding:3px 8px;border-radius:6px;
+  background:var(--menu-bg);border:1px solid var(--glass-line);color:var(--amber)}
+.sig-placard{position:absolute;right:12px;bottom:12px;z-index:2;height:58px;min-width:58px;max-width:150px;padding:8px;border-radius:14px;
+  display:flex;align-items:center;justify-content:center;background:linear-gradient(180deg,#fbfcfe,#eef2f7);box-shadow:0 6px 20px rgba(0,0,0,.4)}
+.sig-placard img{max-height:42px;max-width:132px;object-fit:contain;display:block}
+.sig-body{padding:14px 20px 18px;display:flex;flex-direction:column;gap:9px;min-width:0}
+.sig-name{margin:0;font-size:22px;font-weight:700;min-width:0}
+.sig-name a,.sig-name>.nm{display:flex;align-items:baseline;gap:6px;min-width:0;color:var(--txt);text-decoration:none}
+.sig-name a:hover{color:var(--cyan)}
+.sig-name .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}   /* Constellation Mk IV Phoenix */
+.sig-name .ext{font-size:15px;color:var(--dim);font-weight:400;flex:none}
+.sig .show-chips{margin-top:0}
+.chip-c{font-size:11px;letter-spacing:.08em;text-transform:uppercase;border-radius:5px}
+.chip-c.mk{color:var(--muted)}
+.sig-count{font-family:var(--font-mono);font-size:15px;color:var(--amber)}
+.sig-count.g{color:var(--cyan)}
+/* HUD chips: one row of key + value pills (also restyles any other .mchip) */
+.mchips{gap:6px;margin-top:0}
+.mchip{flex-direction:row;align-items:center;gap:6px;padding:4px 8px;white-space:nowrap;border-radius:6px;
+  border:1px solid var(--glass-line);background:var(--soft)}
+.mchip.to{border-left-color:var(--glass-line);background:var(--soft)}
+.mchip .mk{font-size:11px;letter-spacing:.1em;color:var(--dim)}
+.mchip .mv,.mchip.to .mv{font-size:12px;font-weight:400;color:var(--cyan)}
+.mchip:not(.to) .mv{color:var(--txt)}
+.mchip.na{background:transparent}.mchip.na .mv{color:var(--dim)}
+
+/* the art scanner sweep is off on the Overview (calm); chart sweeps elsewhere stay */
+.sig-art::before{display:none}
+
+/* ---- old Overview blocks no longer rendered (safe to delete later): .profile on
+        Overview, .snap, .show-card/.show-img/.show-body. .profile stays for Orgs: ---- */
+.profile{border-radius:var(--r-lg);background:var(--glass);border:1px solid var(--glass-line);box-shadow:var(--glass-shadow)}
+.profile img{border-radius:16px}
+.profile .pf .l{font-family:var(--font-mono);font-size:11px;letter-spacing:.1em}
+
+@media(max-width:1180px){ .ov-mid{grid-template-columns:1fr} .ov-clusters{grid-template-rows:none;grid-template-columns:repeat(3,1fr)} }
+@media(max-width:1000px){ .showcase{grid-template-columns:repeat(2,minmax(0,1fr))} .ov-n{font-size:64px} .ov-hero{padding:26px} }
+@media(max-width:760px){
+  .ov-clusters{grid-template-columns:1fr} .showcase{grid-template-columns:1fr}
+  .ov-handle{font-size:32px}.ov-org{font-size:20px} .ov-nums{width:100%;justify-content:space-between}
+  .pb-plot{margin-left:30px} .pb-peak{display:none}
+}
 </style>
 </head>
 <body>
@@ -6264,12 +6405,12 @@ function group(n, ic, title, sub, body){
 // ISO YYYY-MM-DD -> DD-Mon-YYYY (e.g. 2025-07-27 -> 27-Jul-2025)
 const ddmm = s => { const p=(s||'').split('-'); return p.length===3 ? `${String(p[2]).padStart(2,'0')}-${MON[+p[1]-1]||p[1]}-${p[0]}` : (s||''); };
 // flight-recorder HUD chips: take-offs + first/last flown, for a ship
+// ---- ship chips: TAKE-OFFS + one FLOWN range chip (was FIRST FLOWN + LAST FLOWN) ----
 function shipMetaHTML(to,first,last){
-  const cell=(k,v,cls)=>`<span class="mchip ${cls||''}"><span class="mk">${k}</span><span class="mv">${v}</span></span>`;
+  const cell=(k,v,cls,ttl)=>`<span class="mchip ${cls||''}"${ttl?` title="${ttl}"`:''}><span class="mk">${k}</span><span class="mv">${v}</span></span>`;
   let out='';
   if(to) out+=cell('TAKE-OFFS',fmt(to),'to');
-  if(first) out+=cell('FIRST FLOWN',ddmm(first));
-  if(last&&last!==first) out+=cell('LAST FLOWN',ddmm(last));
+  if(first) out+=cell('FLOWN', ddmm(first)+(last&&last!==first?' → '+ddmm(last):''), '', 'First and last time you flew it');
   return out?`<div class="mchips">${out}</div>`:'';
 }
 // HUD chips for a gun card: reloads (from AmmoRepool) + times carried in loadout.
@@ -6298,37 +6439,37 @@ function toItems(pairs, color, link){
 
 // ---- showcase (top ships / guns with art + classification) ----
 function chip(txt, cls){ return txt ? `<span class="chip-c ${cls||''}">${esc(txt)}</span>` : ''; }
+// ---- signature card: ONE builder for ships and guns (Hybrid redesign, spec 3) ----
+// Both kinds keep the manufacturer placard on the art (no logo -> maker name as a text
+// chip). Ships get shipMetaHTML chips, guns keep gunMetaHTML (RELOADS / N/A, CARRIED).
 function showCard(item, rank, kind){
-  const glyph = kind==='ship'?ICON.ship:ICON.gun;
-  const url = wikiURL(item.name);   // wiki has richer specs for both ships & guns
-  // manufacturer logo sits as a badge on the art (bigger + on the right); the
-  // maker name shows as text only when there's no logo
-  const badge = item.logo ? `<div class="show-logo-badge"><img src="${item.logo}" alt="${esc(item.man||'')}" title="${esc(item.man||'')}" loading="lazy"></div>` : '';
-  const img = item.img
-    ? `<div class="show-img" style="background-image:url('${item.img}')"><div class="show-rank">#${rank}</div>${badge}</div>`
-    : `<div class="show-img placeholder">${glyph}<div class="show-rank">#${rank}</div>${badge}</div>`;
-  const manSub = (!item.logo && item.man) ? `<div class="show-sub">${esc(item.man)}</div>` : '';
-  let chips, sub, cnt;
+  const url = wikiURL(item.name);
+  const placard = item.logo ? `<div class="sig-placard"><img src="${item.logo}" alt="${esc(item.man||'')}" title="${esc(item.man||'')}" loading="lazy"></div>` : '';
+  const art = item.img
+    ? `<div class="sig-art" style="background-image:url('${item.img}')" role="img" aria-label="${esc(item.name)}"><span class="sig-rank">#${rank}</span>${placard}</div>`
+    : `<div class="sig-art ph">${kind==='ship'?ICON.ship:ICON.gun}<span class="sig-rank">#${rank}</span>${placard}</div>`;
+  const maker = item.logo ? '' : (item.man ? `<span class="chip-c mk">${esc(item.man)}</span>` : (item.code ? `<span class="chip-c mk">${esc(item.code)}</span>` : ''));
+  let chips, cnt;
   if(kind==='ship'){
-    chips = `<div class="show-chips">${chip(item.size,'sz '+(item.size||''))}${chip(item.role)}</div>`;
-    sub = manSub;
-    cnt = `<div class="show-count" title="Distinct play sessions this ship appeared in — not individual flights">${fmt(item.count)} sessions flown</div>`+
+    chips = chip(item.size, 'sz '+(item.size||''))+chip(item.role)+maker;   // existing .chip-c.sz.Large etc.
+    cnt = `<div class="sig-count" title="Distinct play sessions this ship appeared in — not individual flights">${fmt(item.count)} sessions flown</div>`+
           shipMetaHTML(item.takeoffs, item.first, item.last);
   } else {
-    chips = `<div class="show-chips">${chip(item.type)}${chip(item.ammo, (item.ammo||'').toLowerCase())}</div>`;
-    sub = manSub;
-    cnt = `<div class="show-count g" title="How many times you drew this weapon into your hand — not shots fired (SC doesn't log those)">drawn ${fmt(item.count)}×</div>`+
+    chips = chip(item.type)+chip(item.ammo, (item.ammo||'').toLowerCase())+maker;
+    cnt = `<div class="sig-count g" title="How many times you drew this weapon into your hand — not shots fired (SC doesn't log those)">drawn ${fmt(item.count)}×</div>`+
           gunMetaHTML(item.reloads, item.carried, item.reloads_known!==false);
   }
-  const name = `<div class="show-name">${link(url, esc(item.name)+' ↗', 'lk')}</div>`;
-  const man = (!item.logo && item.code) ? `<span class="show-man" title="${esc(item.man||'Manufacturer')}">${esc(item.code)}</span>` : '';
-  return `<div class="show-card">${img}<div class="show-body">${man}${name}${chips}${sub}${cnt}</div></div>`;
+  const name = url
+    ? `<a class="lk" href="${url}" target="_blank" rel="noopener" title="${esc(item.name)}"><span class="nm">${esc(item.name)}</span> <span class="ext" aria-hidden="true">↗</span></a>`
+    : `<span class="nm" title="${esc(item.name)}">${esc(item.name)}</span>`;
+  return `<article class="sig">${art}<div class="sig-body"><h3 class="sig-name">${name}</h3>`+
+    `<div class="show-chips">${chips}</div>${cnt}</div></article>`;
 }
 function showcaseHTML(){
   const sc = (A().showcase && A().showcase[current]) || {ships:[],guns:[]};
   const scope = current==='all' ? 'career' : ('patch '+current);
-  const ships = sc.ships.map((s,i)=>showCard(s,i+1,'ship')).join('') || '<div class="empty">No ships here.</div>';
-  const guns = sc.guns.map((g,i)=>showCard(g,i+1,'gun')).join('') || '<div class="empty">No guns here.</div>';
+  const ships = sc.ships.map((s,i)=>showCard(s,i+1,'ship')).join('') || '<div class="empty">No ships flown in this scope.</div>';
+  const guns  = sc.guns.map((g,i)=>showCard(g,i+1,'gun')).join('')  || '<div class="empty">No weapons drawn in this scope.</div>';
   return `<div class="row-title">Signature ships <span class="tag">· most-flown · ${scope} · art from RSI</span></div>`+
     `<div class="showcase">${ships}</div>`+
     `<div class="row-title">Signature guns <span class="tag">· most-drawn · ${scope}</span></div>`+
@@ -6552,41 +6693,79 @@ function miniTile(ic, val, label, na){
   return `<div class="mini${na?' na':''}"><span class="mi">${ic}</span>`+
     `<span class="mv">${val}</span><span class="ml">${label}</span></div>`;
 }
+// ---- pilot hero (Overview only). Works without a scraped profile: the handle falls
+// back to the account name, avatar to a glyph, and the RSI facts are simply omitted.
+function heroHTML(v){
+  const p = A().profile || null;
+  const handle = (p && p.handle) || currentAccount || 'Citizen';
+  const av = (p && p.avatar) ? `<img src="${p.avatar}" alt="${esc(handle)}’s RSI avatar">` : `<span class="ov-ava-ph">${icon('profile')}</span>`;
+  const tags = p ? [p.rank ? `<span class="ov-rank">${esc(p.rank)}</span>` : '',
+      p.enlisted ? `<span class="ov-tag">ENLISTED ${esc(fmtLongDate(p.enlisted).toUpperCase())}</span>` : '',
+      p.record ? `<span class="ov-tag">CITIZEN ${esc(p.record)}</span>` : ''].join('') : '';
+  const org = (p && p.org_sid) ? link(orgURL(p.org_sid), `[${esc(p.org_sid)}]`, 'ov-org') : '';
+  const sub = p ? [p.org_name ? `${esc(p.org_name)} · ${esc(p.org_rank||'Member')}` : 'No affiliation',
+      p.fluency ? `Fluency <b>${esc(p.fluency.split(',').map(s=>s.trim()).join(', '))}</b>` : '',
+      p.location ? `Location <b>${esc(p.location)}</b>` : ''].filter(Boolean).join(' · ') : '';
+  const m = v.missions||{total:0,rate:0}, R=32, C=2*Math.PI*R;
+  const ring = m.total
+    ? `<svg viewBox="0 0 72 72" aria-hidden="true"><circle class="ov-rt" cx="36" cy="36" r="${R}"/><circle class="ov-rv" cx="36" cy="36" r="${R}" stroke-dasharray="${C.toFixed(1)}" stroke-dashoffset="${(C*(1-m.rate/100)).toFixed(1)}"/></svg><span>${m.rate}%</span>`
+    : `<svg viewBox="0 0 72 72" aria-hidden="true"><circle class="ov-rt" cx="36" cy="36" r="${R}"/></svg><span>—</span>`;
+  return `<section class="ov-hero" aria-label="Pilot">`+
+    `<div class="ov-who"><div class="ov-ava">${av}</div><div class="ov-id">`+
+      (tags?`<div class="ov-tags">${tags}</div>`:'')+
+      `<h2 class="ov-handle">${link(citizenURL(handle), esc(handle)+' <span class="ext" aria-hidden="true">↗</span>', 'lk')}${org}</h2>`+
+      (sub?`<div class="ov-sub">${sub}</div>`:'')+
+      `<div class="ov-sum"><span><b>${fmt(v.active_days)}</b> days</span><span><b>${fmt(v.sessions)}</b> sessions</span><span>avg <b>${v.avg_min}</b> min</span><span><b>${fmt(v.ships_unique)}</b> ships</span></div>`+
+    `</div></div>`+
+    `<div class="ov-nums"><div class="ov-ring" title="${fmt(m.total)} missions ended, ${m.rate}% completed"><div class="ov-rg">${ring}</div><div class="ov-k">of ${fmt(m.total)}<br>missions done</div></div>`+
+      `<div class="ov-big"><div class="ov-n">${fmt(Math.round(v.hours))}</div><div class="ov-k c">Hours played</div><div class="ov-s">longest ${v.longest_h} h session</div></div></div>`+
+  `</section>`;
+}
+
+// ---- three stat clusters (replaces the six minis on the Overview) ----
+function clusterHTML(v){
+  const qt=qtTile(v), na=qt[4]==='na';
+  const cell=(val,label,cls,ttl)=>`<div${ttl?` title="${ttl}"`:''}><div class="ov-cv ${cls||''}">${val}</div><div class="ov-ck">${label}</div></div>`;
+  const cl=(h,a,b)=>`<section class="ov-cl"><div class="ov-ch">${h}</div><div class="ov-cp">${a}${b}</div></section>`;
+  return `<div class="ov-clusters">`+
+    cl('Flight', cell(fmt(v.takeoffs_total||0),'Take-offs'), cell(qt[1],'Quantum jumps', na?'na':'', na?'Not logged before patch 4.4':''))+
+    cl('Combat', cell(fmt(v.deaths),'Ship deaths','red'), cell(fmt(v.drawn_total||0),'Weapons drawn'))+
+    cl('Logistics', cell(fmt(v.containers_looted||0),'Containers looted'), cell(fmt(v.transfers||0),'Items moved'))+
+  `</div>`;
+}
+
+// ---- patch chart as real buttons (keyboard, aria-pressed, hover/focus card) ----
+// items: {key,label,value,disp,full}. Amber = the selected patch ONLY; the peak gets a
+// PEAK tag. Bars are % heights, so the card can stretch to the cluster column.
+function pbars(el, items, opts={}){
+  const max=niceMax(Math.max(1,...items.map(d=>d.value))), peak=Math.max(...items.map(d=>d.value));
+  const grid=[0,.25,.5,.75,1].map(f=>`<div class="pb-gl" style="bottom:calc(30px + (100% - 58px) * ${f})"><span>${opts.fmtY?opts.fmtY(max*f):Math.round(max*f)}</span></div>`).join('');
+  const bars=items.map((d,i)=>{ const h=Math.max(1.5, 100*d.value/max).toFixed(2), sel=d.key===opts.sel;
+    return `<button type="button" class="pb-bar${sel?' sel':''}" data-i="${i}" aria-pressed="${sel}" aria-label="${esc(d.full)}: ${esc(d.disp)}. ${sel?'Selected — press to view career':'Filter to this patch'}">`+
+      `<span class="pb-tip" role="tooltip"><b>${esc(d.disp)}</b> · ${esc(d.full)}</span>`+
+      `<span class="pb-trk"><span class="pb-val" style="bottom:calc(${h}% + 6px)">${d.value===peak?'<i class="pb-peak">PEAK</i>':''}${esc(d.disp)}</span>`+
+      `<span class="pb-col" style="height:${h}%"></span></span><span class="pb-x" title="${esc(d.full)}">${esc(d.label)}</span></button>`; }).join('');
+  el.innerHTML=`<div class="pb-plot">${grid}<div class="pb-bars${opts.sel?' has-sel':''}">${bars}</div></div>`;
+  el.querySelectorAll('.pb-bar').forEach(b=>b.onclick=()=>opts.onClick&&opts.onClick(items[+b.dataset.i]));
+}
+
 function secOverview(v){
-  const c=v;
-  const qt=qtTile(c);
-  const K=`<div class="snap">`+
-    kpiRow([
-      [icon('time'), fmt(Math.round(c.hours)), 'Hours played', `longest ${c.longest_h} h session`],
-      [icon('calendar'), c.active_days, 'Days played', `${fmt(c.sessions)} sessions · avg ${c.avg_min} min`],
-      [icon('ship'), c.ships_unique, 'Distinct ships', `types piloted`],
-      [icon('missions'), fmt(c.missions.total), 'Missions', `${c.missions.rate}% completed`],
-    ])+
-    `<div class="minis">`+
-      miniTile(icon('deaths'), fmt(c.deaths), 'Ship deaths')+
-      miniTile(qt[0], qt[1], 'Quantum jumps', qt[4]==='na')+
-      miniTile(icon('cargo'), fmt(c.containers_looted||0), 'Containers looted')+
-      miniTile(icon('gun'), fmt(c.drawn_total||0), 'Weapons drawn')+
-      miniTile(icon('transfer'), fmt(c.transfers||0), 'Items moved')+
-      miniTile(icon('space'), fmt(c.takeoffs_total||0), 'Take-offs')+
-    `</div></div>`;
   const reset = current!=='all' ? `<button class="chart-reset" id="patchReset">↩ View career</button>` : '';
-  const chartCard = `<div class="card"><h3 style="display:flex;align-items:center;justify-content:space-between;gap:12px">`+
-    `<span>Playtime by patch <span class="u">— click a bar to filter</span></span>${reset}</h3>`+
-    `<div id="patchChart"></div></div>`;
-  $('#content').innerHTML = profileHTML()+
-    `<div class="row-title">Snapshot <span class="tag">${scopeLabel()}</span></div>`+K+
-    chartCard+showcaseHTML()+`${NOTE}`;
+  const chartCard = `<section class="card ov-chart"><h3><span>Playtime by patch <span class="u">— click a bar to filter</span></span>${reset}</h3>`+
+    `<div id="patchChart"></div></section>`;
+  $('#content').innerHTML = heroHTML(v)+
+    `<div class="row-title">Snapshot <span class="tag">${scopeLabel()}</span></div>`+
+    `<div class="ov-mid">${chartCard}${clusterHTML(v)}</div>`+
+    showcaseHTML()+`${NOTE}`;
   // axis gets the short name; the hover card carries the full name, the build string
   // (a feature preview's only version) and when you played it
   const pfull = k => {
-    const p=A().patches[k]||{}, v=pBuild(k);
+    const p=A().patches[k]||{}, b=pBuild(k);
     const when = p.first ? ddmm(p.first)+(p.last&&p.last!==p.first?' → '+ddmm(p.last):'') : '';
-    return pLabel(k)+(v?' · build '+v:'')+(when?' · '+when:'');
+    return pLabel(k)+(b?' · build '+b:'')+(when?' · '+when:'');
   };
-  const items = A().patch_playtime.map(([k,h])=>({key:k, label:pShort(k), value:h, disp:h+' h', full:pfull(k),
-    color: k===current?'var(--amber)':'var(--cyan)'}));
-  vbars($('#patchChart'), items, {h:240, w:Math.max(520, items.length*70), maxbw:52, fmtY:x=>x+'h',
+  const items = A().patch_playtime.map(([k,h])=>({key:k, label:pShort(k), value:h, disp:fmt(Math.round(h))+' h', full:pfull(k)}));
+  pbars($('#patchChart'), items, {sel: current==='all'?null:current, fmtY:x=>Math.round(x)+'h',
     onClick:(it)=>{ current = (current===it.key) ? 'all' : it.key; renderPatches(); render(); }});
   const rb=$('#patchReset'); if(rb) rb.onclick=()=>{ current='all'; renderPatches(); render(); };
 }
