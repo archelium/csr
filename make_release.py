@@ -82,10 +82,16 @@ def main():
     with zipfile.ZipFile(zpath, "w", zipfile.ZIP_DEFLATED) as z:
         for f in names:
             z.write(os.path.join(stage, f), f)
-    # best-effort unzipped copy for convenience (skip silently if the dir is locked)
+    # best-effort unzipped copy for convenience (skip silently if the dir is locked).
+    # Only the bundle files are replaced: release/CSR-data is left alone, because
+    # running release/CSR.exe keeps its archive and art cache there, and wiping the
+    # folder on every build turned each test run into a first-ever full scan.
     try:
-        shutil.rmtree("release", ignore_errors=True)
         os.makedirs("release", exist_ok=True)
+        for f in os.listdir("release"):
+            p = os.path.join("release", f)
+            if os.path.isfile(p):
+                os.remove(p)
         for f in names:
             shutil.copy2(os.path.join(stage, f), os.path.join("release", f))
     except OSError:
