@@ -5786,6 +5786,121 @@ details.fold.nf>summary .nfm{font-size:11px;color:var(--cyan)}
 /* ---- stacking: glass (backdrop-filter) makes stacking contexts; keep topbar popovers
         (#mainHint, #bellMenu, #statusMenu) above page cards ---- */
 .topbar{z-index:30}
+
+/* ==== CSR Hybrid — shell layer (spec 2) =======================================
+   Appended after the spec-1 primitives block. Goes with the spec-2 topbar markup
+   (scope pill + popover) and the shell JS next to maybeShowHint(). Sidebar markup
+   is unchanged.
+   ========================================================================== */
+
+:root{ --menu-bg:rgba(13,20,30,.97); --menu-shadow:0 18px 48px rgba(0,0,0,.55);
+  --hover-tint:rgba(255,255,255,.06); --soft:rgba(255,255,255,.04); }
+:root[data-theme="light"]{ --menu-bg:rgba(255,255,255,.98); --menu-shadow:0 18px 48px rgba(23,35,47,.16);
+  --hover-tint:rgba(23,35,47,.05); --soft:rgba(23,35,47,.04); }
+
+/* ---- sidebar: floating glass rail ---- */
+.sidebar{width:232px;flex:0 0 232px;height:calc(100vh - 32px);top:16px;margin:16px 0 16px 16px;
+  padding:24px 14px 16px;border:1px solid var(--glass-line);border-radius:var(--r-lg);
+  background:var(--glass);box-shadow:var(--glass-shadow);
+  -webkit-backdrop-filter:blur(24px);backdrop-filter:blur(24px)}
+.brand{padding:0 8px 26px}
+.brand-mark{width:30px;height:37px}
+.brand-name{font-size:21px}
+.brand-sub{font-size:10px;letter-spacing:.04em}
+nav a{min-height:42px;padding:0 12px;font-weight:500;border-left:3px solid transparent;border-radius:10px}
+nav a:hover{background:var(--hover-tint)}
+nav a.active{background:linear-gradient(90deg,var(--tint-amber),var(--tint-cyan) 140%);color:var(--amber);
+  box-shadow:none;border-left-color:var(--amber);border-radius:0 10px 10px 0}
+nav a.active span{color:var(--amber)}
+.side-foot{font-size:11px;border-top:1px solid var(--glass-line);padding:14px 4px 0}
+.side-foot .foot-link{min-height:36px;border:1px solid var(--glass-line);border-radius:var(--r-sm)}
+nav a::after{background:var(--menu-bg);border-color:var(--glass-line);box-shadow:var(--menu-shadow)}
+
+/* icon rail from 1120px (was 760px) — same rules the app already uses at 760 */
+@media(max-width:1120px){
+  .sidebar{width:76px;flex-basis:76px;padding:20px 10px;align-items:center}
+  .brand{justify-content:center;padding:0 0 18px}.brand-tx{display:none}
+  nav{width:100%;display:flex;flex-direction:column;align-items:center;gap:4px}
+  .navlive{position:absolute;top:7px;right:7px;margin-left:0}
+  nav a{justify-content:center;gap:0;font-size:0;padding:0;width:46px;height:46px;min-height:0;border-left:0;border-radius:12px}
+  nav a span{font-size:18px;width:auto}
+  nav a.active{border:1px solid rgba(244,169,42,.45);border-radius:12px}
+  nav a::after{display:block} nav a:hover::after,nav a:focus-visible::after{opacity:1}
+  .side-foot{display:none}
+}
+@media(max-width:760px){ .sidebar{width:64px;flex-basis:64px;margin:10px 0 10px 10px;height:calc(100vh - 20px);top:10px} }
+
+/* ---- topbar: title · scope pill · tools ---- */
+.topbar{z-index:30;gap:18px;padding:22px 32px 16px;border-bottom:0;max-width:1244px;
+  background:linear-gradient(180deg,var(--bg) 55%,transparent);-webkit-backdrop-filter:none;backdrop-filter:none}
+#secTitle{font-size:28px;font-weight:600;letter-spacing:-.01em}
+.scope-badge{font-size:11px;border-radius:6px;padding:3px 8px;border-color:rgba(91,209,230,.45)}
+.scope-badge.patch{border-color:rgba(244,169,42,.55)}
+.tb-sub{font-size:13px}
+
+.tb-scope{display:flex;align-items:center;gap:6px}
+.stepbtn{width:40px;height:40px;border-radius:50%;border:0;background:var(--soft);align-self:center}
+.stepbtn:hover:not(:disabled){background:var(--hover-tint);color:var(--txt)}
+.scopewrap{position:relative}
+.scopepill{display:flex;align-items:center;gap:10px;height:40px;padding:0 16px;border-radius:999px;cursor:pointer;
+  font-family:inherit;font-size:14px;color:var(--txt);background:var(--glass);border:1px solid var(--glass-line);
+  -webkit-backdrop-filter:blur(16px);backdrop-filter:blur(16px);max-width:min(46vw,420px)}
+.scopepill:hover{background:var(--hover-tint)}
+.scopepill[aria-expanded="true"]{border-color:var(--cyan)}
+.sp-k{font-family:var(--font-mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);white-space:nowrap}
+.sp-k.sel{color:var(--amber)}
+.sp-acct{font-weight:500;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sp-dot{width:4px;height:4px;border-radius:50%;background:var(--glass-line);flex:none}
+.sp-att{display:none;width:7px;height:7px;border-radius:50%;background:var(--amber);box-shadow:0 0 6px rgba(244,169,42,.7);flex:none}
+.sp-att.on{display:block}
+.sp-chev{width:12px;height:8px;flex:none;fill:none;stroke:var(--dim);stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+
+.scopemenu{display:none;position:absolute;top:calc(100% + 10px);left:0;z-index:70;width:340px;padding:18px;
+  background:var(--menu-bg);border:1px solid var(--glass-line);border-radius:16px;box-shadow:var(--menu-shadow)}
+.scopemenu.on{display:flex;flex-direction:column;gap:14px;animation:coachIn .18s ease}
+.scopemenu .selwrap{width:100%}
+.scopemenu .selwrap select,.scopemenu .selwrap.patch select{width:100%;min-width:0;height:40px;border-radius:var(--r-sm);
+  background-color:var(--panel2);font-weight:500}
+.scopemenu .acctnav{width:100%;align-items:flex-end}
+.scopemenu .acctnav .selwrap{flex:1;min-width:0}
+.scopemenu .stepbtn.pin{width:40px;height:40px;border-radius:var(--r-sm);border:1px solid var(--glass-line);background:var(--soft)}
+.scopemenu .patchnav{width:100%}
+.selwrap>span{font-family:var(--font-mono);font-size:11px;letter-spacing:.12em}
+
+/* the coach mark now lives inline at the top of the scope menu */
+.scopemenu .coach{position:static;width:auto;margin:-4px -4px 0;padding:12px 14px;border-radius:12px;
+  background:var(--tint-cyan);border:1px solid rgba(91,209,230,.45);box-shadow:none;animation:none}
+.scopemenu .coach::before{display:none}
+.coach-b{font-size:13px}.coach-a .mbtn{font-size:13px;min-height:34px}
+
+/* tool buttons: one 40px round size, borderless */
+.tb-controls{align-items:center;gap:2px}
+.iconbtn,.statusbtn{width:40px;height:40px;border-radius:50%;border:0;background:transparent;color:var(--muted);align-self:center}
+.iconbtn:hover,.statusbtn:hover{background:var(--hover-tint);color:var(--txt)}
+.bellwrap,.statuswrap{align-self:center}
+.bellwrap.has .iconbtn.bell{background:rgba(255,84,104,.10)}
+.tb-sep{width:1px;height:24px;background:var(--glass-line);margin:0 8px}
+.bbadge{top:-2px;right:-2px;font-size:11px;box-shadow:0 0 0 2px var(--bg)}
+.bellmenu,.statusmenu{background:var(--menu-bg);border-color:var(--glass-line);border-radius:16px;box-shadow:var(--menu-shadow)}
+.bm-head,.bm-clear{font-size:11px}.bm-ev .bt{font-size:13.5px}.bm-ev .bd,.sm-body{font-size:13px}.bm-ev .bw{font-size:11px}
+.bm-empty{font-size:13px}
+.sm-acts .mbtn{font-size:13px;min-height:34px}
+.statusbtn::after,nav a::after{font-size:11px}
+
+/* ---- modals + limited-data banner ---- */
+.modal-back{background:rgba(4,8,13,.6);backdrop-filter:blur(6px)}
+:root[data-theme="light"] .modal-back{background:rgba(23,35,47,.25)}
+.modal{border-radius:var(--r-lg);background:var(--menu-bg);border-color:var(--glass-line);box-shadow:var(--menu-shadow)}
+.limited-note{margin:6px 32px 0;border-radius:var(--r-md);font-size:13.5px}
+
+@media(max-width:760px){
+  .topbar{padding:14px 14px 10px;gap:10px}
+  .tb-scope{order:3;width:100%}
+  .scopepill{flex:1;max-width:none}
+  .scopemenu{width:min(340px,calc(100vw - 100px))}
+  .tb-controls{margin-left:auto;width:auto}
+  .limited-note{margin:6px 14px 0}
+}
 </style>
 </head>
 <body>
@@ -5824,28 +5939,38 @@ details.fold.nf>summary .nfm{font-size:11px;color:var(--cyan)}
       <div class="tb-title">
         <div class="tb-titlerow"><span id="secTitle">Overview</span><span id="secScope" class="scope-badge"></span></div>
         <span class="tb-sub">Citizen <b class="who" id="who"></b></span></div>
-      <div class="tb-controls">
-        <label class="selwrap" id="chanWrap" style="display:none"><span>Channel</span><select id="chanSel"></select></label>
-        <div class="acctnav" id="acctWrap">
-          <label class="selwrap"><span>Account</span><select id="acctSel"></select></label>
-          <button class="stepbtn pin" id="mainBtn" type="button" title="Set as your main account"></button>
-          <div class="coach" id="mainHint">
-            <div class="coach-t">Multiple accounts detected</div>
-            <div class="coach-b">CSR auto-selects the account with the highest activity as your
-              main — currently <b id="hintWho">this one</b>. If that isn&rsquo;t your main account,
-              choose another from the list and press <b>&#9733;</b>.</div>
-            <div class="coach-a"><button class="mbtn go" id="hintSet">&#9733; Keep as main</button>
-              <button class="mbtn ghost" id="hintNo">Not now</button></div>
+      <div class="tb-scope">
+        <button class="stepbtn" id="patchPrev" type="button" title="Previous patch (←)" aria-label="Previous patch"></button>
+        <div class="scopewrap" id="scopeWrap">
+          <button class="scopepill" id="scopeBtn" type="button" aria-haspopup="dialog" aria-expanded="false" aria-controls="scopeMenu" title="Channel, account and patch">
+            <span class="sp-k" id="spChan">LIVE</span><i class="sp-dot" aria-hidden="true"></i><span class="sp-acct" id="spAcct"></span><i class="sp-dot" aria-hidden="true"></i><span class="sp-k" id="spPatch">CAREER</span><i class="sp-att" id="spAtt" title="Multiple accounts detected — check your main"></i><svg class="sp-chev" viewBox="0 0 12 8" aria-hidden="true"><path d="M1 1.5l5 5 5-5"/></svg>
+          </button>
+          <div class="scopemenu" id="scopeMenu" role="dialog" aria-label="Channel, account and patch">
+            <div class="coach" id="mainHint" role="note">
+              <div class="coach-t">Multiple accounts detected</div>
+              <div class="coach-b">CSR auto-selects the account with the highest activity as your
+                main — currently <b id="hintWho">this one</b>. If that isn&rsquo;t your main account,
+                choose another below and press <b>&#9733;</b>.</div>
+              <div class="coach-a"><button class="mbtn go" id="hintSet">&#9733; Keep as main</button>
+                <button class="mbtn ghost" id="hintNo">Not now</button></div>
+            </div>
+            <label class="selwrap" id="chanWrap" style="display:none"><span>Channel</span><select id="chanSel"></select></label>
+            <div class="acctnav" id="acctWrap">
+              <label class="selwrap"><span>Account</span><select id="acctSel"></select></label>
+              <button class="stepbtn pin" id="mainBtn" type="button" title="Set as your main account" aria-label="Set as your main account"></button>
+            </div>
+            <div class="patchnav">
+              <label class="selwrap patch"><span>Patch</span><select id="patchSel"></select></label>
+            </div>
           </div>
         </div>
-        <div class="patchnav">
-          <button class="stepbtn" id="patchPrev" title="Previous patch" aria-label="Previous patch"></button>
-          <label class="selwrap patch"><span>Patch</span><select id="patchSel"></select></label>
-          <button class="stepbtn" id="patchNext" title="Next patch" aria-label="Next patch"></button>
-        </div>
+        <button class="stepbtn" id="patchNext" type="button" title="Next patch (→)" aria-label="Next patch"></button>
+      </div>
+      <div class="tb-controls">
         <button class="iconbtn" id="dataBtn" title="Backup &amp; transfer — export/import your career" aria-label="Backup and transfer" style="display:none">💾</button>
         <button class="iconbtn" id="refreshBtn" title="Refresh data — re-scan your logs" aria-label="Refresh data" style="display:none">⟳</button>
         <button class="iconbtn" id="themeBtn" title="Toggle light / dark" aria-label="Toggle theme">🌙</button>
+        <i class="tb-sep" aria-hidden="true"></i>
         <div class="bellwrap" id="bellWrap" style="display:none">
           <button class="iconbtn bell" id="bellBtn" type="button" title="Crash &amp; disconnect alerts" aria-label="Alerts">🔔<span class="bbadge" id="bellBadge"></span></button>
           <div class="bellmenu" id="bellMenu">
@@ -7859,6 +7984,7 @@ function secOrgs(v){
 let section='overview';
 function view(){ return current==='all' ? A().career : A().patches[current]; }
 function render(){
+  updateScopePill();
   $('#secTitle').textContent=SECTIONS[section].title;
   const sb=$('#secScope');
   if(sb){ sb.textContent = current==='all' ? 'Career' : pLabel(current);
@@ -8013,7 +8139,7 @@ $('#mainBtn').onclick=()=>{
 // click anywhere used to mark it permanently answered, so it vanished for good
 // within a second of the dashboard loading. Now only an explicit answer is final;
 // clicking elsewhere just gets it out of the way and it returns next launch.
-function hideHint(){ const el=$('#mainHint'); if(el) el.classList.remove('on'); }
+function hideHint(){ const el=$('#mainHint'); if(el) el.classList.remove('on'); updateScopePill(); }
 function answerHint(){ markHintSeen(); hideHint(); }
 function maybeShowHint(tries){
   const el=$('#mainHint'); if(!el) return;
@@ -8030,9 +8156,49 @@ function maybeShowHint(tries){
   }
   const who=$('#hintWho'); if(who) who.textContent=currentAccount;
   el.classList.add('on');
+  openScope(true); updateScopePill();
 }
 $('#hintSet').onclick=()=>{ setMain(currentChannel,currentAccount); answerHint(); renderAccts(); };
 $('#hintNo').onclick=answerHint;
+
+// ==== CSR Hybrid — shell JS (spec 2) =========================================
+// The channel / account / patch selects live in a popover behind one scope pill.
+// #chanSel/#acctSel/#patchSel/#mainBtn/#hintSet/#hintNo/#patchPrev/#patchNext keep
+// their existing handlers; render() refreshes the pill text, maybeShowHint() opens
+// the popover when the coach mark fires, hideHint() clears the attention dot.
+// scope pill text: channel · account · patch, kept in sync from render()
+function updateScopePill(){
+  const ch=$('#spChan'), ac=$('#spAcct'), pt=$('#spPatch'), att=$('#spAtt'); if(!ac) return;
+  if(ch) ch.textContent = CHAN_LABEL[currentChannel]||currentChannel;
+  ac.textContent = currentAccount||'Citizen';
+  if(pt){ pt.textContent = current==='all' ? 'Career' : pShort(current);
+    pt.classList.toggle('sel', current!=='all'); }
+  // amber dot = the first-run "pick your main" question is still open
+  if(att) att.classList.toggle('on',
+    (C().accounts||[]).length>1 && !savedMain(currentChannel) && !hintSeen());
+}
+// scope popover. While the coach mark is up it is the question being asked, so a
+// stray outside click doesn't close it (same rule as before: only an answer is final).
+function openScope(on){
+  const m=$('#scopeMenu'), b=$('#scopeBtn'); if(!m||!b) return;
+  m.classList.toggle('on', !!on); b.setAttribute('aria-expanded', on?'true':'false');
+  if(on){ statusMenu(false); if(typeof bellMenu==='function') bellMenu(false); }
+}
+$('#scopeBtn').onclick=e=>{ e.stopPropagation(); openScope(!$('#scopeMenu').classList.contains('on')); };
+document.addEventListener('click',e=>{
+  if(e.target.closest('#scopeWrap')) return;
+  const hint=$('#mainHint'); if(hint && hint.classList.contains('on')) return;
+  openScope(false);
+});
+// the bell and status buttons stopPropagation(), so the document listener above never
+// sees those clicks — close the scope menu from their capture phase instead
+['#statusBtn','#bellBtn'].forEach(s=>{ const b=$(s); if(b) b.addEventListener('click',()=>{
+  const hint=$('#mainHint'); if(!(hint && hint.classList.contains('on'))) openScope(false); }, true); });
+document.addEventListener('keydown',e=>{
+  if(e.key!=='Escape' || !$('#scopeMenu').classList.contains('on')) return;
+  hideHint();                 // gets it out of the way; it returns next launch (not answered)
+  openScope(false); $('#scopeBtn').focus();
+});
 // Deliberately NO click-anywhere dismissal. It shows once per page load, so a stray
 // click used to bury it until the next reload — which is why it was never seen. It
 // now stays until answered with one of the two buttons above.
