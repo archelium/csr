@@ -5,7 +5,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and CSR
 uses [Semantic Versioning](https://semver.org/) (MAJOR.MINOR.PATCH).
 
 
-## [Unreleased]
+## [1.5.0] — 2026-10-16
 
 ### Added
 - **Blueprint planner** (Blueprints). Pick a blueprint — type its name, or press *plan*
@@ -37,6 +37,28 @@ uses [Semantic Versioning](https://semver.org/) (MAJOR.MINOR.PATCH).
   is a crew jump — with a list of the pilots you flew under. Party time runs from
   accepting an invite to leaving the group (a party you host leaves no trace in your
   log). CrimeStat rises are the HUD's *Rating Increased* notices.
+
+### Changed
+- **The look.** A redesign that keeps the HUD character (the display and mono faces,
+  cyan and amber, the accent line) and calms the rest: frosted panels with soft
+  corners, one hero per page instead of rows of equal tiles, and better contrast on
+  dim text in both themes.
+  - **Top bar.** Channel, account and patch live behind one *scope pill*
+    (`LIVE · archelium · CAREER`) with the patch arrows beside it. The first-run
+    "pick your main account" note opens that popover itself and leaves an amber dot on
+    the pill until answered. The sidebar collapses to icons from 1120 px.
+  - **Overview.** A pilot hero (avatar, handle and org, rank, the missions ring, hours
+    played), the playtime-by-patch chart as real buttons — keyboard-reachable, with a
+    hover card showing the build and dates, amber for the selected patch only — three
+    stat clusters, and signature cards with the maker placard and one FLOWN range chip.
+  - **Charts.** The tilted 3D donuts on Flight, Combat, Missions and Stability are flat
+    split bars with a legend; the leader-line labels used to collide on small slices.
+    Hull-size colours are keyed by name, so *Large* stays amber whatever the order.
+  - **Blueprints.** Armour sets in two columns, slots a set never had shown as a dot
+    rather than an empty box, complete component cells filled solid, the planner card
+    stays in view while the standing floors scroll, and the list shows 20 a page.
+  - Every element id and keyboard handler survived, so refresh, backup, alerts and the
+    status light work as before. The light theme was designed alongside.
 
 ### Fixed
 - **The Constellation Mk V Centaurus was filed as a Phoenix Emerald.** The RSI ship
