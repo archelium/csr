@@ -5832,7 +5832,8 @@ nav a::after{background:var(--menu-bg);border-color:var(--glass-line);box-shadow
 
 /* ---- topbar: title · scope pill · tools ---- */
 .topbar{z-index:30;gap:18px;padding:22px 32px 16px;border-bottom:0;max-width:1244px;
-  background:linear-gradient(180deg,var(--bg) 55%,transparent);-webkit-backdrop-filter:none;backdrop-filter:none}
+  background:color-mix(in srgb,var(--bg) 90%,transparent);-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px)}
+  /* no mask or overflow on .topbar: the scope, bell and status popovers hang below it */
 #secTitle{font-size:28px;font-weight:600;letter-spacing:-.01em}
 .scope-badge{font-size:11px;border-radius:6px;padding:3px 8px;border-color:rgba(91,209,230,.45)}
 .scope-badge.patch{border-color:rgba(244,169,42,.55)}
@@ -6042,6 +6043,23 @@ nav a::after{background:var(--menu-bg);border-color:var(--glass-line);box-shadow
   .ov-handle{font-size:32px}.ov-org{font-size:20px} .ov-nums{width:100%;justify-content:space-between}
   .pb-plot{margin-left:30px} .pb-peak{display:none}
 }
+
+/* ==== CSR Hybrid — split bar (spec 4) — after the spec-3 block ==== */
+.sb{display:flex;flex-direction:column;gap:14px}
+.sb-head{display:flex;align-items:baseline;gap:10px}
+.sb-big{font-size:34px;font-weight:500;line-height:1;font-variant-numeric:tabular-nums;color:var(--txt)}
+.sb-small{font-family:var(--font-mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.sb-bar{display:flex;gap:3px;height:14px;border-radius:999px;overflow:hidden;background:var(--track)}
+.sb-seg{min-width:4px;height:100%}
+.sb-seg:first-child{border-radius:999px 0 0 999px}.sb-seg:last-child{border-radius:0 999px 999px 0}
+.sb-seg:only-child{border-radius:999px}
+.sb-legend{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:8px 24px}
+.sb-row{display:flex;align-items:center;gap:10px;padding:6px 0;border-bottom:1px solid var(--glass-line);font-size:14px}
+.sb-sw{width:10px;height:10px;border-radius:3px;flex:none}
+.sb-l{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--txt)}
+.sb-v{font-family:var(--font-mono);font-size:13px;color:var(--muted);font-variant-numeric:tabular-nums}
+.sb-p{font-family:var(--font-mono);font-size:13px;color:var(--txt);min-width:4ch;text-align:right;font-variant-numeric:tabular-nums}
+.sb-empty{opacity:.5}
 </style>
 </head>
 <body>
@@ -6559,6 +6577,26 @@ function hbars(el, items, opts={}){
 
 // ---- donut: tilted 3D ring with leader-line labels (SC star-map vibe) ----
 let _dn=0;
+// ---- flat split bar (Hybrid redesign, spec 4). Same signature as donut(), so any
+// donut call switches by renaming the call. The 3D donut's leader labels collide when
+// there are several small slices and the tilt misreports area; one 100% bar plus a
+// legend shows the same shares exactly. Hull-size colours are keyed by NAME so a size
+// keeps its colour across patches — the palette the .chip-c.sz.* chips use.
+const SIZE_COLOR={Small:'#6fbf7f',Medium:'#42d0e6',Large:'#f4a92a',Capital:'#ff5468',
+  Vehicle:'#8aa0b8',Gravlev:'#8aa0b8',Snub:'#b98bff'};
+function splitbar(el, parts, center){
+  const all=(parts||[]).filter(p=>p.value>0), total=all.reduce((a,p)=>a+p.value,0);
+  const head=`<div class="sb-head"><span class="sb-big">${center.big}</span>`+
+    `<span class="sb-small">${esc(center.small||'')}</span></div>`;
+  if(!total){ el.innerHTML=`<div class="sb">${head}<div class="sb-bar sb-empty"></div><div class="empty">Nothing recorded in this scope.</div></div>`; return; }
+  const pct=p=>100*p.value/total, lbl=p=>{ const q=pct(p); return q<1?'<1%':Math.round(q)+'%'; };
+  // segments are visual only (aria-hidden); the legend carries every number for
+  // screen readers and keyboard users, so there's nothing to focus in the bar itself
+  const segs=all.map(p=>`<span class="sb-seg" style="flex:${p.value} 0 0;background:${p.color}" title="${esc(p.label)}: ${fmt(p.value)} (${lbl(p)})"></span>`).join('');
+  const rows=all.map(p=>`<li class="sb-row"><i class="sb-sw" style="background:${p.color}"></i>`+
+    `<span class="sb-l">${esc(p.label)}</span><span class="sb-v">${fmt(p.value)}</span><span class="sb-p">${lbl(p)}</span></li>`).join('');
+  el.innerHTML=`<div class="sb">${head}<div class="sb-bar" aria-hidden="true">${segs}</div><ul class="sb-legend">${rows}</ul></div>`;
+}
 function donut(el, parts, center){
   el.classList.add('hud-sweep');
   const total=parts.reduce((a,p)=>a+p.value,0);
@@ -6824,8 +6862,9 @@ function secFlight(v){
     disp:`${fmt(c)} <span class="vv-u">sess</span>`, href:wikiURL(n),
     subHtml: shipMetaHTML(to,first,last)}));
   hbars($('#shipBars'), shipItems);
-  const sz=v.ship_size.map(([n,c],i)=>({label:n,value:c,color:['#f4a92a','#5bd1e6','#6fbf7f','#ff5468','#b98bff','#ff9147'][i%6]}));
-  donut($('#sizeChart'), sz, {big:v.ships_unique, small:'ships'});
+  // the headline counts ships; the bar measures sessions by hull size (the caption says so)
+  const sz=v.ship_size.map(([n,c])=>({label:n,value:c,color:SIZE_COLOR[n]||'#8aa0b8'}));
+  splitbar($('#sizeChart'), sz, {big:fmt(v.ships_unique), small:'distinct ships · bar = sessions by hull size'});
   hbars($('#roleBars'), toItems(v.ship_role,'#5bd1e6'));
   hbars($('#sysBars'), toItems(v.systems,'#b98bff'));
   const jb=$('#jurisBars'); if(jb) hbars(jb, (v.juris||[]).map(([k,s,n])=>({label:k, value:s, disp:`${fmt(s)} <span class="vv-u">sess</span> · ${fmt(n)} entries`})));
