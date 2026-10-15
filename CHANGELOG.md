@@ -5,6 +5,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and CSR
 uses [Semantic Versioning](https://semver.org/) (MAJOR.MINOR.PATCH).
 
 
+## [1.5.1] — 2026-10-16
+
+### Fixed
+- **An updated exe kept the catalogues an older install had cached.** The bundled ship
+  matrix, mission index and blueprint catalogue were only copied into `CSR-data` when
+  no file was there yet, so a 1.5.0 install over 1.3.0 went on reading the ship matrix
+  cached in July: the Constellation Mk V Centaurus was still filed as a Phoenix Emerald,
+  the Phoenix and the Emerald still showed as two ships, the catalogue still said 1,600,
+  and the planner had no missions for any blueprint. A bundled copy with a newer pull
+  date now replaces the cached one on start-up; a cached file in the old shape (no date)
+  always gives way. Nothing else changes — your archive, settings and art are untouched.
+
 ## [1.5.0] — 2026-10-16
 
 ### Added

@@ -43,7 +43,7 @@ import sc_names
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
-CSR_VERSION = "1.5.0"
+CSR_VERSION = "1.5.1"
 CSR_CONTACT = "support@archelium.com"      # publisher/contact (archelium.com)
 # Bump whenever scan_log() learns to extract something new or fixes an extraction bug.
 # A quick refresh reuses archived sessions only when they were parsed by THIS version,
@@ -473,13 +473,34 @@ def save_config(cfg):
         cerr(f"could not save config: {e}")
 
 
+def _cache_fetched(path):
+    """The "fetched" date of a JSON catalogue, or "" for a legacy bare-list file —
+    cheap to read, and what decides whether a bundled copy should replace it."""
+    try:
+        with open(path, encoding="utf-8") as fh:
+            head = fh.read(200)
+        m = re.search(r'"fetched":\s*"(\d{4}-\d\d-\d\d)"', head)
+        return m.group(1) if m else ""
+    except OSError:
+        return ""
+
+
 def cache_file(name):
-    """A cache path in app_dir, seeded once from a bundled copy if present
-    (so a frozen exe ships with game-data caches but writes fresh ones)."""
+    """A cache path in app_dir, seeded from the bundled copy — and RE-seeded when the
+    bundled copy is newer. The old rule (copy only when missing) meant a 1.5.0 exe kept
+    serving the ship matrix a 1.3.0 install had cached in July: the Constellation Mk V
+    Centaurus stayed filed as a Phoenix Emerald and the blueprint planner had no
+    missions, because the app never looked at the fresher file it shipped with.
+    Catalogues carry a "fetched" date; a cached file without one is the legacy shape
+    and always loses to a bundled copy that has one."""
     dst = os.path.join(app_dir(), name)
-    if not os.path.exists(dst):
-        src = os.path.join(resource_dir(), name)
-        if os.path.isfile(src) and os.path.abspath(src) != os.path.abspath(dst):
+    src = os.path.join(resource_dir(), name)
+    if os.path.isfile(src) and os.path.abspath(src) != os.path.abspath(dst):
+        replace = not os.path.exists(dst)
+        if not replace and name.endswith(".json"):
+            bundled = _cache_fetched(src)
+            replace = bool(bundled) and bundled > _cache_fetched(dst)
+        if replace:
             try:
                 import shutil
                 shutil.copyfile(src, dst)
