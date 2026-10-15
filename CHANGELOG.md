@@ -26,6 +26,18 @@ uses [Semantic Versioning](https://semver.org/) (MAJOR.MINOR.PATCH).
   - Parser version **17**: the first run after updating re-reads your logs.
 
 ### Fixed
+- **The Constellation Mk V Centaurus was filed as a Phoenix Emerald.** The RSI ship
+  matrix CSR ships with was 83 days old, the Centaurus wasn't in it, and the nearest
+  name won. The matrix (and the blueprint catalogue) are now re-fetched when the cached
+  copy is more than 14 days old, keeping the old copy if the fetch fails. With the
+  current matrix the Centaurus and the **Sabre Raven EX** resolve to themselves, and the
+  **Phoenix Emerald** folds into *Constellation Mk IV Phoenix* — which is what 4.10.2
+  did in-game, where Emerald became a livery. Your Emerald flights and your Phoenix
+  flights are one ship now, before and after the change. Also new to the matrix:
+  Skylark, S-65 Stingray, ATLS IKTI Akuma.
+- **The Arlington rifle had no picture.** Its wiki page is *Arlington Rifle*, CSR only
+  asked for *Arlington*, and the miss was cached for good. Bare model names now also try
+  the typed titles, and a cached miss is retried on the next build.
 - **A tractor beam counted as 19 reloads.** The 4.10 reload rule took every quiet
   re-attach of a magazine as a swap, and the tractor beam re-attaches its battery with
   the same id every few seconds while in use. A reload now needs a *different* magazine

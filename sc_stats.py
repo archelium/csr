@@ -4164,13 +4164,17 @@ def _ship_img(rec):
 
 
 def _gun_img(name):
-    if name in _GUN_IMG:
+    # a cached miss is retried: the wiki gets pages later than the game gets guns
+    # (the Arlington's page is "Arlington Rifle", and sat as a cached None for a patch)
+    if _GUN_IMG.get(name):
         return _GUN_IMG[name]
     titles = [name]
     short = re.sub(r"\s+(Rifle|SMG|LMG|Pistol|Shotgun|Sniper( Rifle)?|"
                    r"Assault Rifle|Energy Assault Rifle|Laser Sniper Rifle)$", "", name).strip()
     if short and short != name:
         titles.append(short)
+    if short == name and " " not in name:       # a bare model name: try the wiki's typed titles
+        titles += [f"{name} Rifle", f"{name} Pistol", f"{name} SMG", f"{name} Shotgun"]
     img = None
     for t in titles:
         img = sc_names.fetch_data_uri(sc_names.wiki_weapon_image(t))

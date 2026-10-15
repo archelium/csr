@@ -211,14 +211,15 @@ class BlueprintIndex:
         self.ok = False
 
     def load(self, allow_fetch=True):
+        fetched = None
         if os.path.isfile(self.cache_path):
             try:
                 d = json.load(open(self.cache_path, encoding="utf-8"))
-                self.rows, self.version = d.get("rows") or [], d.get("version")
+                self.rows, self.version, fetched = d.get("rows") or [], d.get("version"), d.get("fetched")
             except Exception:
                 self.rows = []
-        if not self.rows and allow_fetch:
-            self._fetch()
+        if allow_fetch and (not self.rows or cache_is_stale(fetched)):
+            self._fetch()                       # keeps the cached rows if the API is down
         self.ok = bool(self.rows)
         return self.ok
 
@@ -393,6 +394,24 @@ def _norm(x):
     return re.sub(r"[^a-z0-9]", "", x)
 
 
+# A cache that is never refreshed goes quietly wrong: the ship matrix copied into the
+# 4.10 release was 83 days old by the time 4.10.2 added the Constellation Mk V
+# Centaurus, and the fuzzy matcher filed the new hull under the nearest old name.
+# Caches that carry a "fetched" date are re-pulled after this many days; the old
+# copy stays in use if the fetch fails.
+CACHE_MAX_DAYS = 14
+
+
+def cache_is_stale(fetched):
+    """True when `fetched` (ISO date or None) is missing or older than CACHE_MAX_DAYS."""
+    if not fetched:
+        return True
+    try:
+        return (datetime.date.today() - datetime.date.fromisoformat(fetched)).days > CACHE_MAX_DAYS
+    except (TypeError, ValueError):
+        return True
+
+
 class ShipIndex:
     """Loads the RSI Ship Matrix and maps game class ids -> ship records."""
 
@@ -406,16 +425,19 @@ class ShipIndex:
         self.ok = False
 
     def load(self, allow_fetch=True):
-        data = None
+        data, fetched = None, None
         if os.path.isfile(self.cache_path):
             try:
-                data = json.load(open(self.cache_path, encoding="utf-8"))
+                raw = json.load(open(self.cache_path, encoding="utf-8"))
+                # {"fetched": date, "ships": [...]} since parser 17; a bare list before
+                data, fetched = (raw.get("ships"), raw.get("fetched")) if isinstance(raw, dict) else (raw, None)
             except Exception:
                 data = None
-        if data is None and allow_fetch:
-            data = self._fetch()
+        if allow_fetch and (data is None or cache_is_stale(fetched)):
+            data = self._fetch() or data
         if not data:
             return False
+        self.by_code, self.by_name, self._resolved = {}, {}, {}
         for s in data:
             s["name"] = (s.get("name") or "").strip()   # RSI data has stray spaces
             self.by_code.setdefault(s["code"], []).append(s)
@@ -451,7 +473,8 @@ class ShipIndex:
                                   or img.get("store_hub_small") or img.get("store_small")),
                     "img_large": img.get("store_large") or img.get("store_hub_large"),
                 })
-            json.dump(out, open(self.cache_path, "w", encoding="utf-8"))
+            json.dump({"fetched": datetime.date.today().isoformat(), "ships": out},
+                      open(self.cache_path, "w", encoding="utf-8"))
             return out
         except Exception as e:
             print(f"[sc_names] ship matrix fetch failed: {e}")
