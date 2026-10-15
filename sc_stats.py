@@ -5663,6 +5663,129 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
   .clink{color:var(--cyan);cursor:pointer;font-weight:600;white-space:nowrap;
     border-bottom:1px solid transparent;transition:border-color .12s}
   .clink:hover{border-bottom-color:var(--cyan)}
+
+/* ==== CSR Hybrid — primitives layer (spec 1) ==================================
+   Appended AFTER every other rule. It only restyles existing classes: no markup,
+   ids, data-* attributes or JS change, so group()/kpiRow()/miniTile()/cardHTML()/
+   barsCard()/hbars()/noteFold()/.vpill/.tline/.pager/.bp* keep working as-is.
+   Delete the block to roll back. Values match Superdesign drafts 421d38a3 (dark,
+   v9) and e9ce8ba7 (light, v2).
+   ========================================================================== */
+
+/* ---- tokens: additions + contrast fixes ---- */
+:root{
+  --dim:#7d93a9;                                   /* was #647a90: 4.1:1 -> 5.7:1 on panels */
+  --r-lg:20px; --r-md:14px; --r-sm:10px;
+  --glass:rgba(17,26,38,.62); --glass-line:rgba(29,44,61,.7);
+  --glass-shadow:0 8px 32px rgba(0,0,0,.22);
+  --tint-cyan:rgba(91,209,230,.10); --tint-amber:rgba(244,169,42,.14);
+  --scan:transparent;                              /* scanlines off (Origin calm) */
+}
+:root[data-theme="light"]{
+  --dim:#586a7d; --muted:#4f6072;                  /* was #93a2b3: 2.6:1 -> 5.0:1 */
+  --cyan:#0b7d90; --amber:#9a6206;                 /* text-safe on white (4.8 / 5.1:1) */
+  --red:#c8303f; --green:#1f8a4a;
+  --glass:rgba(255,255,255,.74); --glass-line:rgba(203,214,226,.9);
+  --glass-shadow:0 1px 2px rgba(23,35,47,.05),0 10px 30px rgba(23,35,47,.07);
+  --tint-cyan:rgba(14,147,168,.10); --tint-amber:rgba(212,138,18,.14);
+  --scan:transparent;
+}
+
+/* ---- accessibility baseline ---- */
+:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
+@media (prefers-reduced-motion:reduce){*,*::before,*::after{transition:none!important;animation:none!important}}
+
+/* ---- surfaces: card / kpi / mini / callout / fold share one glass panel ---- */
+.card,.kpi,.mini,.callout,details.fold:not(.nf){
+  background:var(--glass);border:1px solid var(--glass-line);box-shadow:var(--glass-shadow);
+  -webkit-backdrop-filter:blur(24px);backdrop-filter:blur(24px)}
+.card{border-radius:var(--r-lg);padding:22px 24px}
+.card::before,.card::after{display:none}        /* corner brackets: hero + patch chart only */
+.card h3{font-size:15px;font-weight:500;letter-spacing:.06em;margin:0 0 16px}
+.card h3::before{display:none}
+.card h3 .u{font-family:var(--font-mono);font-size:12px;color:var(--dim)}
+.grid2,.grid3{gap:20px}
+
+/* ---- section titles ---- */
+.row-title{font-size:16px;font-weight:500;letter-spacing:.06em;color:var(--txt);margin-top:34px}
+.row-title::before{display:none}
+.row-title .tag{font-family:var(--font-mono);font-size:12px;color:var(--dim)}
+
+/* ---- group(n, icon, title, sub, body) ---- */
+.gsec{margin:44px 0 0;padding:0;border-top:0}
+.gsec:first-of-type{margin-top:22px}
+.gsec::before{display:none}
+.ghead{gap:14px;margin-bottom:18px}
+.gnum{font-size:11px;border-radius:999px;padding:4px 9px;background:var(--tint-cyan);border-color:transparent}
+.gic{width:44px;height:44px;border-radius:var(--r-md);background:var(--glass);border-color:var(--glass-line)}
+.gt{font-size:18px;font-weight:600;letter-spacing:.04em}
+.gs{font-size:12px}
+
+/* ---- kpiRow([[icon,value,label,sub,'na']]) ---- */
+.hero{gap:16px}
+.kpi{border-radius:var(--r-lg);padding:20px 22px 18px}
+.kpi::after,.kpi::before{display:none}           /* accent line belongs to the page hero only */
+.kpi .v{font-size:34px;font-weight:500;letter-spacing:-.01em}
+.kpi .l{font-family:var(--font-mono);font-size:11px;letter-spacing:.1em;margin-top:10px}
+.kpi .s{font-family:var(--font-mono);font-size:12px;color:var(--dim);margin-top:4px}
+.kpi.na .v{font-size:26px}
+
+/* ---- miniTile ---- */
+.minis{gap:12px}
+.mini{border-radius:var(--r-md);padding:12px 16px}
+.mini::before{display:none}
+.mini .mv{font-family:var(--font-mono);font-weight:400;font-size:20px}
+.mini .ml{font-family:var(--font-mono);font-size:11px;letter-spacing:.1em}
+
+/* ---- hbars() / barsCard ---- */
+.bars{gap:14px}
+.bar-head .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}  /* long ship names ellipsise */
+.bar-row .nm{font-size:14px;font-weight:500}
+.bar-row .rk{font-family:var(--font-mono);font-weight:400}
+.bar-row .vv{font-family:var(--font-mono);font-size:13px}
+.bar-row .vv .vv-u,.bar-row .bsub{font-size:11px}
+.bar-track{height:8px;border-radius:999px;border:0;background:var(--track)}
+.bar-fill{border-radius:999px}
+
+/* ---- pills: .vpill / .vpill.sm (+ .vc) ---- */
+.vpill{border-radius:999px;font-weight:500;background:var(--glass);border-color:var(--glass-line)}
+.vpill.on{background:var(--tint-amber);border-color:var(--amber);color:var(--amber)}
+.vpill.sm{border-radius:999px;padding:6px 13px}
+.vpill.sm .vc,.vpill .vc{font-size:11px}
+
+/* ---- Blueprint/planner bits ---- */
+.bpbar{gap:8px;margin:8px 0 14px}
+.bpq{height:34px;border-radius:999px;padding:0 14px;font-size:12px;background:var(--glass);border:1px solid var(--glass-line)}
+.bpq:focus{outline:none}.bpq:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
+.bpk,.bph,.bpok,.bpst{font-size:11px}
+.bpst{border-radius:999px}
+.bset,.blad{font-size:13px;padding:8px 2px}
+.bgrid th,.bgrid td span{font-size:11px}
+.bgrid td{border-radius:var(--r-sm)}
+
+/* ---- .tline > .tev(.td .tw .tv) ---- */
+.tev{padding:10px 2px;border-bottom-style:solid;border-bottom-color:var(--glass-line)}
+.tev .td,.tev .tv{font-size:11.5px}
+.tev .tw{font-size:13.5px}
+
+/* ---- .pager ---- */
+.pager .pgi{font-size:11px}
+
+/* ---- noteFold() / details.fold ---- */
+details.fold:not(.nf){border-radius:var(--r-md)}
+details.fold.nf{margin-top:30px;padding:14px 18px;border-radius:var(--r-md);
+  background:var(--glass);border:1px solid var(--glass-line)}
+details.fold.nf>summary{padding:0;font-size:13.5px;color:var(--muted)}
+details.fold.nf>summary .nfm{font-size:11px;color:var(--cyan)}
+.note{font-size:13px}
+
+/* ---- callout / empty ---- */
+.callout{border-radius:var(--r-md);font-size:13.5px}
+.empty{font-size:13px}
+
+/* ---- stacking: glass (backdrop-filter) makes stacking contexts; keep topbar popovers
+        (#mainHint, #bellMenu, #statusMenu) above page cards ---- */
+.topbar{z-index:30}
 </style>
 </head>
 <body>
