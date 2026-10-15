@@ -41,8 +41,12 @@ uses [Semantic Versioning](https://semver.org/) (MAJOR.MINOR.PATCH).
 ### Fixed
 - **The Constellation Mk V Centaurus was filed as a Phoenix Emerald.** The RSI ship
   matrix CSR ships with was 83 days old, the Centaurus wasn't in it, and the nearest
-  name won. The matrix (and the blueprint catalogue) are now re-fetched when the cached
-  copy is more than 14 days old, keeping the old copy if the fetch fails. With the
+  name won. The matrix, the mission index and the blueprint catalogue now carry the date
+  they were pulled; at boot a copy older than 14 days is **reported, not refreshed** — the
+  console says so, and *Backup & transfer → Online data* shows each catalogue's age with
+  an amber note. **Update now** in that panel re-pulls all three along with the art and
+  your dossier, and says up front that it takes about two minutes (the blueprint
+  catalogue is one API call per blueprint). Nothing fetches on its own at startup. With the
   current matrix the Centaurus and the **Sabre Raven EX** resolve to themselves, and the
   **Phoenix Emerald** folds into *Constellation Mk IV Phoenix* — which is what 4.10.2
   did in-game, where Emerald became a livery. Your Emerald flights and your Phoenix

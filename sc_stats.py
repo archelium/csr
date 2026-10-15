@@ -4181,6 +4181,7 @@ def refresh_online_data():
             del cache[k]
             dropped += 1
     save_img_cache()
+    reload_catalogues()
     stamp_online("forced")
     return dropped
 
@@ -5814,9 +5815,11 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     <div class="onlinebar">
       <div>
         <div class="ol-t">Online data</div>
-        <div class="ol-s">Ship &amp; weapon art, manufacturer logos, your RSI dossier and orgs.
-          Kept indefinitely because it rarely changes — update it if you&rsquo;ve joined an org,
-          changed your avatar, or artwork failed to load. <span id="olWhen"></span></div>
+        <div class="ol-s">Ship &amp; weapon art, manufacturer logos, your RSI dossier and orgs — and the
+          catalogues the Blueprints tab is built on: the RSI ship matrix, the SC-Wiki mission index and
+          crafting catalogue. Nothing here updates on its own; press the button after a patch, if you&rsquo;ve
+          joined an org, or if artwork failed to load. <b>Takes about two minutes</b> — the catalogue
+          is one call per blueprint. <span id="olWhen"></span></div>
       </div>
       <button class="mbtn ghost" id="olBtn">Update now</button>
     </div>
@@ -8162,10 +8165,13 @@ document.addEventListener('click',e=>{ if(!e.target.closest('.statuswrap')) stat
 let ONLINE={};
 function olWhen(){
   const el=$('#olWhen'); if(!el) return;
-  const ts=ONLINE.profile||ONLINE.forced;
-  if(!ts){ el.textContent=''; return; }
-  const days=Math.floor((Date.now()-new Date(ts))/86400000);
-  el.textContent='Last updated '+(days<1?'today':days===1?'yesterday':days+' days ago')+'.';
+  const ts=ONLINE.profile||ONLINE.forced, c=ONLINE.catalogues||{};
+  const ago=d=>{ const n=Math.floor((Date.now()-new Date(d))/86400000); return n<1?'today':n===1?'yesterday':n+' days ago'; };
+  let s = ts ? 'Last updated '+ago(ts)+'. ' : '';
+  const cat=['ships','missions','blueprints'].filter(k=>c[k]).map(k=>`${k} ${ago(c[k])}`).join(', ');
+  if(cat) s += `Catalogues pulled: ${cat}.`;
+  if(c.stale) s += ` <b style="color:var(--amber)">A catalogue is more than ${c.max_days} days old — new ships, missions or blueprints may be missing until you update.</b>`;
+  el.innerHTML=s;
 }
 $('#olBtn').onclick=()=>{
   const b=$('#olBtn'), was=b.textContent;
@@ -8415,8 +8421,34 @@ def ONBOARD_HTML():
 _RESOLVERS_LOADED = False
 
 
+def catalogue_ages():
+    """{"ships": date, "blueprints": date, "missions": date, "stale": bool} — when each
+    catalogue was last pulled, and whether any is past CACHE_MAX_DAYS."""
+    ages = {"ships": SHIPS.fetched, "blueprints": BPS.fetched, "missions": MIS.fetched}
+    ages["stale"] = any(sc_names.cache_is_stale(v) for v in ages.values())
+    ages["max_days"] = sc_names.CACHE_MAX_DAYS
+    return ages
+
+
+def reload_catalogues():
+    """Re-pull the ship matrix, the mission index and the crafting catalogue — on the
+    player's say-so (Backup & transfer → Online data → Update now), never at boot: the
+    catalogue needs one API call per blueprint and takes about two minutes."""
+    global _bp_rev, _bp_cat_idx, _mis_by_dbg
+    cstep("pulling the ship matrix")
+    SHIPS.load(force=True)
+    cstep("pulling the contract registry")
+    MIS.load(force=True)
+    cstep("pulling the crafting catalogue — one call per blueprint, about two minutes")
+    BPS.load(force=True)
+    cok(f"catalogues refreshed — {len(SHIPS.by_name):,} hulls · {len(MIS.rows):,} missions · {len(BPS.rows):,} blueprints")
+    _bp_rev, _bp_cat_idx, _mis_by_dbg = None, None, None
+    _bp_cache.clear(); _fam_cache.clear()
+
+
 def load_resolvers():
-    """Load ship + item name indexes once (from app-data caches)."""
+    """Load ship + item name indexes once (from app-data caches). A stale catalogue is
+    reported, not refreshed — see reload_catalogues()."""
     global _RESOLVERS_LOADED
     if _RESOLVERS_LOADED:
         return
@@ -8439,6 +8471,9 @@ def load_resolvers():
     BPS.cache_path = cache_file("sc_blueprints.json")
     if BPS.load():
         cstep(f"crafting catalogue synced — {len(BPS.rows):,} blueprints ({BPS.version or 'unknown build'})")
+    ages = catalogue_ages()
+    if ages["stale"]:
+        cwarn(f"a catalogue is more than {ages['max_days']} days old — Backup & transfer → Online data → Update now re-pulls them (about two minutes)")
     else:
         cwarn("crafting catalogue offline — blueprints shown without the missing list")
     _RESOLVERS_LOADED = True
@@ -8751,7 +8786,7 @@ def serve(out_path, port=7878, explicit_logs=None, open_browser=True,
                     "configured": state["configured"], "live_path": state["live_path"],
                     "generated": state["generated"], "log_count": state["log_count"],
                     "sessions": state["sessions"], "busy": state["busy"],
-                    "online": online_meta(),
+                    "online": {**online_meta(), "catalogues": catalogue_ages()},
                     "console_hidden": _CONSOLE_HIDDEN,
                     "console_supported": _console_hwnd() is not None,
                     "progress": _PROGRESS,

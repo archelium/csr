@@ -209,8 +209,9 @@ class BlueprintIndex:
         self.rows = []
         self.version = None
         self.ok = False
+        self.fetched = None
 
-    def load(self, allow_fetch=True):
+    def load(self, allow_fetch=True, refresh_stale=False, force=False):
         fetched = None
         if os.path.isfile(self.cache_path):
             try:
@@ -218,8 +219,12 @@ class BlueprintIndex:
                 self.rows, self.version, fetched = d.get("rows") or [], d.get("version"), d.get("fetched")
             except Exception:
                 self.rows = []
-        if allow_fetch and (not self.rows or cache_is_stale(fetched)):
+        self.fetched = fetched
+        if allow_fetch and (not self.rows or force or (refresh_stale and cache_is_stale(fetched))):
+            before = self.rows
             self._fetch()                       # keeps the cached rows if the API is down
+            if self.rows is not before:
+                self.fetched = datetime.date.today().isoformat()
         self.ok = bool(self.rows)
         return self.ok
 
@@ -291,8 +296,9 @@ class MissionIndex:
         self.factions = {}
         self.version = None
         self.ok = False
+        self.fetched = None
 
-    def load(self, allow_fetch=True):
+    def load(self, allow_fetch=True, refresh_stale=False, force=False):
         fetched = None
         if os.path.isfile(self.cache_path):
             try:
@@ -301,8 +307,12 @@ class MissionIndex:
                 self.version, fetched = d.get("version"), d.get("fetched")
             except Exception:
                 self.rows = []
-        if allow_fetch and (not self.rows or cache_is_stale(fetched)):
+        self.fetched = fetched
+        if allow_fetch and (not self.rows or force or (refresh_stale and cache_is_stale(fetched))):
+            before = self.rows
             self._fetch()
+            if self.rows is not before:
+                self.fetched = datetime.date.today().isoformat()
         self.ok = bool(self.rows)
         return self.ok
 
@@ -510,8 +520,10 @@ def _norm(x):
 # A cache that is never refreshed goes quietly wrong: the ship matrix copied into the
 # 4.10 release was 83 days old by the time 4.10.2 added the Constellation Mk V
 # Centaurus, and the fuzzy matcher filed the new hull under the nearest old name.
-# Caches that carry a "fetched" date are re-pulled after this many days; the old
-# copy stays in use if the fetch fails.
+# Caches that carry a "fetched" date are STALE after this many days. Staleness is
+# only reported at boot (an update is the player's call — the blueprint catalogue
+# takes about two minutes); load(refresh_stale=True) or load(force=True) re-pulls,
+# and the old copy stays in use if the fetch fails.
 CACHE_MAX_DAYS = 14
 
 
@@ -536,8 +548,9 @@ class ShipIndex:
         self.by_name = {}
         self._resolved = {}     # class -> record cache
         self.ok = False
+        self.fetched = None
 
-    def load(self, allow_fetch=True):
+    def load(self, allow_fetch=True, refresh_stale=False, force=False):
         data, fetched = None, None
         if os.path.isfile(self.cache_path):
             try:
@@ -546,8 +559,11 @@ class ShipIndex:
                 data, fetched = (raw.get("ships"), raw.get("fetched")) if isinstance(raw, dict) else (raw, None)
             except Exception:
                 data = None
-        if allow_fetch and (data is None or cache_is_stale(fetched)):
-            data = self._fetch() or data
+        self.fetched = fetched
+        if allow_fetch and (data is None or force or (refresh_stale and cache_is_stale(fetched))):
+            new = self._fetch()
+            if new:
+                data, self.fetched = new, datetime.date.today().isoformat()
         if not data:
             return False
         self.by_code, self.by_name, self._resolved = {}, {}, {}
