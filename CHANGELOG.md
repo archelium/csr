@@ -5,6 +5,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and CSR
 uses [Semantic Versioning](https://semver.org/) (MAJOR.MINOR.PATCH).
 
 
+## [Unreleased]
+
+### Added
+- **Lost your player** (Stability). The soft crash where the game keeps running but
+  you have no body, nothing responds and the starmap won't plot a route. Star Citizen
+  never logs it as an event; the one line that gives it away is the starmap cancelling
+  a route because there is no player entity to route for. That line was checked against
+  about 3,700 logs and appears in none of the clean ones, so it is the trigger. Hits
+  within ten minutes of each other are one episode. The Stability tab gets a group
+  between Crashes and Back to the main menu with the count, the rate per 10 hours,
+  sessions affected, the recent list and a monthly trend; the live watcher raises
+  *Lost your player* once per channel per ten minutes while it is happening. CSR only
+  sees an episode once you open the map or pick a QT target — close the game without
+  touching the map and it isn't counted. The session still rates as it ended: a clean
+  quit after a soft crash is still a clean quit. Parser 19, so the next refresh
+  re-reads your archive once.
+
 ## [1.5.1] — 2026-10-16
 
 ### Fixed

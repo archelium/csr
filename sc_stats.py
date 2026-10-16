@@ -48,7 +48,7 @@ CSR_CONTACT = "support@archelium.com"      # publisher/contact (archelium.com)
 # Bump whenever scan_log() learns to extract something new or fixes an extraction bug.
 # A quick refresh reuses archived sessions only when they were parsed by THIS version,
 # so improved parsing always re-reads old logs instead of silently keeping stale numbers.
-PARSER_VERSION = 18
+PARSER_VERSION = 19
 
 
 # --------------------------------------------------------------------------- #
@@ -762,9 +762,11 @@ _WATCH = {
     "tests": 0,            # synthetic events fired from the dashboard
     "lock": threading.Lock(),
     "boot_pending": {},  # channel -> (time seen, is_test); see _scan_chunk
+    "soft_last": {},     # channel -> time a lost-player alert was last raised
     "game": None,        # is StarCitizen.exe running? None until first checked
 }
 WATCH_FAST = 2.0        # seconds between checks while a session is writing
+WATCH_SOFT_COOLDOWN = 600   # a stuck client keeps writing the marker; alert once per 10 min
 WATCH_IDLE = 15.0       # …and while nothing is running
 WATCH_LIVE_GAP = 30     # log untouched for this long => session no longer live
 
@@ -945,6 +947,22 @@ def _scan_chunk(text, channel, test=False):
                     + (" That is a server-side fault — nothing on your PC caused it."
                        if code in NET_SERVER_SIDE else ""),
                     {"code": code, "test": test})
+    # Lost your player. The marker repeats on every starmap interaction while the
+    # client is stuck (26 times in 4 minutes in the session it was found in), and the
+    # 60 s de-dup in _push_event would re-raise it every minute. One alert per
+    # channel per cooldown is enough — nothing changes until the player relogs.
+    if SOFT_MARK in text and SOFT_NULL in text:
+        _now = time.time()
+        _last = _WATCH["soft_last"].get(channel)
+        if test or _last is None or _now - _last >= WATCH_SOFT_COOLDOWN:
+            _WATCH["soft_last"][channel] = _now
+            _push_event("soft", "bad", f"Lost your player — {channel}",
+                        "The game is still running but your client has no player entity "
+                        "any more: no body, nothing responds, and the starmap can't plot a "
+                        "route. That is the server's replication layer, not your PC. It "
+                        "doesn't recover on its own — exit to menu or close the game and "
+                        "log back in.",
+                        {"test": test})
     # Dropped to the main menu. Live, the "did play continue?" test can't be applied
     # yet — so the drop is only PARKED here. watch_tick() raises it once the log has
     # grown again, which is the player back in the game. If they had simply quit, the
@@ -1114,6 +1132,11 @@ _TEST_CHUNKS = {
         "System Memory Status: 63122MB total physical, 900MB free physical, 75922MB commit limit\n"
         "All crash related data successfully handed over to crash info collector process\n"),
     "net": '<t> [Notice] <Channel Disconnected> cause=30024 reason="Back-end services are unresponsive"\n',
+    "soft": ('<t> [Notice] <CMapDisplayStarMap::PopulateQuantumPath> No player entity available '
+             'when populating quantum path, cancelling route. Vehicle entity: null, '
+             'MapUserEntityId: 0 [Team_CGP5][UI]\n'
+             '<t> [Notice] <CMapDisplayStarMap::CancelQuantumRoute> We are requesting a '
+             'cancellation of the quantum route [Team_CGP5][UI]\n'),
     "benign": ('<t> [Notice] <Channel Disconnected> cause=30010 reason="Nub destroyed"\n' * 4 +
                '<t> [Notice] <Channel Disconnected> cause=30016 reason="Remote Disconnect - Player requested disconnect"\n'
                '<t> [Notice] <Channel Disconnected> cause=30028 reason="Remote Disconnect - player inactive"\n'),
@@ -1479,6 +1502,20 @@ BOOT_INTENT_WINDOW = 20      # seconds a quit request stays "recent"
 BOOT_FRONTEND_WINDOW = 15    # seconds allowed between the drop and the menu load
 # (a return to the menu counts only if a PU server join follows it — see PU_JOIN; the old
 #  "log kept growing for 120 s" test also passed a slow log-off)
+#  ---- lost your player (a "soft crash") --------------------------------------------
+#  The game keeps running and the log keeps growing, but the client no longer has a
+#  player entity: no body, no interactions, nothing responds. The one line that is
+#  EXCLUSIVE to that state is the starmap giving up on a route because there is no
+#  player to route for — 0 hits across ~3,700 clean logs, 26 in the one session it
+#  happened in. Everything else that session logged (LOST ENTITY PTR bursts, quantum
+#  drives whose vehicle "does not exist", the Replicant unbinding the player) also
+#  shows up in sessions that played on fine, so none of those can be the trigger.
+#  The catch: the line is only written when the player opens the starmap or picks a
+#  QT target. A soft crash where they close the game without touching the map leaves
+#  no trace. Undercounting is the safe direction.
+SOFT_MARK = "No player entity available when populating quantum path"
+SOFT_NULL = "Vehicle entity: null"
+SOFT_GAP = 600               # seconds; hits closer than this are the same episode
 #: codes that fire during EVERY normal session — 30010 alone appears ~5× per log.
 #: Alerting on these would bury a real fault in noise, so they are never raised.
 BENIGN_NET_CODES = {"30010", "30016", "30028"}
@@ -2560,6 +2597,8 @@ def scan_log(path):
     crash_at = None                    # UTC stamp of the last line before it did
     boots = []                         # dropped back to the main menu, mid-session
     boot_pending = None                # a drop awaiting its front-end confirmation
+    softs = []                         # lost the player entity ("soft crash"), by episode
+    soft_last = None                   # last hit, so a stuck stretch counts once
     boot_intent = None                 # last time the CLIENT asked to leave
     prof = {}                          # last Level Profile Statistics block (FPS etc.)
     net_events = Counter()             # non-benign disconnect codes seen
@@ -2699,6 +2738,12 @@ def scan_log(path):
                 if "Quit" in line or "Disconnect" in line:
                     if any(k in line for k in BOOT_INTENT):
                         boot_intent = parse_dt(p) if p else boot_intent
+                if SOFT_MARK in line and SOFT_NULL in line:
+                    _st = parse_dt(p) if p else None
+                    if _st:
+                        if soft_last is None or (_st - soft_last).total_seconds() > SOFT_GAP:
+                            softs.append(_st)
+                        soft_last = _st
                 if all(k in line for k in PU_JOIN):
                     _pj = parse_dt(p) if p else None
                     if _pj:
@@ -2991,6 +3036,7 @@ def scan_log(path):
     # in the front end for 2½ minutes before quitting.
     boots = [b for b in boots if any(j > b for j in pu_joins)]
     boots = [(b + timedelta(seconds=tz_off)).isoformat(timespec="seconds") for b in boots]
+    softs = [(t + timedelta(seconds=tz_off)).isoformat(timespec="seconds") for t in softs]
 
     dur = 0.0
     if dt0 and dt1 and dt1 > dt0:
@@ -3115,6 +3161,7 @@ def scan_log(path):
         "prof": prof or None,          # FPS / frame-time histogram for the session
         "net_events": dict(net_events),
         "boots": boots,                # times the server dropped you to the main menu
+        "softs": softs,                # times the client lost your player entity
         "limited": limited,            # session ran on a reduced-logging build
         # the channel this session ACTUALLY ran on (from its Executable: path),
         # so attribution survives logs being copied between channel folders.
@@ -3178,6 +3225,8 @@ def blank_patch():
         "net_events": Counter(),       # non-benign disconnect codes
         "boots": [],                   # local-time stamps of drops to the main menu
         "boot_sessions": 0,            # sessions that suffered at least one
+        "softs": [],                   # local-time stamps of lost-player episodes
+        "soft_sessions": 0,
     }
 
 
@@ -3301,6 +3350,10 @@ def fold(agg, s):
     if _bt:
         agg["boots"].extend(_bt)
         agg["boot_sessions"] += 1
+    _sf = s.get("softs") or []
+    if _sf:
+        agg["softs"].extend(_sf)
+        agg["soft_sessions"] += 1
     for sys_ in s["systems"]:
         agg["systems"][sys_] += 1
     dt = s["start"]
@@ -3393,6 +3446,32 @@ def _perf_summary(perf):
     return {"n": len(perf),
             "cpu": mean(cpu), "cpu_min": round(min(cpu), 1), "cpu_max": round(max(cpu), 1),
             "gpu": mean(gpu), "gpu_min": round(min(gpu), 1), "gpu_max": round(max(gpu), 1)}
+
+
+def _episode_summary(stamps, sessions_hit, agg):
+    """Count, rate and trend for a list of local-time event stamps (menu drops, lost
+    players). Rate per 10 hours played, not a raw count: a heavy month would otherwise
+    always look worse than a light one. Months are the player's own, from the stamps."""
+    stamps = sorted(stamps)
+    if not stamps:
+        return None
+    by_month = Counter(b[:7] for b in stamps)
+    hrs_month = {k: v / 3600.0 for k, v in agg["months"].items()}
+    # months with too little play are dropped: one event in 40 minutes reads as a
+    # catastrophic rate and says nothing. Quiet months stay in at 0, on purpose —
+    # that is how you see when this started.
+    trend = [[k, round(by_month.get(k, 0) / h * 10, 2), by_month.get(k, 0), round(h, 1)]
+             for k, h in sorted(hrs_month.items()) if h >= 5]
+    hours = agg["seconds"] / 3600.0
+    return {
+        "n": len(stamps),
+        "sessions": sessions_hit,
+        "session_pct": round(sessions_hit / agg["sessions"] * 100, 1) if agg["sessions"] else 0,
+        "per10h": round(len(stamps) / hours * 10, 2) if hours >= 1 else None,
+        "last": stamps[-1],
+        "recent": stamps[-8:][::-1],
+        "trend": trend[-14:],
+    }
 
 
 def finalize(agg):
@@ -3607,32 +3686,12 @@ def finalize(agg):
                    "min": round(min(vals), 1), "max": round(max(vals), 1),
                    "ms": round(sum(ms) / len(ms), 1),
                    "hitch": round(sum(hh) / len(hh), 2)}
-    # ---- dropped to the main menu ----
-    # Rate per 10 hours played, not a raw count: a heavy month would otherwise always
-    # look worse than a light one. Months are the player's own, from the local stamps.
-    boots = sorted(agg["boots"])
-    boot_sum = None
-    if boots:
-        by_month = Counter(b[:7] for b in boots)
-        hrs_month = {k: v / 3600.0 for k, v in agg["months"].items()}
-        # months with too little play are dropped: one drop in 40 minutes reads as a
-        # catastrophic rate and says nothing. Quiet months stay in at 0, on purpose —
-        # that is how you see when this started.
-        trend = [[k, round(by_month.get(k, 0) / h * 10, 2), by_month.get(k, 0), round(h, 1)]
-                 for k, h in sorted(hrs_month.items()) if h >= 5]
-        hours = agg["seconds"] / 3600.0
-        boot_sum = {
-            "n": len(boots),
-            "sessions": agg["boot_sessions"],
-            "session_pct": round(agg["boot_sessions"] / agg["sessions"] * 100, 1)
-            if agg["sessions"] else 0,
-            "per10h": round(len(boots) / hours * 10, 2) if hours >= 1 else None,
-            "last": boots[-1],
-            "recent": boots[-8:][::-1],
-            "trend": trend[-14:],
-        }
+    # ---- dropped to the main menu / lost your player ----
+    boot_sum = _episode_summary(agg["boots"], agg["boot_sessions"], agg)
+    soft_sum = _episode_summary(agg["softs"], agg["soft_sessions"], agg)
     return {
         "boots": boot_sum,
+        "soft": soft_sum,
         "gun_meta": gun_meta,
         "legacy": legacy,
         "shops": shops_named.most_common(10),
@@ -7859,6 +7918,25 @@ function newcomerVerdict(v, oc, rated, thin){
 // Citizen records it as the PLAYER asking to disconnect, which is why it has never
 // shown up in any stat. Since the 2026 builds a deliberate exit to menu leaves the SAME
 // trace, so this counts both and is labelled that way — see BOOT_DISCO_RE.
+// A dated list with the gap to the entry before it — these arrive in clusters (five in
+// one evening, 8 minutes apart), and the gap is what you actually want to see.
+function recentHTML(recent){
+  if(!(recent||[]).length) return '';
+  return `<div class="card" style="margin-top:16px">`+
+    `<h3>Most recent <span class="u">— newest first</span></h3><div class="tline">`+
+    recent.map((t,i)=>{
+      const p=String(t).split('T');
+      const prev=recent[i+1];
+      let gap='';
+      if(prev){
+        const d=(new Date(t)-new Date(prev))/60000;
+        gap = d<90 ? `${Math.round(d)} min after the previous one`
+            : d<2880 ? `${Math.round(d/60)} h after the previous one` : '';
+      }
+      return `<div class="tev"><span class="td">${esc(ddmm(p[0]))} ${esc((p[1]||'').slice(0,5))}</span>`+
+        `<span class="tw"></span><span class="tv">${esc(gap)}</span></div>`;
+    }).join('')+`</div></div>`;
+}
 function bootsHTML(v){
   const b=v.boots;
   if(!b) return `<div class="card"><div class="empty">No mid-session returns to the main menu in this scope. `+
@@ -7870,23 +7948,7 @@ function bootsHTML(v){
     [icon('time'), rate, 'Per 10 hours played', 'the rate is what to compare'],
     [icon('profile'), b.session_pct+'%', 'Sessions affected', `${fmt(b.sessions)} of your sessions`],
   ]);
-  // Every row said "back to menu", which is what the whole card is about. The third
-  // column now carries the gap to the drop before it — that is the thing you actually
-  // want to see, because these arrive in clusters (five in one evening, 8 minutes apart).
-  const recent=(b.recent||[]).length ? `<div class="card" style="margin-top:16px">`+
-    `<h3>Most recent <span class="u">— newest first</span></h3><div class="tline">`+
-    b.recent.map((t,i)=>{
-      const p=String(t).split('T');
-      const prev=b.recent[i+1];
-      let gap='';
-      if(prev){
-        const d=(new Date(t)-new Date(prev))/60000;
-        gap = d<90 ? `${Math.round(d)} min after the previous one`
-            : d<2880 ? `${Math.round(d/60)} h after the previous one` : '';
-      }
-      return `<div class="tev"><span class="td">${esc(ddmm(p[0]))} ${esc((p[1]||'').slice(0,5))}</span>`+
-        `<span class="tw"></span><span class="tv">${esc(gap)}</span></div>`;
-    }).join('')+`</div></div>` : '';
+  const recent=recentHTML(b.recent);
   // Full width, not half: vbars renders into a viewBox that scales to the container, so
   // a 900px-wide chart squeezed into a half-width column loses its height too and the
   // bars end up as slivers.
@@ -7901,6 +7963,35 @@ function bootsHTML(v){
       `Since the 2026 builds the log can't tell the two apart, so both are counted. If you never use Exit to menu, these are all drops.`)+
     noteFold(`Why drops and exits can't be separated any more`,
       `Up to the 2025 builds the client wrote its own quit request before a deliberate exit, which is how CSR told them apart. In every 2026 build that line comes about 7 s after the disconnect, for drops and exits alike — checked across 274 events and one session where I knew which was which. 4.10 lets you switch shards from the menu, so some of these will be you.`)+
+    trend+recent;
+}
+function softHTML(v){
+  const s=v.soft;
+  if(!s) return `<div class="card"><div class="empty">No lost-player episodes in this scope. `+
+    `CSR looks for the starmap refusing to plot a route because the client has no player entity `+
+    `— the line Star Citizen writes when you are stuck in space with no body.</div></div>`;
+  const rate=s.per10h!=null ? s.per10h.toFixed(2) : '—';
+  const kpis=kpiRow([
+    [icon('bug'), fmt(s.n), 'Lost your player', 'episodes — hits 10 min apart or more'],
+    [icon('time'), rate, 'Per 10 hours played', 'the rate is what to compare'],
+    [icon('profile'), s.session_pct+'%', 'Sessions affected', `${fmt(s.sessions)} of your sessions`],
+  ]);
+  const recent=recentHTML(s.recent);
+  const trend=(s.trend||[]).length>1
+    ? `<div style="margin-top:16px">`+
+      barsCard('Lost your player per 10 hours played','by month — quiet months shown at zero','softTrend')+
+      `</div>`
+    : '';
+  return kpis+
+    callout(icon('satellite'),
+      `Star Citizen doesn't log losing your player as anything. The only line that gives it away is the starmap `+
+      `cancelling a route because there is no player to route for, so CSR only sees an episode once you open the `+
+      `map or pick a QT target. Close the game without touching the map and it isn't counted. `+
+      `This is the server's replication layer breaking, not your PC — relogging is the only fix.`)+
+    noteFold(`How this line was picked`,
+      `Checked against about 3,700 logs: it appears in none of the clean ones. The other things that session logged — `+
+      `LOST ENTITY PTR bursts, quantum drives whose ship “does not exist”, the Replicant unbinding the player — `+
+      `all turn up in sessions that played on fine, so none of them can be the trigger.`)+
     trend+recent;
 }
 // One renderer, two tabs: `STAB` picks which half of System & Stability to draw.
@@ -8017,13 +8108,15 @@ function secSystem(v, STAB){
   // stability side is live and is what you open CSR to check. Mixing them meant
   // scrolling past your CPU model to find out what crashed you an hour ago.
   $('#content').innerHTML = STAB ? (metaLine(v)+
-    group(1,'pulse','Live monitoring','Watching your logs for crashes and disconnects',
+    group(1,'pulse','Live monitoring','Watching your logs for crashes, disconnects and lost players',
       watchHTML())+
     group(2,'bug','Crashes','What Star Citizen said went wrong',
       lastCrashHTML(v)+crashCausesHTML(v)+crashListHTML(v))+
-    group(3,'no','Back to the main menu','Returned to the front end mid-session and carried on — a server drop or an exit to menu',
+    group(3,'space','Lost your player','The game kept running but your client had no player entity — no body, nothing responds',
+      softHTML(v))+
+    group(4,'no','Back to the main menu','Returned to the front end mid-session and carried on — a server drop or an exit to menu',
       bootsHTML(v))+
-    group(4,'warning','Session outcomes','How your sessions ended',
+    group(5,'warning','Session outcomes','How your sessions ended',
       rated ? stabKpis+ctx+newcomerVerdict(v,oc,rated,thin)+stabNote+
         `<div class="grid2" style="margin-top:16px">`+
         cardHTML('How sessions ended','share of '+fmt(rated)+' sessions','outcomeChart')+
@@ -8096,16 +8189,20 @@ function secSystem(v, STAB){
       setTimeout(()=>{ bug.innerHTML=icon('export')+' Copy a bug report'; },2200);
     });
   };
-  const bt=$('#bootTrend');
-  if(bt && v.boots && (v.boots.trend||[]).length>1){
+  // Monthly rate bars for an episode block (menu drops, lost players): same shape,
+  // same thresholds, only the noun in the hover differs.
+  const episodeTrend=(el, blk, noun)=>{
+    if(!el || !blk || (blk.trend||[]).length<2) return;
     const MONS=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
     const lbl=k=>{ const p=k.split('-'); return (MONS[+p[1]-1]||p[1])+' '+p[0].slice(2); };
-    vbars(bt, v.boots.trend.map(([k,rate,n,h])=>({
+    vbars(el, blk.trend.map(([k,rate,n,h])=>({
       label:lbl(k), value:rate, disp:rate.toFixed(2),
-      full:`${lbl(k)} — ${n} drop${n===1?'':'s'} in ${h} h played`,
+      full:`${lbl(k)} — ${n} ${noun}${n===1?'':'s'} in ${h} h played`,
       color:rate>=3?'#ff5468':(rate>=1?'#ff9147':'var(--cyan)')})),
-      {h:250, w:Math.max(560, v.boots.trend.length*74), maxbw:54, fmtY:x=>x.toFixed(1)});
-  }
+      {h:250, w:Math.max(560, blk.trend.length*74), maxbw:54, fmtY:x=>x.toFixed(1)});
+  };
+  episodeTrend($('#bootTrend'), v.boots, 'drop');
+  episodeTrend($('#softTrend'), v.soft, 'episode');
   const sx=$('#shareTxt');
   if(sx){
     sx.value=shareText(v);
