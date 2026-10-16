@@ -5,7 +5,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and CSR
 uses [Semantic Versioning](https://semver.org/) (MAJOR.MINOR.PATCH).
 
 
-## [Unreleased]
+## [1.5.2] — 2026-10-16
 
 ### Added
 - **Lost your player** (Stability). The soft crash where the game keeps running but
