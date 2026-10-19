@@ -2,9 +2,11 @@
 import os
 import sys
 import unittest
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from sc_stats import group_crash_rows, enrich_crash  # noqa: E402
+import sc_stats  # noqa: E402
+from sc_stats import group_crash_rows, enrich_crash, _ship_display_name  # noqa: E402
 
 
 def crash(at, digest=None, **kw):
@@ -136,6 +138,43 @@ class EnrichTests(unittest.TestCase):
         self.assertEqual(out["ship"], "Asgard")
         self.assertEqual(out["last_err"][0]["ship"], "Polaris")
         self.assertNotIn("ship", src)
+
+
+class ShipDisplayNameTests(unittest.TestCase):
+    def test_resolved_class_gives_the_matrix_name(self):
+        with mock.patch.object(sc_stats.SHIPS, "ok", True),              mock.patch.object(sc_stats.SHIPS, "match", return_value={"name": "Asgard"}):
+            self.assertEqual(_ship_display_name("ANVL_Asgard"), "Asgard")
+
+    def test_unresolved_class_is_none_not_a_prettified_guess(self):
+        with mock.patch.object(sc_stats.SHIPS, "ok", True),              mock.patch.object(sc_stats.SHIPS, "match", return_value=None):
+            self.assertIsNone(_ship_display_name("ANVL_Unlisted_Thing"))
+
+    def test_index_not_loaded_is_none(self):
+        with mock.patch.object(sc_stats.SHIPS, "ok", False),              mock.patch.object(sc_stats.SHIPS, "match", return_value={"name": "Asgard"}) as m:
+            self.assertIsNone(_ship_display_name("ANVL_Asgard"))
+            m.assert_not_called()
+
+
+class FinalizeCrashTests(unittest.TestCase):
+    def test_finalize_builds_loop_rows_and_last_crash(self):
+        agg = sc_stats.blank_patch()
+        for at, dg, extra in (("2026-03-05T16:27:00", "71a6", {}),
+                              ("2026-03-05T16:32:00", "71a6", {}),
+                              ("2026-03-06T09:00:00", "bbbb", {"peak_commit_mb": 4096, "ship_cls": "ANVL_Asgard"})):
+            agg["crashes"].append((at[:10], {"exception": "EXCEPTION_ACCESS_VIOLATION", "at": at,
+                                             "digest": dg, **extra}))
+            agg["digests"][dg] += 1
+        with mock.patch.object(sc_stats.SHIPS, "ok", True),              mock.patch.object(sc_stats.SHIPS, "match", return_value={"name": "Asgard"}):
+            out = sc_stats.finalize(agg)
+        rows = out["crash_list"]
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[0]["digest"], "bbbb")
+        self.assertEqual(rows[1]["loop"], ["2026-03-05T16:27:00", "2026-03-05T16:32:00"])
+        self.assertEqual(rows[1]["seen"], 2)
+        self.assertEqual(out["last_crash"]["at"], "2026-03-06T09:00:00")
+        self.assertEqual(out["last_crash"]["peak_commit_mb"], 4096)
+        self.assertEqual(out["last_crash"]["ship"], "Asgard")
+        self.assertEqual(out["crash_repeats"], [["71a6", 2]])
 
 
 if __name__ == "__main__":

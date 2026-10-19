@@ -3546,6 +3546,13 @@ def _perf_summary(perf):
 CRASH_LOOP_GAP_S = 1800   # same bug again within this long of the last one = a crash loop
 
 
+def _ship_display_name(cls):
+    """Real ship name for a class id, or None. SHIPS.display() would hand back a
+    prettified class for an unmatched model; a crash row must not show that as a name."""
+    rec = SHIPS.match(cls) if SHIPS.ok else None
+    return rec["name"] if rec and rec.get("name") else None
+
+
 def enrich_crash(crash, ship_name=None):
     """Copy of a crash dict with ship display names added: `ship` from ship_cls, and on
     each last_err item the attach target ("to") or else its own class. Names the game
@@ -3820,12 +3827,10 @@ def finalize(agg):
     rough = oc.get("crash", 0) + oc.get("backend", 0) + oc.get("died", 0)
     # ---- crashes ----
     crashes = sorted((c for c in agg["crashes"] if c[0]), key=lambda c: c[0])
-    ship_name = lambda cls: (SHIPS.display(cls)[0]
-                             if SHIPS.ok and SHIPS.by_code.get(cls.split("_")[0]) else None)
     last_crash = None
     if crashes:
         d, c = crashes[-1]
-        last_crash = enrich_crash(c, ship_name)
+        last_crash = enrich_crash(c, _ship_display_name)
         last_crash["date"] = d
         dg = c.get("digest")
         last_crash["seen"] = agg["digests"].get(dg, 1) if dg else 1
@@ -3833,7 +3838,7 @@ def finalize(agg):
     # Every crash, newest first, for the paged history; repeats of one bug fold into a
     # loop row. Only the fields the list shows — the full post-mortem would multiply the
     # page size for data nothing reads.
-    crash_list = group_crash_rows(crashes, ship_name)
+    crash_list = group_crash_rows(crashes, _ship_display_name)
     fpsrows = [f for f in agg["fps"] if f[0]]
     fps_sum = None
     if fpsrows:
