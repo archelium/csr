@@ -3315,6 +3315,7 @@ def blank_patch():
         "perf": [],                    # (date, cpu_index, gpu_index) launch benchmarks
         "outcomes": Counter(),         # clean | backend | crash | died | other | open
         "crashes": [],                 # (date, crash dict) — SC's own post-mortems
+        "play": [],                    # (local start datetime, seconds) per session
         "digests": Counter(),          # crash signature -> times hit
         "fps": [],                     # (date, avg fps, avg ms, hitch %) per session
         "net_events": Counter(),       # non-benign disconnect codes
@@ -3414,6 +3415,8 @@ def fold(agg, s):
     agg["death_ships"].update(s["death_ships"])
     agg["outcomes"][s.get("outcome") or "unknown"] += 1
     _d = s["start"].date().isoformat() if s.get("start") else None
+    if s.get("start"):
+        agg["play"].append((s["start"], s["dur"]))
     if s.get("rig"):
         agg["rig_events"].append((_d, s["rig"]))
     if s.get("perf"):
@@ -3617,6 +3620,50 @@ def group_crash_rows(crashes, ship_name=None):
                      {k: v for k, v in row.items() if v is not None}))
     rows.sort(key=lambda r: r[0], reverse=True)
     return [r for _, r in rows]
+
+
+def crash_breakdown(crashes, play, quiet_hours=50):
+    """Crashes split into the ones the player can fix and the ones that are Star
+    Citizen's. `crashes` is [(date, crash)], `play` is [(session start, seconds)].
+    A "yours" type is quiet once `quiet_hours` of play started after its last crash;
+    a crash with no `at` counts from midnight of its date. Game bugs report how many
+    distinct digests they spread over and the most repeated one. None without crashes."""
+    if not crashes:
+        return None
+    by = {}   # exception -> [n, latest datetime or None, latest date string, digest counts]
+    for d, c in crashes:
+        exc = c.get("exception") or "UNKNOWN"
+        at = c.get("at")
+        when = datetime.fromisoformat(at) if at else (datetime.fromisoformat(d) if d else None)
+        day = at[:10] if at else d
+        e = by.setdefault(exc, [0, None, None, Counter()])
+        e[0] += 1
+        if when and (e[1] is None or when > e[1]):
+            e[1], e[2] = when, day
+        if c.get("digest"):
+            e[3][c["digest"]] += 1
+
+    def quiet(since):
+        return since is not None and sum(dur for st, dur in play if st > since) >= quiet_hours * 3600
+
+    yours, game = [], []
+    for exc, (n, when, day, dgs) in by.items():
+        if CRASH_KIND.get(exc, (None, False))[1]:
+            yours.append({"exc": exc, "n": n, "last": day, "quiet": quiet(when), "_when": when})
+        else:
+            top = dgs.most_common(1)
+            game.append({"exc": exc, "n": n, "distinct": len(dgs),
+                         "worst": [top[0][0][:8], top[0][1]] if top and top[0][1] > 1 else None})
+    yours.sort(key=lambda y: -y["n"])
+    game.sort(key=lambda g: -g["n"])
+    whens = [y["_when"] for y in yours if y["_when"]]
+    latest = max(whens) if whens else None
+    last_day = max((y["last"] for y in yours if y["last"]), default=None)
+    for y in yours:
+        del y["_when"]
+    return {"yours": yours, "game": game,
+            "yours_n": sum(y["n"] for y in yours), "game_n": sum(g["n"] for g in game),
+            "yours_last": last_day, "yours_quiet": quiet(latest)}
 
 
 def _episode_summary(stamps, sessions_hit, agg):
@@ -3970,6 +4017,7 @@ def finalize(agg):
         "last_crash": last_crash,
         "crash_causes": causes.most_common(),
         "crash_list": crash_list,
+        "crash_breakdown": crash_breakdown(agg["crashes"], agg["play"]),
         "crash_repeats": [[d, n] for d, n in agg["digests"].most_common(5) if n > 1],
         "fps": fps_sum,
         "net_events": dict(agg["net_events"]),
