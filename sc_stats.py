@@ -5309,6 +5309,26 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
   .tev .tw{font-size:12.5px;color:var(--txt)}
   .tev .tv{font-family:var(--font-mono);font-size:11px;color:var(--dim);margin-left:auto;
     white-space:nowrap;padding-left:10px}
+  /* crash rows: line 1 = when · where · verdict, line 2 = what happened + a details toggle.
+     Both lines stay on one line each (ellipsis) so every row, ghost padding included,
+     is the same height and the card does not move between pages. */
+  .tev.crow{flex-direction:column;align-items:stretch;gap:3px}
+  .crow .cl1,.crow .cl2{display:flex;gap:12px;min-width:0}
+  .crow .cl1{align-items:baseline}
+  .crow .cl2{align-items:center;min-height:24px;padding-left:100px}
+  .crow .cl1 .tw{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted)}
+  .crow .cs{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+    font-size:12px;color:var(--dim)}
+  .crow .cdet{width:auto;flex:none;padding:0 9px;line-height:20px;font-size:11px}
+  .crow .cdt{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:3px 14px;
+    margin:6px 0 2px 100px;padding:8px 11px;border-left:2px solid var(--line);background:var(--panel);
+    font-family:var(--font-mono);font-size:10.5px;color:var(--txt)}
+  .crow .cdt[hidden]{display:none}
+  .crow .cdt .dk{color:var(--dim);letter-spacing:.08em;text-transform:uppercase;font-size:9.5px}
+  .crow .cdt .dv{min-width:0;overflow-wrap:anywhere}
+  .card h3 .cclr{width:auto;display:inline;padding:1px 8px;font-size:11px;line-height:1.4;
+    text-transform:none;letter-spacing:.03em}
+  @media (max-width:560px){ .crow .cl2,.crow .cdt{padding-left:0;margin-left:0} .crow .cdt{padding-left:11px} }
   /* configuration health check — diagnosis rows, never tuning advice */
   .chk{display:flex;gap:11px;align-items:flex-start;padding:11px 13px;border-radius:9px;
     border:1px solid var(--line);border-left:3px solid var(--dim);background:var(--panel);margin-top:9px}
@@ -7840,11 +7860,68 @@ function whenStamp(at, date){
   const p=String(at).split('T');
   return ddmm(p[0])+(p[1]?' '+p[1].slice(0,5):'');
 }
+// What the player was doing when it went down, from the CrashContext fields the Python side
+// attaches (phase / where / ship / into_s). "leaving" = the game had already started
+// unloading to the main menu. A word for the phase is only shown when there is no ship.
+const PHASE_WORD={loading:'Loading',menu:'Main menu',game:'In game',leaving:'Leaving to menu'};
+const fmtInto=s=>{ const h=Math.floor(s/3600), m=Math.floor(s%3600/60);
+  return h ? h+' h '+m+' m' : m ? m+' m' : s+' s'; };
+const gbOf=mb=>(mb/1024).toFixed(1)+' GB';
+const attrEsc=s=>esc(String(s)).replace(/"/g,'&quot;');
+function loopSpanMin(c){
+  const L=c.loop;
+  if(!L || L.length<2) return null;
+  const a=Date.parse(L[0]), b=Date.parse(L[L.length-1]);
+  return isNaN(a)||isNaN(b) ? null : Math.max(1, Math.round((b-a)/60000));
+}
+// line 1, left: "Polaris · UEE · 1 h 12 m in", loops add "3 crashes in 12 min, same bug".
+// A part the data doesn't have is left out; a row with none of them returns ''.
+function crashWhere(c){
+  const p=[];
+  if(c.ship) p.push(c.ship); else if(PHASE_WORD[c.phase]) p.push(PHASE_WORD[c.phase]);
+  if(c.where) p.push(c.where);
+  if(typeof c.into_s==='number') p.push(fmtInto(c.into_s)+' in');
+  if(c.loop && c.loop.length>1){
+    const m=loopSpanMin(c);
+    p.push(c.loop.length+' crashes'+(m!=null?' in '+m+' min':'')+', same bug');
+  }
+  return p.join(' · ');
+}
+// Failed-attachment lines say a ship's parts were being spawned. Only name the ship when
+// the index resolved one (err.ship); the class alone just tells us it was a vehicle part.
+const VEHICLE_PART_RE=/^Vehicle_|_SCItem_|_Turret|_Seat|_Thruster|_Door|_Ladder|_Hatch/i;
+const ERR_PHRASE={
+  'Failed attachment':err=>(err.ship || VEHICLE_PART_RE.test(err.cls||''))
+    ? `Crashed while ${err.ship ? err.ship+' ' : 'ship '}parts were streaming in.`
+    : 'Crashed while items were being attached.',
+};
+function crashVerdictText(c){
+  const act=(CRASH_KIND[c.exception]||[0,false])[1];
+  return c.gpu_msg || (act
+    ? 'Star Citizen reported a fault you may be able to do something about.'
+    : 'This was a fault inside Star Citizen. Nothing on your machine caused it, and no setting would have prevented it.');
+}
+// [sentence, where it came from]; the source lets "Your last crash" show only the
+// last_err sentence above its own explanation instead of repeating it.
+function crashSentenceSrc(c){
+  if(c.loop && c.loop.length>1)
+    return ['Crash loop. It went down the same way each time'+
+      (c.phase==='loading' && typeof c.into_s!=='number' ? ' on launch' : '')+'.', 'loop'];
+  if(c.exception==='STATUS_CRYENGINE_OUT_OF_SYSMEM' && c.ws_mb)
+    return [gbOf(c.ws_mb)+' in use'+(c.free_mb!=null?', '+gbOf(c.free_mb)+' free':'')+'.', 'mem'];
+  if(c.exception==='STATUS_CRYENGINE_GPU_CRASH' && c.gpu_msg) return [c.gpu_msg, 'gpu'];
+  const e=(c.last_err||[])[0];
+  if(e && Object.prototype.hasOwnProperty.call(ERR_PHRASE, e.tag)) return [ERR_PHRASE[e.tag](e), 'err'];
+  return [crashVerdictText(c), 'verdict'];
+}
+const crashSentence=c=>crashSentenceSrc(c)[0];
 function lastCrashHTML(v){
   const c=v.last_crash;
   if(!c) return `<div class="card"><div class="empty">No crash has been recorded in this scope. `+
     `Star Citizen writes a report whenever it crashes, so this stays empty until it does.</div></div>`;
   const [label,actionable]=CRASH_KIND[c.exception]||[c.exception||'Unknown crash',false];
+  const where=crashWhere(c);
+  const [sent,sentSrc]=crashSentenceSrc(c);
   const gb=mb=>mb?(mb/1024).toFixed(1)+' GB':null;
   const chips=[];
   if(c.ws_mb) chips.push(['MEMORY IN USE', gb(c.ws_mb)]);
@@ -7852,12 +7929,12 @@ function lastCrashHTML(v){
   if(c.free_mb!=null) chips.push(['FREE AT CRASH', gb(c.free_mb)]);
   if(c.seen>1) chips.push(['TIMES HIT', String(c.seen)]);
   return `<div class="card"><h3>Your last crash <span class="u">— ${esc(whenStamp(c.at, c.date))}</span></h3>`+
+    (where?`<div class="bsub" style="margin-top:2px">${esc(where)}</div>`:'')+
     `<div class="chk ${actionable?'warn':'bad'}" style="margin-top:2px">`+
     `<span class="ci">${icon(actionable?'warning':'bug')}</span><div style="flex:1">`+
     `<div class="ct2">${esc(label)}</div>`+
-    `<div class="cd">${esc(c.gpu_msg || (actionable
-        ? 'Star Citizen reported a fault you may be able to do something about.'
-        : 'This was a fault inside Star Citizen. Nothing on your machine caused it, and no setting would have prevented it.'))}`+
+    (sentSrc==='err'?`<div class="cd" style="margin-bottom:4px">${esc(sent)}</div>`:'')+
+    `<div class="cd">${esc(crashVerdictText(c))}`+
     (c.seen>1?` <b>You have hit this exact crash ${c.seen} times.</b>`:'')+`</div>`+
     `<div class="mchips">`+chips.map(([k,val])=>
       `<span class="mchip"><span class="mk">${k}</span><span class="mv">${esc(val)}</span></span>`).join('')+
@@ -7883,36 +7960,67 @@ function lastCrashHTML(v){
 // haystack — with pages you can at least see how many there are.
 const CRASH_PAGE=20;
 let crashPage=0;
+// {kind:'exc'|'digest', val, label} narrows the list to one exception or one digest;
+// null shows everything. Rows are filtered before paging.
+let crashFilter=null;
+function setCrashFilter(f){
+  crashFilter=f||null; crashPage=0; render();
+  const el=$('#crashList'); if(el) scrollToY(el.getBoundingClientRect().top+window.pageYOffset-160);
+}
+// Details under a row: everything the row's two lines leave out. Fields the data
+// doesn't carry are not listed.
+function crashDetailsHTML(c){
+  const R=[];
+  const add=(k,val)=>{ if(val!=null && val!=='') R.push(`<span class="dk">${k}</span><span class="dv">${esc(String(val))}</span>`); };
+  add('Exception', (c.exception||'')+(c.code?' '+c.code:''));
+  add('Digest', c.digest);
+  add('Phase', PHASE_WORD[c.phase]);
+  add('Memory', [c.ws_mb?gbOf(c.ws_mb)+' in use':'', c.free_mb!=null?gbOf(c.free_mb)+' free':''].filter(Boolean).join(', '));
+  add('Game said', c.gpu_msg);
+  (c.last_err||[]).forEach(e=>add('Last error', e.tag+' ×'+e.n+(e.cls?' · '+e.cls:'')));
+  if(c.seen>1) add('Seen', c.seen+' times'+(c.first?', first '+ddmm(c.first):''));
+  if(c.loop && c.loop.length>1) add('Crashes', c.loop.map(a=>whenStamp(a, c.date)).join(' · '));
+  return `<div class="cdt" hidden>${R.join('')}</div>`;
+}
 function crashListHTML(v){
-  const rows=v.crash_list||[];
-  if(!rows.length) return '';
-  const pages=Math.ceil(rows.length/CRASH_PAGE);
+  const all=v.crash_list||[];
+  if(!all.length) return '';
+  const fkey=crashFilter ? (crashFilter.kind==='digest' ? 'digest' : 'exception') : null;
+  const rows=crashFilter ? all.filter(r=>r[fkey]===crashFilter.val) : all;
+  const pages=Math.max(1, Math.ceil(rows.length/CRASH_PAGE));
   crashPage=Math.min(crashPage, pages-1);
-  const slice=rows.slice(crashPage*CRASH_PAGE, (crashPage+1)*CRASH_PAGE);
-  const gb=mb=>mb?(mb/1024).toFixed(1)+' GB':'';
+  const start=crashPage*CRASH_PAGE;
+  const slice=rows.slice(start, start+CRASH_PAGE);
   // The last page is nearly always short. Padding it out with empty rows of the same
   // height keeps the card exactly the same size on every page, so paging doesn't make
-  // the whole layout jump up under the cursor.
-  const pad=Array.from({length:Math.max(0, CRASH_PAGE-slice.length)},
-    // the nbsp has to be in .tw as well: it is the tallest span in a real row, so an
-    // empty one makes the filler 4px short and the card still shrinks by ~50px
-    ()=>`<div class="tev ghost"><span class="td">&nbsp;</span><span class="tw">&nbsp;</span></div>`).join('');
-  const body=slice.map(c=>{
+  // the whole layout jump up under the cursor. A ghost row carries the same elements
+  // as a real one (including a hidden toggle button) so the two lines match in height.
+  const pad=rows.length ? Array.from({length:Math.max(0, CRASH_PAGE-slice.length)},
+    ()=>`<div class="tev crow ghost"><div class="cl1"><span class="td">&nbsp;</span><span class="tw">&nbsp;</span></div>`+
+      `<div class="cl2"><span class="cs">&nbsp;</span>`+
+      `<button class="foot-link cdet" tabindex="-1" aria-hidden="true" style="visibility:hidden">▸</button></div></div>`).join('') : '';
+  const body=slice.map((c,i)=>{
     const [label,act]=CRASH_KIND[c.exception]||[c.exception||'Unknown crash',false];
-    const mem=[c.ws_mb?gb(c.ws_mb)+' in use':'', c.free_mb!=null?gb(c.free_mb)+' free':'']
-      .filter(Boolean).join(' · ');
-    return `<div class="tev"><span class="td" style="color:${act?'var(--amber)':'#8b9bb4'}">`+
+    const where=crashWhere(c), sent=crashSentence(c);
+    // .tw is always present (nbsp when the row has no where) so line 1 keeps its height
+    return `<div class="tev crow"><div class="cl1"><span class="td" style="color:${act?'var(--amber)':'#8b9bb4'}">`+
       `${esc(whenStamp(c.at, c.date))}</span>`+
-      `<span class="tw">${esc(label)}${c.digest?` <span class="u">${esc(c.digest.slice(0,8))}</span>`:''}</span>`+
-      `<span class="tv">${esc(mem)}</span></div>`;
-  }).join('');
+      `<span class="tw"${where?` title="${attrEsc(where)}"`:''}>${where?esc(where):'&nbsp;'}</span>`+
+      `<span class="tv" style="color:${act?'var(--amber)':'#8b9bb4'}">${esc(label)}</span></div>`+
+      `<div class="cl2"><span class="cs" title="${attrEsc(sent)}">${esc(sent)}</span>`+
+      `<button class="foot-link cdet" data-cdet="${start+i}" aria-expanded="false" aria-label="Details" title="Details">▸</button></div>`+
+      crashDetailsHTML(c)+`</div>`;
+  }).join('') || `<div class="empty">No crash in this scope matches.</div>`;
   const nav=pages>1 ? `<div class="pager">`+
     `<button class="foot-link" data-cpg="${crashPage-1}" ${crashPage?'':'disabled'}>← Newer</button>`+
-    `<span class="pgi">${crashPage*CRASH_PAGE+1}–${crashPage*CRASH_PAGE+slice.length} of ${fmt(rows.length)}</span>`+
+    `<span class="pgi">${start+1}–${start+slice.length} of ${fmt(rows.length)}</span>`+
     `<button class="foot-link" data-cpg="${crashPage+1}" ${crashPage<pages-1?'':'disabled'}>Older →</button>`+
     `</div>` : '';
+  const sub=crashFilter
+    ? `showing ${esc(crashFilter.label||'')} — <button class="foot-link cclr" data-cflt-clear>clear</button>`
+    : 'newest first';
   return `<div class="card" style="margin-top:16px"><h3>Every crash `+
-    `<span class="u">— newest first</span></h3>`+
+    `<span class="u">— ${sub}</span></h3>`+
     `<div class="tline" id="crashList">${body}${pad}</div>${nav}</div>`;
 }
 // ---- taking a crash further ----
@@ -7961,6 +8069,12 @@ function bugReportText(v, c){
   if(c.gpu_msg) L.push(`Game said   ${c.gpu_msg}`);
   if(c.ws_mb) L.push(`Memory      ${(c.ws_mb/1024).toFixed(1)} GB in use`+
     (c.free_mb!=null?`, ${(c.free_mb/1024).toFixed(1)} GB free`:''));
+  if(PHASE_WORD[c.phase]) L.push(`Phase       ${PHASE_WORD[c.phase]}`);
+  if(c.where) L.push(`Where       ${c.where}`);
+  if(c.ship) L.push(`Ship        ${c.ship}`);
+  if(typeof c.into_s==='number') L.push(`Time in     ${fmtInto(c.into_s)}`);
+  (c.last_err||[]).forEach((e,i)=>
+    L.push(`${i?'            ':'Last errors '}${e.tag} ×${e.n}${e.cls?` (${e.cls})`:''}`));
   if(c.seen>1) L.push(`Frequency   hit this exact signature ${c.seen} times`);
   L.push('');
   if(r.cpu) L.push(`CPU         ${r.cpu}${r.cores?` (${r.cores} threads)`:''}`);
@@ -7972,8 +8086,7 @@ function bugReportText(v, c){
   L.push('');
   if(CRASH_SEARCH[c.exception])
     L.push(`Search the Issue Council for "${CRASH_SEARCH[c.exception]}" before filing this.`);
-  L.push(`(collected from my own client log by CSR — no reproduction steps included,`);
-  L.push(` add what you were doing when it happened before you submit)`);
+  L.push(`(collected from my own client log by CSR — add what you were doing before you submit)`);
   return L.join('\n');
 }
 function crashCausesHTML(v){
@@ -8392,6 +8505,14 @@ function secSystem(v, STAB){
     b.onclick=()=>{ crashPage=+b.dataset.cpg; render();
       const el=$('#crashList'); if(el) scrollToY(el.getBoundingClientRect().top+window.pageYOffset-160); };
   });
+  document.querySelectorAll('[data-cdet]').forEach(b=>{
+    b.onclick=()=>{
+      const d=b.closest('.tev').querySelector('.cdt'); if(!d) return;
+      const open=d.hidden; d.hidden=!open;
+      b.setAttribute('aria-expanded', String(open)); b.textContent=open?'▾':'▸';
+    };
+  });
+  document.querySelectorAll('[data-cflt-clear]').forEach(b=>{ b.onclick=()=>setCrashFilter(null); });
   const bug=$('#bugCopy');
   if(bug && v.last_crash) bug.onclick=()=>{
     copyText(bugReportText(v, v.last_crash), ok=>{
