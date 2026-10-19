@@ -72,6 +72,8 @@ def main(argv):
         return
     for field in ("phase", "where", "ship_cls", "last_err"):
         print(f"  {field:<9} {sum(1 for _, c in crashes if c.get(field)):>4} of {n}")
+    phases = Counter(c.get("phase") or "-" for _, c in crashes)
+    print("  by phase  " + ", ".join(f"{ph} {k}" for ph, k in phases.most_common()))
 
     tops = Counter()
     for _, c in crashes:

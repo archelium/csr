@@ -9,9 +9,9 @@ uses [Semantic Versioning](https://semver.org/) (MAJOR.MINOR.PATCH).
 
 ### Changed
 - **Crash rows say where and when it happened** (Stability). Each row now leads with
-  what you were doing when the game went down: *Loading*, *Main menu*, *In game* or
-  *Leaving to menu*, followed by the place and how long you had been in the game when
-  the log has them. The place is the jurisdiction the game last announced (UEE,
+  what you were doing when the game went down: *Loading*, *Main menu*, *In game*,
+  *Leaving to menu*, *Arena Commander* or *Star Marine*, followed by the place and how
+  long you had been in the game when the log has them. The place is the jurisdiction the game last announced (UEE,
   microTech, Crusader Industries), not a star system or a landing zone; it turns up in
   11 of the 74 crashes checked. Time in is shown for *In game* and *Leaving to menu*
   only. When the log names the ship you were in, which among the crashes checked is
@@ -22,7 +22,7 @@ uses [Semantic Versioning](https://semver.org/) (MAJOR.MINOR.PATCH).
   seconds before the crash, every crash time of a loop and, for a failed attachment,
   what the parts were being attached to. *Copy a bug report* gets the phase, place,
   time in and last errors too.
-  - Parser version **20**: the crash context is read from the log, so the next refresh
+  - Parser version **21**: the crash context is read from the log, so the next refresh
     re-reads your archive once.
 - **What has crashed you is split into yours to fix and Star Citizen bugs** (Stability).
   Crashes that point at your machine (out of memory, graphics driver, hang) sit on the
