@@ -5312,23 +5312,39 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
   /* crash rows: line 1 = when · where · verdict, line 2 = what happened + a details toggle.
      Both lines stay on one line each (ellipsis) so every row, ghost padding included,
      is the same height and the card does not move between pages. */
-  .tev.crow{flex-direction:column;align-items:stretch;gap:3px}
+  .tev.crow{--cin:132px;flex-direction:column;align-items:stretch;gap:3px}
   .crow .cl1,.crow .cl2{display:flex;gap:12px;min-width:0}
   .crow .cl1{align-items:baseline}
-  .crow .cl2{align-items:center;min-height:24px;padding-left:100px}
+  /* fixed stamp column: line 2 and the details indent to exactly where line 1's text starts */
+  .crow .td{flex:none;width:120px;min-width:120px}
+  .crow .cl2{align-items:center;min-height:24px;padding-left:var(--cin)}
   .crow .cl1 .tw{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted)}
   .crow .cs{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
     font-size:12px;color:var(--dim)}
   .crow .cdet{width:auto;flex:none;padding:0 9px;line-height:20px;font-size:11px}
   .crow .cdt{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:3px 14px;
-    margin:6px 0 2px 100px;padding:8px 11px;border-left:2px solid var(--line);background:var(--panel);
+    margin:6px 0 2px var(--cin);padding:8px 11px;border-left:2px solid var(--line);background:var(--panel);
     font-family:var(--font-mono);font-size:10.5px;color:var(--txt)}
   .crow .cdt[hidden]{display:none}
   .crow .cdt .dk{color:var(--dim);letter-spacing:.08em;text-transform:uppercase;font-size:9.5px}
   .crow .cdt .dv{min-width:0;overflow-wrap:anywhere}
   .card h3 .cclr{width:auto;display:inline;padding:1px 8px;font-size:11px;line-height:1.4;
     text-transform:none;letter-spacing:.03em}
-  @media (max-width:560px){ .crow .cl2,.crow .cdt{padding-left:0;margin-left:0} .crow .cdt{padding-left:11px} }
+  /* "Your last crash": the where/phase line, same look as a row's line 1 text */
+  .cwhere{font-size:13.5px;color:var(--muted);margin:2px 0 8px}
+  /* phone widths: stamp + verdict on line 1, where/when on its own line, then the
+     sentence (up to two lines). The sentence box is always two lines tall so the
+     ghost rows still match. */
+  @media (max-width:600px){
+    .tev.crow{--cin:0px}
+    .crow .cl1{flex-wrap:wrap;row-gap:2px}
+    .crow .td{width:auto;min-width:0;order:1}
+    .crow .cl1 .tv{order:2}
+    .crow .cl1 .tw{order:3;flex:0 0 100%}
+    .crow .cs{white-space:normal;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;
+      line-height:17px;min-height:34px}
+    .crow .cdt{margin-left:0}
+  }
   /* configuration health check — diagnosis rows, never tuning advice */
   .chk{display:flex;gap:11px;align-items:flex-start;padding:11px 13px;border-radius:9px;
     border:1px solid var(--line);border-left:3px solid var(--dim);background:var(--panel);margin-top:9px}
@@ -7852,7 +7868,10 @@ const CRASH_KIND={
   EXCEPTION_BREAKPOINT:['Game assertion failed',false],
   STATUS_CRYENGINE_FATAL_ERROR:['Fatal engine error',false],
 };
-const crashLabel=e=>(CRASH_KIND[e]||[e||'Unknown crash',false])[0];
+// An exception the table doesn't know shows as its own name; a missing one, or the
+// parser's UNKNOWN stand-in, shows as "Unknown crash". Neither is something to act on.
+const crashKind=e=>CRASH_KIND[e]||[(!e || e==='UNKNOWN') ? 'Unknown crash' : e, false];
+const crashLabel=e=>crashKind(e)[0];
 // "19-Jul-2026 22:16" — the wall clock the session was played on, already converted
 // on the Python side. Older archived crashes carry only a date; they fall back to it.
 function whenStamp(at, date){
@@ -7888,16 +7907,18 @@ function crashWhere(c){
   return p.join(' · ');
 }
 // Failed-attachment lines say a ship's parts were being spawned. Only name the ship when
-// the index resolved one (err.ship); the class alone just tells us it was a vehicle part.
-const VEHICLE_PART_RE=/^Vehicle_|_SCItem_|_Turret|_Seat|_Thruster|_Door|_Ladder|_Hatch/i;
+// the index resolved one (err.ship); a Vehicle_* class alone only says it was a vehicle part.
+const VEHICLE_PART_RE=/^Vehicle_/;
 const ERR_PHRASE={
   'Failed attachment':err=>(err.ship || VEHICLE_PART_RE.test(err.cls||''))
     ? `Crashed while ${err.ship ? err.ship+' ' : 'ship '}parts were streaming in.`
     : 'Crashed while items were being attached.',
 };
+// The game's message, unless it is only the "GPU CRASH (async):" header with nothing after it.
+const gpuMsgOf=c=>{ const m=(c.gpu_msg||'').trim(); return m && !/:$/.test(m) ? m : null; };
 function crashVerdictText(c){
   const act=(CRASH_KIND[c.exception]||[0,false])[1];
-  return c.gpu_msg || (act
+  return gpuMsgOf(c) || (act
     ? 'Star Citizen reported a fault you may be able to do something about.'
     : 'This was a fault inside Star Citizen. Nothing on your machine caused it, and no setting would have prevented it.');
 }
@@ -7909,7 +7930,7 @@ function crashSentenceSrc(c){
       (c.phase==='loading' && typeof c.into_s!=='number' ? ' on launch' : '')+'.', 'loop'];
   if(c.exception==='STATUS_CRYENGINE_OUT_OF_SYSMEM' && c.ws_mb)
     return [gbOf(c.ws_mb)+' in use'+(c.free_mb!=null?', '+gbOf(c.free_mb)+' free':'')+'.', 'mem'];
-  if(c.exception==='STATUS_CRYENGINE_GPU_CRASH' && c.gpu_msg) return [c.gpu_msg, 'gpu'];
+  if(c.exception==='STATUS_CRYENGINE_GPU_CRASH' && gpuMsgOf(c)) return [gpuMsgOf(c), 'gpu'];
   const e=(c.last_err||[])[0];
   if(e && Object.prototype.hasOwnProperty.call(ERR_PHRASE, e.tag)) return [ERR_PHRASE[e.tag](e), 'err'];
   return [crashVerdictText(c), 'verdict'];
@@ -7919,7 +7940,7 @@ function lastCrashHTML(v){
   const c=v.last_crash;
   if(!c) return `<div class="card"><div class="empty">No crash has been recorded in this scope. `+
     `Star Citizen writes a report whenever it crashes, so this stays empty until it does.</div></div>`;
-  const [label,actionable]=CRASH_KIND[c.exception]||[c.exception||'Unknown crash',false];
+  const [label,actionable]=crashKind(c.exception);
   const where=crashWhere(c);
   const [sent,sentSrc]=crashSentenceSrc(c);
   const gb=mb=>mb?(mb/1024).toFixed(1)+' GB':null;
@@ -7929,7 +7950,7 @@ function lastCrashHTML(v){
   if(c.free_mb!=null) chips.push(['FREE AT CRASH', gb(c.free_mb)]);
   if(c.seen>1) chips.push(['TIMES HIT', String(c.seen)]);
   return `<div class="card"><h3>Your last crash <span class="u">— ${esc(whenStamp(c.at, c.date))}</span></h3>`+
-    (where?`<div class="bsub" style="margin-top:2px">${esc(where)}</div>`:'')+
+    (where?`<div class="cwhere">${esc(where)}</div>`:'')+
     `<div class="chk ${actionable?'warn':'bad'}" style="margin-top:2px">`+
     `<span class="ci">${icon(actionable?'warning':'bug')}</span><div style="flex:1">`+
     `<div class="ct2">${esc(label)}</div>`+
@@ -7976,8 +7997,8 @@ function crashDetailsHTML(c){
   add('Digest', c.digest);
   add('Phase', PHASE_WORD[c.phase]);
   add('Memory', [c.ws_mb?gbOf(c.ws_mb)+' in use':'', c.free_mb!=null?gbOf(c.free_mb)+' free':''].filter(Boolean).join(', '));
-  add('Game said', c.gpu_msg);
-  (c.last_err||[]).forEach(e=>add('Last error', e.tag+' ×'+e.n+(e.cls?' · '+e.cls:'')));
+  add('Game said', gpuMsgOf(c));
+  (c.last_err||[]).forEach(e=>add('Last error', e.tag+' ×'+e.n+(e.cls?' · '+e.cls:'')+(e.to?' → '+e.to:'')));
   if(c.seen>1) add('Seen', c.seen+' times'+(c.first?', first '+ddmm(c.first):''));
   if(c.loop && c.loop.length>1) add('Crashes', c.loop.map(a=>whenStamp(a, c.date)).join(' · '));
   return `<div class="cdt" hidden>${R.join('')}</div>`;
@@ -8000,7 +8021,7 @@ function crashListHTML(v){
       `<div class="cl2"><span class="cs">&nbsp;</span>`+
       `<button class="foot-link cdet" tabindex="-1" aria-hidden="true" style="visibility:hidden">▸</button></div></div>`).join('') : '';
   const body=slice.map((c,i)=>{
-    const [label,act]=CRASH_KIND[c.exception]||[c.exception||'Unknown crash',false];
+    const [label,act]=crashKind(c.exception);
     const where=crashWhere(c), sent=crashSentence(c);
     // .tw is always present (nbsp when the row has no where) so line 1 keeps its height
     return `<div class="tev crow"><div class="cl1"><span class="td" style="color:${act?'var(--amber)':'#8b9bb4'}">`+
@@ -8063,7 +8084,7 @@ function bugReportText(v, c){
   const r=v.rig||{}, L=[];
   L.push(`Build       ${v.build||'—'}${v.patch_label?` (${v.patch_label})`:''}`);
   L.push(`When        ${whenStamp(c.at, c.date)} (local)`);
-  L.push(`Crash       ${(CRASH_KIND[c.exception]||[c.exception])[0]}`);
+  L.push(`Crash       ${crashLabel(c.exception)}`);
   L.push(`Exception   ${c.exception||'—'}${c.code?' '+c.code:''}`);
   if(c.digest) L.push(`Digest      ${c.digest}`);
   if(c.gpu_msg) L.push(`Game said   ${c.gpu_msg}`);
@@ -8074,7 +8095,7 @@ function bugReportText(v, c){
   if(c.ship) L.push(`Ship        ${c.ship}`);
   if(typeof c.into_s==='number') L.push(`Time in     ${fmtInto(c.into_s)}`);
   (c.last_err||[]).forEach((e,i)=>
-    L.push(`${i?'            ':'Last errors '}${e.tag} ×${e.n}${e.cls?` (${e.cls})`:''}`));
+    L.push(`${i?'            ':'Last errors '}${e.tag} ×${e.n}${e.cls||e.to?` (${[e.cls,e.to&&'→ '+e.to].filter(Boolean).join(' ')})`:''}`));
   if(c.seen>1) L.push(`Frequency   hit this exact signature ${c.seen} times`);
   L.push('');
   if(r.cpu) L.push(`CPU         ${r.cpu}${r.cores?` (${r.cores} threads)`:''}`);
