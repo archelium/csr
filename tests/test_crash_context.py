@@ -15,7 +15,8 @@ def dt(hms):
 
 
 def feed(ctx, hms, body):
-    ctx.feed(f"<{DAY}T{hms}.000Z> {body}", dt(hms))
+    line = f"<{DAY}T{hms}.000Z> {body}"
+    ctx.feed(line, line[1:20])
 
 
 def join_pu(ctx, hms="10:00:00"):

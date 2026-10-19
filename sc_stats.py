@@ -1611,7 +1611,9 @@ class CrashContext:
         self.ship_cls = None           # class of the ship last granted control
         self.errs = deque()            # (ts, tag, cls, to) of recent [Error] lines
 
-    def feed(self, line, ts):
+    def feed(self, line, prefix):
+        """One log line, in order. `prefix` is its raw _ts_prefix() (or None); it is only
+        parsed on the rare lines that need a time, since this runs on every line."""
         if "Loading screen for Frontend_Main" in line:
             self.phase = "menu"
             self.where = self.ship_cls = None
@@ -1621,7 +1623,7 @@ class CrashContext:
         if all(k in line for k in PU_JOIN):
             self.phase = "game"
             if self.join_ts is None:
-                self.join_ts = ts
+                self.join_ts = parse_dt(prefix)
         if BOOT_FRONTEND in line:
             self.phase = "leaving"
         if 'Added notification "' in line:
@@ -1635,15 +1637,16 @@ class CrashContext:
                 self.ship_cls = m.group(1)
         elif "releasing control token for '" in line or DEAD_RE in line:
             self.ship_cls = None
-        if "[Error] <" in line and ts:
+        if "[Error] <" in line and prefix:
             m = CTX_ERR_RE.search(line)
-            if m:
+            ts = parse_dt(prefix) if m else None
+            if ts:
                 cm = CTX_ERR_CLS_RE.search(line) or CTX_ERR_ENT_RE.search(line)
                 tm = CTX_ERR_TO_RE.search(line)
                 self.errs.append((ts, m.group(1), cm.group(1) if cm else "",
                                   tm.group(1) if tm else ""))
-        while self.errs and ts and (ts - self.errs[0][0]).total_seconds() > CTX_ERR_WINDOW:
-            self.errs.popleft()
+                while (ts - self.errs[0][0]).total_seconds() > CTX_ERR_WINDOW:
+                    self.errs.popleft()
 
     def snapshot(self, crash_ts):
         out = {"phase": self.phase}
@@ -2709,7 +2712,7 @@ def scan_log(path):
                         first = p
                     last = p
                 if not saw_crash:
-                    ctx.feed(line, parse_dt(p) if p else None)
+                    ctx.feed(line, p)
                 # --- startup rig banner: cheap, and switched off once we're past it ---
                 if _in_hdr:
                     if "Host CPU:" in line:
