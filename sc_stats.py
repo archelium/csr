@@ -5345,6 +5345,25 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
       line-height:17px;min-height:34px}
     .crow .cdt{margin-left:0}
   }
+  /* "What has crashed you": yours to fix | Star Citizen bugs. Each row is a button that filters
+     Every crash; stacks under 700px. */
+  .cbcols{display:grid;grid-template-columns:1fr 1fr;gap:6px 28px}
+  .cbcol{min-width:0}
+  .cbh{font-family:var(--font-mono);font-size:10.5px;text-transform:uppercase;letter-spacing:.14em;
+    color:var(--cyan);margin:6px 0 2px}
+  .tev.cbrow{flex-direction:column;align-items:stretch;gap:2px;--cbi:56px}
+  .cbrow .cbtn{display:flex;gap:12px;align-items:baseline;width:100%;padding:0;margin:0;border:0;
+    background:transparent;font:inherit;color:inherit;text-align:left;cursor:pointer}
+  .cbrow .cbtn:hover .tw{color:var(--cyan)}
+  .cbrow .td{min-width:44px;flex:none}
+  .cbrow .tw{min-width:0}
+  .cbrow .cbq{color:var(--green)}
+  .cbrow .cbsub{padding-left:var(--cbi);font-size:11.5px;color:var(--dim);overflow-wrap:anywhere}
+  .cbrow .cbw{width:auto;display:inline;padding:0 7px;font-size:11px;line-height:1.5;letter-spacing:.03em}
+  @media (max-width:700px){
+    .cbcols{grid-template-columns:1fr}
+    .cbrow .cbtn{flex-wrap:wrap;row-gap:2px}
+  }
   /* configuration health check — diagnosis rows, never tuning advice */
   .chk{display:flex;gap:11px;align-items:flex-start;padding:11px 13px;border-radius:9px;
     border:1px solid var(--line);border-left:3px solid var(--dim);background:var(--panel);margin-top:9px}
@@ -7981,7 +8000,8 @@ function lastCrashHTML(v){
 // haystack — with pages you can at least see how many there are.
 const CRASH_PAGE=20;
 let crashPage=0;
-// {kind:'exc'|'digest', val, label} narrows the list to one exception or one digest;
+// {kind:'exc'|'digest', val, label[, prefix]} narrows the list to one exception or one digest
+// (prefix: val is the start of the digest, as the breakdown card only has 8 characters);
 // null shows everything. Rows are filtered before paging.
 let crashFilter=null;
 function setCrashFilter(f){
@@ -8007,7 +8027,8 @@ function crashListHTML(v){
   const all=v.crash_list||[];
   if(!all.length) return '';
   const fkey=crashFilter ? (crashFilter.kind==='digest' ? 'digest' : 'exception') : null;
-  const rows=crashFilter ? all.filter(r=>r[fkey]===crashFilter.val) : all;
+  const rows=crashFilter ? all.filter(r=>crashFilter.prefix
+    ? String(r[fkey]||'').startsWith(crashFilter.val) : r[fkey]===crashFilter.val) : all;
   const pages=Math.max(1, Math.ceil(rows.length/CRASH_PAGE));
   crashPage=Math.min(crashPage, pages-1);
   const start=crashPage*CRASH_PAGE;
@@ -8110,23 +8131,55 @@ function bugReportText(v, c){
   L.push(`(collected from my own client log by CSR — add what you were doing before you submit)`);
   return L.join('\n');
 }
+// One line of advice for each fault the player can act on. The longer text is CRASH_KIND on
+// the Python side, which the bug report uses.
+const CRASH_FIX={
+  STATUS_CRYENGINE_GPU_CRASH:'Update the driver, or turn off overlays and recorders — Discord, OBS, RTSS, GeForce Experience.',
+  STATUS_CRYENGINE_OUT_OF_SYSMEM:'Close background apps; more RAM is the only real fix.',
+  STATUS_CRYENGINE_WATCH_DOG:"Often a slow drive or a stalled server; move the game to an SSD if it isn't on one.",
+};
+// A memory-access violation is the one game bug worth saying more about; the rest use CRASH_KIND.
+const gameBugLabel=e=>e==='EXCEPTION_ACCESS_VIOLATION' ? 'Game bug (memory access)' : crashLabel(e);
+const shortDay=d=>ddmm(d).slice(0,6);   // 2026-07-11 -> 11-Jul
 function crashCausesHTML(v){
-  const rows=v.crash_causes||[];
-  if(!rows.length) return '';
-  const tot=rows.reduce((a,r)=>a+r[1],0);
-  const act=rows.filter(r=>(CRASH_KIND[r[0]]||[0,false])[1]).reduce((a,r)=>a+r[1],0);
+  const b=v.crash_breakdown;
+  if(!b) return '';
+  const tot=b.yours_n+b.game_n;
+  const yours=b.yours.map(y=>{
+    const when=!y.last ? '' : y.quiet
+      ? `<span class="tv cbq" title="${attrEsc(ddmm(y.last))}">none since ${esc(shortDay(y.last))} ✓</span>`
+      : `<span class="tv" title="${attrEsc(ddmm(y.last))}">last ${esc(shortDay(y.last))}</span>`;
+    const fix=CRASH_FIX[y.exc];
+    return `<div class="tev cbrow"><button class="cbtn" data-cbexc="${attrEsc(y.exc)}" data-cblabel="${attrEsc(crashLabel(y.exc))}">`+
+      `<span class="td" style="color:var(--amber)">${fmt(y.n)}×</span>`+
+      `<span class="tw">${esc(crashLabel(y.exc))}</span>${when}</button>`+
+      (fix?`<div class="cbsub">${esc(fix)}</div>`:'')+`</div>`;
+  }).join('');
+  const game=b.game.map(g=>{
+    const lab=gameBugLabel(g.exc);
+    const bugs=g.distinct ? (g.distinct===1 ? '1 bug' : fmt(g.distinct)+' distinct bugs') : '';
+    const worst=g.worst
+      ? `worst: <button class="foot-link cbw" data-cbdg="${attrEsc(g.worst[0])}" data-cblabel="${attrEsc(lab+' '+g.worst[0])}" `+
+        `title="Show this one in Every crash">${esc(g.worst[0])} ×${fmt(g.worst[1])}</button>` : '';
+    const meta=[bugs,worst].filter(Boolean).join(' · ');
+    return `<div class="tev cbrow"><button class="cbtn" data-cbexc="${attrEsc(g.exc)}" data-cblabel="${attrEsc(lab)}">`+
+      `<span class="td" style="color:#8b9bb4">${fmt(g.n)}×</span><span class="tw">${esc(lab)}</span></button>`+
+      (meta?`<div class="cbsub">${meta}</div>`:'')+`</div>`;
+  }).join('');
+  const none=t=>`<div class="empty">${t}</div>`;
+  const last=b.yours_last ? shortDay(b.yours_last) : '';
+  const sum=b.yours_n
+    ? `<b>${fmt(b.yours_n)} of ${fmt(tot)}</b> were yours to fix`+
+      (last ? (b.yours_quiet ? ` — none of those since ${esc(last)}.` : ` — the last on ${esc(last)}.`) : '.')
+    : `All of these are bugs in Star Citizen itself. Nothing on your machine caused them.`;
   return `<div class="card" style="margin-top:16px"><h3>What has crashed you `+
     `<span class="u">— ${fmt(tot)} report${tot===1?'':'s'} from the game itself</span></h3>`+
-    `<div class="tline">`+rows.map(([e,n])=>{
-      const [lab,a]=CRASH_KIND[e]||[e,false];
-      return `<div class="tev"><span class="td" style="color:${a?'var(--amber)':'#8b9bb4'}">${n}×</span>`+
-        `<span class="tw">${esc(lab)} <span class="u">${esc(e)}</span></span>`+
-        `<span class="tv">${a?'worth acting on':'game bug'}</span></div>`;
-    }).join('')+`</div>`+
-    `<div class="bsub" style="margin-top:10px">`+
-    (act? `<b>${fmt(act)} of ${fmt(tot)}</b> were faults you can act on — the rest are bugs in Star Citizen itself.`
-        : `All of these are bugs in Star Citizen itself. Nothing on your machine caused them.`)+
-    `</div></div>`;
+    `<div class="cbcols">`+
+    `<div class="cbcol"><div class="cbh">Yours to fix — ${fmt(b.yours_n)}</div>`+
+      `<div class="tline">${yours||none('Nothing on your machine caused a crash.')}</div></div>`+
+    `<div class="cbcol"><div class="cbh">Star Citizen bugs — ${fmt(b.game_n)}</div>`+
+      `<div class="tline">${game||none('None.')}</div></div>`+
+    `</div><div class="bsub" style="margin-top:10px">${sum}</div></div>`;
 }
 function fpsHTML(v){
   const f=v.fps;
@@ -8534,6 +8587,12 @@ function secSystem(v, STAB){
     };
   });
   document.querySelectorAll('[data-cflt-clear]').forEach(b=>{ b.onclick=()=>setCrashFilter(null); });
+  document.querySelectorAll('[data-cbexc]').forEach(b=>{
+    b.onclick=()=>setCrashFilter({kind:'exc', val:b.dataset.cbexc, label:b.dataset.cblabel});
+  });
+  document.querySelectorAll('[data-cbdg]').forEach(b=>{
+    b.onclick=()=>setCrashFilter({kind:'digest', val:b.dataset.cbdg, prefix:true, label:b.dataset.cblabel});
+  });
   const bug=$('#bugCopy');
   if(bug && v.last_crash) bug.onclick=()=>{
     copyText(bugReportText(v, v.last_crash), ok=>{
