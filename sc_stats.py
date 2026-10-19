@@ -48,7 +48,7 @@ CSR_CONTACT = "support@archelium.com"      # publisher/contact (archelium.com)
 # Bump whenever scan_log() learns to extract something new or fixes an extraction bug.
 # A quick refresh reuses archived sessions only when they were parsed by THIS version,
 # so improved parsing always re-reads old logs instead of silently keeping stale numbers.
-PARSER_VERSION = 20
+PARSER_VERSION = 21
 
 
 # --------------------------------------------------------------------------- #
@@ -1447,6 +1447,8 @@ QUIT_RE = re.compile(r"CSystem::Quit invoked with - cause=(\d+), reason=([^,]+)"
 # crashes (0 hits across 200 clean logs), so it is positive evidence of a CTD rather
 # than the inference-from-a-missing-quit-line we relied on before.
 CRASH_MARK = "public crash handler taking over"
+CRASH_MARK_B = CRASH_MARK.encode()
+CRASH_TAIL = 40000         # bytes at the end of a log that the crash report is read from
 CRASH_EXC_RE = re.compile(
     r"Exception (\w+)\((0x[0-9A-Fa-f]+)\)(?:\s+addr=\S+)?(?:\s+digest=([0-9a-f]+))?")
 CRASH_FLAG_RE = re.compile(
@@ -1602,7 +1604,11 @@ class CrashContext:
     phase: "loading" (launch, or between a PU join request and the join completing),
     "game" (in a PU session), "leaving" (the client asked for the front end but its
     loading screen hasn't shown yet — still the same place, the session is tearing
-    down) and "menu" (the front end is up)."""
+    down), "menu" (the front end is up), and "arena" / "starmarine" (an Arena Commander
+    or Star Marine match: an EA_ game mode, which never logs a <Join PU>).
+
+    Only a front-end request made from "game" counts as leaving: the client also writes
+    one at launch (RequestFrontEndReason="ProcessBootRequest"), before any join."""
 
     def __init__(self):
         self.phase = "loading"         # a log starts mid-launch
@@ -1620,11 +1626,16 @@ class CrashContext:
         if "<Join PU>" in line:
             self.phase = "loading"
             self.where = self.ship_cls = self.join_ts = None
-        if all(k in line for k in PU_JOIN):
-            self.phase = "game"
-            if self.join_ts is None:
-                self.join_ts = parse_dt(prefix)
-        if BOOT_FRONTEND in line:
+        if "Context Establisher Done" in line:
+            if all(k in line for k in PU_JOIN):
+                self.phase = "game"
+                if self.join_ts is None:
+                    self.join_ts = parse_dt(prefix)
+            elif 'gamerules="EA_' in line:
+                gm = GAMERULES_RE.search(line)
+                self.phase = "starmarine" if gm and gm.group(1).startswith("EA_FPS") else "arena"
+                self.where = self.ship_cls = self.join_ts = None
+        if BOOT_FRONTEND in line and self.phase == "game":
             self.phase = "leaving"
         if 'Added notification "' in line:
             nm = NOTIF_RE.search(line)
@@ -2686,7 +2697,19 @@ def scan_log(path):
     _in_hdr = True                     # header parsing stops once the benchmark is read
     saw_crash = False                  # SC's own crash handler ran in this session
     crash_at = None                    # UTC stamp of the last line before it did
-    ctx = CrashContext()               # phase / place / ship / errors, for the crash row
+    # The crash report sits in the log's last 40 KB. Read that tail first: only a log
+    # whose tail holds the handler's banner gets a CrashContext fed line by line, so the
+    # ~95% of logs that never crashed don't pay for it in the hot loop below.
+    crash_tail = None
+    try:
+        with open(path, "rb") as fh:
+            fh.seek(max(0, fh.seek(0, 2) - CRASH_TAIL))
+            _raw = fh.read()
+        if CRASH_MARK_B in _raw:
+            crash_tail = _raw.decode("utf-8", "replace")
+    except OSError:
+        pass
+    ctx = CrashContext() if crash_tail else None   # phase / place / ship / errors
     boots = []                         # dropped back to the main menu, mid-session
     boot_pending = None                # a drop awaiting its front-end confirmation
     softs = []                         # lost the player entity ("soft crash"), by episode
@@ -2711,7 +2734,7 @@ def scan_log(path):
                     if first is None:
                         first = p
                     last = p
-                if not saw_crash:
+                if ctx is not None and not saw_crash:
                     ctx.feed(line, p)
                 # --- startup rig banner: cheap, and switched off once we're past it ---
                 if _in_hdr:
@@ -3164,16 +3187,12 @@ def scan_log(path):
     # SC's own crash handler is positive proof, so it outranks every inference below.
     crash = None
     if saw_crash:
-        try:
-            with open(path, "rb") as fh:
-                sz = fh.seek(0, 2)
-                fh.seek(max(0, sz - 40000))
-                crash = parse_crash_report(fh.read().decode("utf-8", "replace"))
-        except OSError:
-            crash = None
-        crash = crash or {"exception": "UNKNOWN"}
-        crash.update(ctx.snapshot(parse_dt(crash_at)))
+        # a banner earlier than the tail (the log ran on after it) has no report to read
+        # and no context: the same tail decides both
+        crash = (parse_crash_report(crash_tail) if crash_tail else None) or {"exception": "UNKNOWN"}
         _cat = parse_dt(crash_at)
+        if ctx is not None:
+            crash.update(ctx.snapshot(_cat))
         if _cat:
             crash["at"] = (_cat + timedelta(seconds=tz_off)).isoformat(timespec="seconds")
         outcome = "crash"
@@ -4666,7 +4685,9 @@ def build_showcase(career, patches, order):
 # --------------------------------------------------------------------------- #
 
 def render_html(data):
-    payload = json.dumps(data, separators=(",", ":"))
+    # Log text rides along in the data (crash errors, notifications); a "</script>" in it
+    # would end the page's script early. "<\/" is the same string to JSON.parse and JS.
+    payload = json.dumps(data, separators=(",", ":")).replace("</", "<\\/")
     fonts = sc_names.fetch_google_fonts_embed(cache_file("sc_fonts_embed.css"))
     return (HTML_TEMPLATE
             .replace("/*__FONTS__*/", fonts)
@@ -7900,8 +7921,10 @@ function whenStamp(at, date){
 }
 // What the player was doing when it went down, from the CrashContext fields the Python side
 // attaches (phase / where / ship / into_s). "leaving" = the game had already started
-// unloading to the main menu. A word for the phase is only shown when there is no ship.
-const PHASE_WORD={loading:'Loading',menu:'Main menu',game:'In game',leaving:'Leaving to menu'};
+// unloading to the main menu; "arena" / "starmarine" = an Arena Commander or Star Marine
+// match. A word for the phase is only shown when there is no ship.
+const PHASE_WORD={loading:'Loading',menu:'Main menu',game:'In game',leaving:'Leaving to menu',
+  arena:'Arena Commander',starmarine:'Star Marine'};
 const fmtInto=s=>{ const h=Math.floor(s/3600), m=Math.floor(s%3600/60);
   return h ? h+' h '+m+' m' : m ? m+' m' : s+' s'; };
 const gbOf=mb=>(mb/1024).toFixed(1)+' GB';
@@ -8108,7 +8131,7 @@ function bugReportText(v, c){
   L.push(`Crash       ${crashLabel(c.exception)}`);
   L.push(`Exception   ${c.exception||'—'}${c.code?' '+c.code:''}`);
   if(c.digest) L.push(`Digest      ${c.digest}`);
-  if(c.gpu_msg) L.push(`Game said   ${c.gpu_msg}`);
+  if(gpuMsgOf(c)) L.push(`Game said   ${gpuMsgOf(c)}`);
   if(c.ws_mb) L.push(`Memory      ${(c.ws_mb/1024).toFixed(1)} GB in use`+
     (c.free_mb!=null?`, ${(c.free_mb/1024).toFixed(1)} GB free`:''));
   if(PHASE_WORD[c.phase]) L.push(`Phase       ${PHASE_WORD[c.phase]}`);

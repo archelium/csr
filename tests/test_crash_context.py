@@ -60,6 +60,41 @@ class CrashContextTests(unittest.TestCase):
         self.assertNotIn("ship_cls", s)
         self.assertNotIn("into_s", s)
 
+    def test_launch_boot_request_is_still_loading(self):
+        # the client asks for the front end at launch too, before any join: not "leaving"
+        c = CrashContext()
+        feed(c, "10:00:00", "Log started")
+        feed(c, "10:00:02", '[CSessionManager::RequestFrontEnd] Started - '
+                            'RequestFrontEndReason="ProcessBootRequest"!')
+        feed(c, "10:00:02", "[CSessionManager::RequestFrontEnd] Restored!")
+        self.assertEqual(c.snapshot(dt("10:00:05")), {"phase": "loading"})
+
+    def test_front_end_request_from_menu_stays_menu(self):
+        c = CrashContext()
+        feed(c, "10:00:05", "Loading screen for Frontend_Main : SC_Frontend closed after 2 seconds")
+        feed(c, "10:01:00", "[CSessionManager::RequestFrontEnd] Started")
+        self.assertEqual(c.snapshot(dt("10:01:01")), {"phase": "menu"})
+
+    def test_arena_commander_match(self):
+        c = CrashContext()
+        join_pu(c)
+        feed(c, "10:01:00", 'Added notification "Entered UEE Jurisdiction: " [1]')
+        feed(c, "10:02:00", "granted control token for 'ANVL_Asgard_123456789'")
+        feed(c, "10:10:00", '[Notice] <Context Establisher Done> establisher="Network" '
+                            'runningTime=16.4 map="megamap" gamerules="EA_FreeFlight" sessionId="x"')
+        self.assertEqual(c.snapshot(dt("10:20:00")), {"phase": "arena"})
+        # leaving a match is not "leaving to menu" from the PU
+        feed(c, "10:21:00", '[CSessionManager::RequestFrontEnd] Started - '
+                            'RequestFrontEndReason="OnLobbyPostGameUnload"!')
+        self.assertEqual(c.snapshot(dt("10:21:01")), {"phase": "arena"})
+
+    def test_star_marine_match(self):
+        c = CrashContext()
+        feed(c, "10:00:05", "Loading screen for Frontend_Main : SC_Frontend closed after 2 seconds")
+        feed(c, "10:01:00", '[Notice] <Context Establisher Done> establisher="Network" '
+                            'runningTime=17.8 map="megamap" gamerules="EA_FPSKillConfirmed" sessionId="x"')
+        self.assertEqual(c.snapshot(dt("10:09:00")), {"phase": "starmarine"})
+
     def test_join_pu_clears_stale_place(self):
         c = CrashContext()
         join_pu(c)
