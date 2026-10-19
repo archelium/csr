@@ -5,6 +5,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and CSR
 uses [Semantic Versioning](https://semver.org/) (MAJOR.MINOR.PATCH).
 
 
+## [1.6.0] — unreleased
+
+### Changed
+- **Crash rows say where and when it happened** (Stability). Each row now leads with
+  what you were doing when the game went down: *Loading*, *Main menu*, *In game* or
+  *Leaving to menu*, then the place and how long you had been in the game. The place
+  is the jurisdiction the game last announced (UEE, microTech, Crusader Industries),
+  not a star system or a landing zone. A ship is named only when the log says which
+  one you were in, which among the crashes checked is the case for 4.1 and 4.2 builds;
+  later crashes show the place and time instead. The same bug crashing again within 30
+  minutes is folded into one *crash loop* row (*3 crashes in 12 min, same bug*) with
+  every crash time listed under it. A row's arrow opens the details: exception, digest,
+  the game's own message, memory in use and free, the errors the game logged in the ten
+  seconds before the crash and, for a failed attachment, the ship the parts were being
+  attached to. *Copy a bug report* gets the phase, place, time in and last errors too.
+- **What has crashed you is split into yours to fix and Star Citizen bugs** (Stability).
+  Crashes that point at your machine (out of memory, graphics driver, hang) sit on the
+  left with the usual fix and the date of the last one. Once 50 hours of play have
+  started since the last of a kind, it reads *none since 29-Mar* with a tick. Bugs
+  inside the game sit on the right with how many distinct bugs they spread over and the
+  worst repeat offender. Click a line to filter Every crash to it.
+  - Parser version **20**: the crash context is read from the log, so the next refresh
+    re-reads your archive once.
+
 ## [1.5.2] — 2026-10-16
 
 ### Added
