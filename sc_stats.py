@@ -36,7 +36,7 @@ import shutil
 import subprocess
 import threading
 import webbrowser
-from collections import defaultdict, Counter
+from collections import defaultdict, Counter, deque
 from datetime import datetime, timedelta, timezone
 
 import sc_names
@@ -48,7 +48,7 @@ CSR_CONTACT = "support@archelium.com"      # publisher/contact (archelium.com)
 # Bump whenever scan_log() learns to extract something new or fixes an extraction bug.
 # A quick refresh reuses archived sessions only when they were parsed by THIS version,
 # so improved parsing always re-reads old logs instead of silently keeping stale numbers.
-PARSER_VERSION = 19
+PARSER_VERSION = 20
 
 
 # --------------------------------------------------------------------------- #
@@ -1559,6 +1559,12 @@ CRASH_KIND = {
     "STATUS_CRYENGINE_FATAL_ERROR": ("Fatal engine error", False,
         "The engine shut itself down deliberately after an unrecoverable error."),
 }
+CTX_ERR_WINDOW = 10        # seconds before the crash whose [Error] lines are kept as context
+CTX_ERR_TOP = 3            # distinct error tags reported
+CTX_FIELD_MAX = 120        # cap on any free-text field lifted from the log
+CTX_ERR_RE = re.compile(r"\[Error\]\s*<([^>]*)>")
+CTX_ERR_CLS_RE = re.compile(r"Class\(([A-Za-z0-9_]+)\)")
+CTX_ERR_ENT_RE = re.compile(r"entity \[([A-Za-z][A-Za-z0-9_]+?)_\d{6,}")
 
 
 def parse_crash_report(text):
@@ -1585,6 +1591,76 @@ def parse_crash_report(text):
     if m:
         out["sys_mb"], out["free_mb"] = int(m.group(1)), int(m.group(2))
     return out or None
+
+
+class CrashContext:
+    """What the client was doing when it went down. Fed every log line in order; at the
+    crash, snapshot() reports only what the log actually said — a field it never saw is
+    left out rather than guessed."""
+
+    def __init__(self):
+        self.phase = "loading"         # a log starts mid-launch
+        self.join_ts = None            # when the PU server join completed
+        self.where = None              # last HUD jurisdiction
+        self.ship_cls = None           # class of the ship last granted control
+        self.errs = deque()            # (ts, tag, cls) of recent [Error] lines
+
+    def feed(self, line, ts):
+        if "Loading screen for Frontend_Main" in line:
+            self.phase = "menu"
+        if "<Join PU>" in line:
+            self.phase = "loading"
+            self.where = self.ship_cls = None
+        if all(k in line for k in PU_JOIN):
+            self.phase = "game"
+            if self.join_ts is None:
+                self.join_ts = ts
+        if BOOT_FRONTEND in line:
+            self.phase = "menu"
+            self.where = self.ship_cls = None
+        if 'Added notification "' in line:
+            nm = NOTIF_RE.search(line)
+            jm = JURIS_RE.match(_notif_clean(nm.group(1))) if nm else None
+            if jm:
+                self.where = (jm.group(1) or jm.group(2)).strip()
+        if "granted control token for '" in line:
+            m = SHIP_RE.search(line)
+            if m:
+                self.ship_cls = m.group(1)
+        elif "releasing control token for '" in line or DEAD_RE in line:
+            self.ship_cls = None
+        if "[Error] <" in line and ts:
+            m = CTX_ERR_RE.search(line)
+            if m:
+                cm = CTX_ERR_CLS_RE.search(line) or CTX_ERR_ENT_RE.search(line)
+                self.errs.append((ts, m.group(1), cm.group(1) if cm else ""))
+        while self.errs and ts and (ts - self.errs[0][0]).total_seconds() > CTX_ERR_WINDOW:
+            self.errs.popleft()
+
+    def snapshot(self, crash_ts):
+        out = {"phase": self.phase}
+        if self.phase == "game" and self.join_ts and crash_ts:
+            out["into_s"] = max(0, int((crash_ts - self.join_ts).total_seconds()))
+        if self.where:
+            out["where"] = self.where[:CTX_FIELD_MAX]
+        if self.ship_cls:
+            out["ship_cls"] = self.ship_cls[:CTX_FIELD_MAX]
+        if crash_ts:
+            tags, classes = Counter(), defaultdict(Counter)
+            for ts, tag, cls in self.errs:
+                if 0 <= (crash_ts - ts).total_seconds() <= CTX_ERR_WINDOW:
+                    tags[tag] += 1
+                    if cls:
+                        classes[tag][cls] += 1
+            last = []
+            for tag, n in tags.most_common(CTX_ERR_TOP):
+                e = {"tag": tag[:CTX_FIELD_MAX], "n": n}
+                if classes[tag]:
+                    e["cls"] = classes[tag].most_common(1)[0][0][:CTX_FIELD_MAX]
+                last.append(e)
+            if last:
+                out["last_err"] = last
+        return out
 
 
 def _mk_combat():
@@ -2595,6 +2671,7 @@ def scan_log(path):
     _in_hdr = True                     # header parsing stops once the benchmark is read
     saw_crash = False                  # SC's own crash handler ran in this session
     crash_at = None                    # UTC stamp of the last line before it did
+    ctx = CrashContext()               # phase / place / ship / errors, for the crash row
     boots = []                         # dropped back to the main menu, mid-session
     boot_pending = None                # a drop awaiting its front-end confirmation
     softs = []                         # lost the player entity ("soft crash"), by episode
@@ -2619,6 +2696,8 @@ def scan_log(path):
                     if first is None:
                         first = p
                     last = p
+                if not saw_crash:
+                    ctx.feed(line, parse_dt(p) if p else None)
                 # --- startup rig banner: cheap, and switched off once we're past it ---
                 if _in_hdr:
                     if "Host CPU:" in line:
@@ -3078,6 +3157,7 @@ def scan_log(path):
         except OSError:
             crash = None
         crash = crash or {"exception": "UNKNOWN"}
+        crash.update(ctx.snapshot(parse_dt(crash_at)))
         _cat = parse_dt(crash_at)
         if _cat:
             crash["at"] = (_cat + timedelta(seconds=tz_off)).isoformat(timespec="seconds")
