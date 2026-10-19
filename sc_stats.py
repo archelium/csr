@@ -1565,6 +1565,7 @@ CTX_FIELD_MAX = 120        # cap on any free-text field lifted from the log
 CTX_ERR_RE = re.compile(r"\[Error\]\s*<([^>]*)>")
 CTX_ERR_CLS_RE = re.compile(r"Class\(([A-Za-z0-9_]+)\)")
 CTX_ERR_ENT_RE = re.compile(r"entity \[([A-Za-z][A-Za-z0-9_]+?)_\d{6,}")
+CTX_ERR_TO_RE = re.compile(r"intent to attach to \[([A-Za-z][A-Za-z0-9_]+?)_\d{6,}")
 
 
 def parse_crash_report(text):
@@ -1596,28 +1597,33 @@ def parse_crash_report(text):
 class CrashContext:
     """What the client was doing when it went down. Fed every log line in order; at the
     crash, snapshot() reports only what the log actually said — a field it never saw is
-    left out rather than guessed."""
+    left out rather than guessed.
+
+    phase: "loading" (launch, or between a PU join request and the join completing),
+    "game" (in a PU session), "leaving" (the client asked for the front end but its
+    loading screen hasn't shown yet — still the same place, the session is tearing
+    down) and "menu" (the front end is up)."""
 
     def __init__(self):
         self.phase = "loading"         # a log starts mid-launch
         self.join_ts = None            # when the PU server join completed
         self.where = None              # last HUD jurisdiction
         self.ship_cls = None           # class of the ship last granted control
-        self.errs = deque()            # (ts, tag, cls) of recent [Error] lines
+        self.errs = deque()            # (ts, tag, cls, to) of recent [Error] lines
 
     def feed(self, line, ts):
         if "Loading screen for Frontend_Main" in line:
             self.phase = "menu"
+            self.where = self.ship_cls = None
         if "<Join PU>" in line:
             self.phase = "loading"
-            self.where = self.ship_cls = None
+            self.where = self.ship_cls = self.join_ts = None
         if all(k in line for k in PU_JOIN):
             self.phase = "game"
             if self.join_ts is None:
                 self.join_ts = ts
         if BOOT_FRONTEND in line:
-            self.phase = "menu"
-            self.where = self.ship_cls = None
+            self.phase = "leaving"
         if 'Added notification "' in line:
             nm = NOTIF_RE.search(line)
             jm = JURIS_RE.match(_notif_clean(nm.group(1))) if nm else None
@@ -1633,30 +1639,36 @@ class CrashContext:
             m = CTX_ERR_RE.search(line)
             if m:
                 cm = CTX_ERR_CLS_RE.search(line) or CTX_ERR_ENT_RE.search(line)
-                self.errs.append((ts, m.group(1), cm.group(1) if cm else ""))
+                tm = CTX_ERR_TO_RE.search(line)
+                self.errs.append((ts, m.group(1), cm.group(1) if cm else "",
+                                  tm.group(1) if tm else ""))
         while self.errs and ts and (ts - self.errs[0][0]).total_seconds() > CTX_ERR_WINDOW:
             self.errs.popleft()
 
     def snapshot(self, crash_ts):
         out = {"phase": self.phase}
-        if self.phase == "game" and self.join_ts and crash_ts:
+        if self.phase in ("game", "leaving") and self.join_ts and crash_ts:
             out["into_s"] = max(0, int((crash_ts - self.join_ts).total_seconds()))
         if self.where:
             out["where"] = self.where[:CTX_FIELD_MAX]
         if self.ship_cls:
             out["ship_cls"] = self.ship_cls[:CTX_FIELD_MAX]
         if crash_ts:
-            tags, classes = Counter(), defaultdict(Counter)
-            for ts, tag, cls in self.errs:
+            tags, classes, targets = Counter(), defaultdict(Counter), defaultdict(Counter)
+            for ts, tag, cls, to in self.errs:
                 if 0 <= (crash_ts - ts).total_seconds() <= CTX_ERR_WINDOW:
                     tags[tag] += 1
                     if cls:
                         classes[tag][cls] += 1
+                    if to:
+                        targets[tag][to] += 1
             last = []
             for tag, n in tags.most_common(CTX_ERR_TOP):
                 e = {"tag": tag[:CTX_FIELD_MAX], "n": n}
                 if classes[tag]:
                     e["cls"] = classes[tag].most_common(1)[0][0][:CTX_FIELD_MAX]
+                if targets[tag]:
+                    e["to"] = targets[tag].most_common(1)[0][0][:CTX_FIELD_MAX]
                 last.append(e)
             if last:
                 out["last_err"] = last

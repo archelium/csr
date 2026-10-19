@@ -41,12 +41,17 @@ class CrashContextTests(unittest.TestCase):
         s = c.snapshot(dt("10:00:05"))
         self.assertEqual(s, {"phase": "loading"})
 
-    def test_front_end_clears_place_and_ship(self):
+    def test_front_end_request_leaves_then_menu_clears_place_and_ship(self):
         c = CrashContext()
         join_pu(c)
         feed(c, "10:01:00", 'Added notification "Entered UEE Jurisdiction: " [1]')
         feed(c, "10:02:00", "granted control token for 'ANVL_Asgard_123456789'")
         feed(c, "10:03:00", "[CSessionManager::RequestFrontEnd] going back")
+        s = c.snapshot(dt("10:03:01"))
+        self.assertEqual(s["phase"], "leaving")
+        self.assertEqual(s["where"], "UEE")
+        self.assertEqual(s["ship_cls"], "ANVL_Asgard")
+        self.assertEqual(s["into_s"], 181)
         feed(c, "10:03:05", "Loading screen for Frontend_Main : SC_Frontend closed after 2 seconds")
         s = c.snapshot(dt("10:04:00"))
         self.assertEqual(s["phase"], "menu")
@@ -99,6 +104,20 @@ class CrashContextTests(unittest.TestCase):
         feed(c, "10:00:00", "[Error] <Bad thing> on entity [RSI_Polaris_Pilot_SCItem_Seat_725183570526 - x]")
         self.assertEqual(c.snapshot(dt("10:00:01"))["last_err"],
                          [{"tag": "Bad thing", "n": 1, "cls": "RSI_Polaris_Pilot_SCItem_Seat"}])
+
+    def test_err_target_is_most_common_attach_target(self):
+        c = CrashContext()
+        line = ("[Error] <Failed attachment> Unable to find item port for entity "
+                "[Vehicle_Screen_Physical_Holo_725183570731 - Class(Vehicle_Screen_Physical_Holo) - x], "
+                "it spawned with intent to attach to [%s:725183570729] and portId [319097128]")
+        feed(c, "10:00:00", line % "RSI_Polaris_Pilot_SCItem_SeatDashboard_725183570726")
+        feed(c, "10:00:01", line % "RSI_Polaris_CoPilot_SCItem_SeatDashboard_725183570729")
+        feed(c, "10:00:02", line % "RSI_Polaris_CoPilot_SCItem_SeatDashboard_725183570800")
+        feed(c, "10:00:02", "[Error] <Other> no target here")
+        s = c.snapshot(dt("10:00:03"))["last_err"]
+        self.assertEqual(s[0]["to"], "RSI_Polaris_CoPilot_SCItem_SeatDashboard")
+        self.assertEqual(s[0]["cls"], "Vehicle_Screen_Physical_Holo")
+        self.assertNotIn("to", s[1])
 
     def test_only_top_three_tags(self):
         c = CrashContext()
