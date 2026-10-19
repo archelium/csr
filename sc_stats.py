@@ -3543,6 +3543,75 @@ def _perf_summary(perf):
             "gpu": mean(gpu), "gpu_min": round(min(gpu), 1), "gpu_max": round(max(gpu), 1)}
 
 
+CRASH_LOOP_GAP_S = 1800   # same bug again within this long of the last one = a crash loop
+
+
+def enrich_crash(crash, ship_name=None):
+    """Copy of a crash dict with ship display names added: `ship` from ship_cls, and on
+    each last_err item the attach target ("to") or else its own class. Names the game
+    gives but the ship index can't resolve are left off, not guessed. Never touches the
+    archived dict. `ship_name` is callable(cls) -> str | None."""
+    out = dict(crash)
+    if not ship_name:
+        return out
+    nm = ship_name(out["ship_cls"]) if out.get("ship_cls") else None
+    if nm:
+        out["ship"] = nm
+    if out.get("last_err"):
+        errs = []
+        for e in out["last_err"]:
+            e = dict(e)
+            nm = next((n for n in (ship_name(e[k]) for k in ("to", "cls") if e.get(k)) if n), None)
+            if nm:
+                e["ship"] = nm
+            errs.append(e)
+        out["last_err"] = errs
+    return out
+
+
+def group_crash_rows(crashes, ship_name=None):
+    """Rows for the crash list, newest first. `crashes` is [(date, crash)]. The same
+    bug (full digest) crashing again within CRASH_LOOP_GAP_S of its previous crash is
+    one crash loop: one row carrying the earliest crash's fields plus `loop`, every
+    crash's `at` oldest to newest. A crash with no digest or no `at` can't be matched,
+    so it always stands alone. Rows sort by the loop's latest crash."""
+    seen, first = Counter(), {}
+    for d, c in crashes:
+        dg = c.get("digest")
+        if dg:
+            seen[dg] += 1
+            if d and (dg not in first or d < first[dg]):
+                first[dg] = d
+    groups, open_loop = [], {}   # open_loop: digest -> its latest group
+    for d, c in sorted(crashes, key=lambda x: x[1].get("at") or x[0] or ""):
+        dg, at = c.get("digest"), c.get("at")
+        g = open_loop.get(dg) if dg and at else None
+        if g is not None:
+            gap = (datetime.fromisoformat(at) - datetime.fromisoformat(g["ats"][-1])).total_seconds()
+            if gap <= CRASH_LOOP_GAP_S:
+                g["ats"].append(at)
+                continue
+        g = {"d": d, "c": c, "ats": [at] if at else []}
+        groups.append(g)
+        if dg and at:
+            open_loop[dg] = g
+    rows = []
+    for g in groups:
+        c = enrich_crash(g["c"], ship_name)
+        dg = c.get("digest")
+        row = {"at": c.get("at"), "date": g["d"],
+               "exception": c.get("exception") or "UNKNOWN", "digest": dg,
+               "ws_mb": c.get("ws_mb"), "free_mb": c.get("free_mb"), "gpu_msg": c.get("gpu_msg"),
+               "phase": c.get("phase"), "into_s": c.get("into_s"), "where": c.get("where"),
+               "ship": c.get("ship"), "last_err": c.get("last_err") or None,
+               "seen": seen[dg] if dg else 1, "first": first.get(dg),
+               "loop": g["ats"] if len(g["ats"]) > 1 else None}
+        rows.append((g["ats"][-1] if g["ats"] else g["d"] or "",
+                     {k: v for k, v in row.items() if v is not None}))
+    rows.sort(key=lambda r: r[0], reverse=True)
+    return [r for _, r in rows]
+
+
 def _episode_summary(stamps, sessions_hit, agg):
     """Count, rate and trend for a list of local-time event stamps (menu drops, lost
     players). Rate per 10 hours played, not a raw count: a heavy month would otherwise
@@ -3751,23 +3820,20 @@ def finalize(agg):
     rough = oc.get("crash", 0) + oc.get("backend", 0) + oc.get("died", 0)
     # ---- crashes ----
     crashes = sorted((c for c in agg["crashes"] if c[0]), key=lambda c: c[0])
+    ship_name = lambda cls: (SHIPS.display(cls)[0]
+                             if SHIPS.ok and SHIPS.by_code.get(cls.split("_")[0]) else None)
     last_crash = None
     if crashes:
         d, c = crashes[-1]
-        last_crash = dict(c)
+        last_crash = enrich_crash(c, ship_name)
         last_crash["date"] = d
         dg = c.get("digest")
         last_crash["seen"] = agg["digests"].get(dg, 1) if dg else 1
     causes = Counter(c.get("exception") or "UNKNOWN" for _, c in agg["crashes"])
-    # Every crash, newest first, for the paged history. Only the fields the list shows
-    # — the full post-mortem would multiply the page size for data nothing reads.
-    crash_list = [{k: v for k, v in
-                   {"at": c.get("at"), "date": d,
-                    "exception": c.get("exception") or "UNKNOWN",
-                    "digest": c.get("digest"),
-                    "ws_mb": c.get("ws_mb"), "free_mb": c.get("free_mb"),
-                    "gpu_msg": c.get("gpu_msg")}.items() if v is not None}
-                  for d, c in reversed(crashes)]
+    # Every crash, newest first, for the paged history; repeats of one bug fold into a
+    # loop row. Only the fields the list shows — the full post-mortem would multiply the
+    # page size for data nothing reads.
+    crash_list = group_crash_rows(crashes, ship_name)
     fpsrows = [f for f in agg["fps"] if f[0]]
     fps_sum = None
     if fpsrows:
