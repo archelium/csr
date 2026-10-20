@@ -8721,6 +8721,54 @@ function softHTML(v){
       `all turn up in sessions that played on fine, so none of them can be the trigger.`)+
     trend+recent;
 }
+// ---- deathloops ----
+// An arrival is the one unambiguous sign: the corpse list written as you load in. A loop is
+// that plus the deaths leading up to it, across a quit and rejoin. Quick stretches are
+// listed underneath but not counted — see _deathloop_summary.
+function deathloopsHTML(v){
+  const d=v.deathloops;
+  if(!d) return `<div class="card"><div class="empty">No deathloops in this scope. `+
+    `CSR looks for your corpse being written as you spawn in — arriving dead — and for deaths `+
+    `less than a minute apart.</div></div>`;
+  const mins=(a,b)=>Math.max(1,Math.round((new Date(b)-new Date(a))/60000));
+  const secs=x=>{ x=Math.round(x); const m=Math.floor(x/60), r=x%60;
+    return m ? (r ? `${m} min ${r} s` : `${m} min`) : `${r} s`; };
+  const when=t=>{ const p=String(t).split('T'); return `${esc(ddmm(p[0]))} ${esc((p[1]||'').slice(0,5))}`; };
+  // the date keeps its width; on a phone the text drops below it instead of overlapping
+  const row=(t,main,sub)=>`<div class="tev" style="flex-wrap:wrap;row-gap:2px"><span class="td" style="flex:none">${when(t)}</span>`+
+    `<span class="tw" style="flex:1 1 200px;min-width:0">${esc(main)}`+
+    (sub?`<div style="color:var(--dim);font-size:11.5px;margin-top:2px">${esc(sub)}</div>`:'')+
+    `</span></div>`;
+  const kpis=kpiRow([
+    [icon('deaths'), fmt(d.n), 'Deathloops', 'ended with you arriving dead'],
+    [icon('warning'), fmt(d.arrived), 'Arrived dead', 'spawned in already dead'],
+    [icon('time'), fmt(d.quick_n), 'Quick-death runs', 'stretches with 3+ deaths a minute apart or less'],
+  ]);
+  const loops=(d.recent||[]).length
+    ? `<div class="card" style="margin-top:16px"><h3>Deathloops <span class="u">— newest first</span></h3>`+
+      `<div class="tline">`+d.recent.map(lp=>{
+        let main = lp.n>1 ? `${lp.n} deaths in ${mins(lp.start,lp.at)} min, arrived dead` : 'Arrived dead';
+        if(lp.rejoins===1) main+=' after a rejoin';
+        else if(lp.rejoins>1) main+=` after ${lp.rejoins} rejoins`;
+        let sub=(lp.gaps||[]).map(secs).join(', then ');
+        if(lp.after_s!=null) sub = sub ? `${sub}, then quit ${secs(lp.after_s)} later` : `Quit ${secs(lp.after_s)} later`;
+        return row(lp.at, main, sub);
+      }).join('')+`</div></div>`
+    : '';
+  const quick=(d.quick||[]).length
+    ? `<div class="card" style="margin-top:16px"><h3>Quick deaths <span class="u">— newest first</span></h3>`+
+      `<div class="tline">`+d.quick.map(q=>row(q.start,
+        `${q.n} deaths in ${mins(q.start,q.at)} min, several a minute apart`)).join('')+`</div>`+
+      noteFold(`Why these aren't counted as loops`,
+        `The log only records your corpse, not what killed you or why. A fight going badly looks the same as respawning into something that kills you.`)+
+      `</div>`
+    : '';
+  return kpis+
+    callout(icon('space'),
+      `When you rejoin, the game spawns your character where you left it. If that body already died, its corpse list is `+
+      `written as you load in, before you can move, and you arrive dead. CSR counts a loop from that moment plus the deaths leading up to it.`)+
+    loops+quick;
+}
 const REGION_COLOR={'US East':'#42d0e6','US West':'#5bd1e6','Europe':'#b98bff','Asia':'#f4a92a','Australia':'#4ade80'};
 function serversHTML(v){
   const s=v.servers;
@@ -8857,7 +8905,7 @@ function secSystem(v, STAB){
   // stability side is live and is what you open CSR to check. Mixing them meant
   // scrolling past your CPU model to find out what crashed you an hour ago.
   $('#content').innerHTML = STAB ? (metaLine(v)+
-    group(1,'pulse','Live monitoring','Watching your logs for crashes, disconnects and lost players',
+    group(1,'pulse','Live monitoring','Watching your logs for crashes, disconnects, lost players and deathloops',
       watchHTML())+
     group(2,'bug','Crashes','What Star Citizen said went wrong',
       lastCrashHTML(v)+crashCausesHTML(v)+crashListHTML(v))+
@@ -8865,9 +8913,11 @@ function secSystem(v, STAB){
       softHTML(v))+
     group(4,'no','Back to the main menu','Returned to the front end mid-session and carried on — a server drop or an exit to menu',
       bootsHTML(v))+
-    group(5,'satellite','Servers','Which region you played on, and how often you changed server mid-session',
+    group(5,'deaths','Deathloops','You died, came back, and were dead again — arriving dead on a rejoin, or dying again right after respawning',
+      deathloopsHTML(v))+
+    group(6,'satellite','Servers','Which region you played on, and how often you changed server mid-session',
       serversHTML(v))+
-    group(6,'warning','Session outcomes','How your sessions ended',
+    group(7,'warning','Session outcomes','How your sessions ended',
       rated ? stabKpis+ctx+newcomerVerdict(v,oc,rated,thin)+stabNote+
         `<div class="grid2" style="margin-top:16px">`+
         cardHTML('How sessions ended','share of '+fmt(rated)+' sessions','outcomeChart')+
