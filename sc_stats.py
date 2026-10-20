@@ -48,7 +48,7 @@ CSR_CONTACT = "support@archelium.com"      # publisher/contact (archelium.com)
 # Bump whenever scan_log() learns to extract something new or fixes an extraction bug.
 # A quick refresh reuses archived sessions only when they were parsed by THIS version,
 # so improved parsing always re-reads old logs instead of silently keeping stale numbers.
-PARSER_VERSION = 22
+PARSER_VERSION = 23
 
 
 # --------------------------------------------------------------------------- #
@@ -1526,15 +1526,27 @@ JOIN_PU_RE = re.compile(r"<Join PU>.*?shard\[([a-z]+_([a-z]+\d+)[a-z]?_[^\]]*)\]
 REGION_NAMES = {"use1": "US East", "usw2": "US West", "euw1": "Europe",
                 "ape1": "Asia", "apse2": "Australia"}
 #  ---- gear lost on death -----------------------------------------------------------
-#  About 30 s after a death the client builds the body's item-recovery record and logs
-#  every item on it, one line each, all within the same second. The line also fires for
-#  other bodies streamed in nearby (2,587 lists against 666 of the player's own across
-#  the archive), so a list is the player's only when most of its item ids are gear they
-#  attached to themselves earlier in the session. It covers on-foot deaths, which the
-#  ship-death count can't see: 543 of the 666 have no death line near them.
+#  When a respawn starts the client builds the dead body's item-recovery record and logs
+#  every item on it, one line each, all within the same second, body item first. The line
+#  also fires for other bodies streamed in nearby, sometimes several in the same second,
+#  so a new list starts at every body item: 2,725 lists across the archive, where splitting
+#  on a pause alone had merged 113 of them. A list is the player's when its body item is
+#  the body the client attached to them (Port[Body_ItemPort]) — the id stays the same from
+#  life to life, so this holds when the gear on it was put on in an earlier session, as on
+#  arriving dead. 684 own lists; the older test, most item ids being gear attached earlier
+#  in the session, is kept as a fallback for a log with no body attach. It covers on-foot
+#  deaths, which the ship-death count can't see.
 CORPSE_ITEM_MARK = "Adding non kept item [CSCActorCorpseUtils"
 CORPSE_ITEM_RE = re.compile(r"Item '[A-Za-z0-9_]+?_(\d{6,}) - Class\(([^)]+)\)")
 CORPSE_GAP = 5               # seconds; one body's list is written inside one second
+#  ---- deathloops ---------------------------------------------------------------------
+#  Arriving dead: on a rejoin the game puts you back in the body you left, and when that
+#  body already died its corpse list is written as you load in. Ordinary respawns write
+#  the list 13-25 s before the client's "Spawned!"; the two arrivals in the archive wrote
+#  it 0.04 s and 0.13 s before. Nothing in the logs falls between.
+ARRIVED_DEAD_S = 5           # own corpse list this close to a PU spawn = arrived dead
+FRONTEND_BODY = "2000000"    # body ids the main menu attaches; never on a corpse
+SPAWN_MARK = "[CSessionManager::OnClientSpawned] Spawned!"
 #: the body itself, not gear — present on every list, lost on none
 CORPSE_BODY_RE = re.compile(r"(body_|pu_protos_|pu_head_|default_lensdisplay|hair|facial_hair|"
                             r"universal_stubble|universal_necksock|mobiglas|fp_visor)", re.I)
@@ -2738,8 +2750,11 @@ def scan_log(path):
     prof = {}                          # last Level Profile Statistics block (FPS etc.)
     net_events = Counter()             # non-benign disconnect codes seen
     servers = []                       # [region code, shard] per PU server join, in order
-    corpse_lists = []                  # per body: [(item id, class)] the game listed on it
+    corpse_lists = []                  # per body: {t, body id, items: [(item id, class)]}
     corpse_at = None                   # when the list being read last grew
+    body_ids = set()                   # Body_ItemPort ids attached to the player
+    last_body = None                   # the most recent of those, to tell menu from PU
+    pu_spawns = []                     # client spawns into the PU (not the main menu)
     try:
         with open(path, "r", encoding="utf-8", errors="replace") as fh:
             patch, build = detect_patch(fh)
@@ -2888,6 +2903,10 @@ def scan_log(path):
                     _pj = parse_dt(p) if p else None
                     if _pj:
                         pu_joins.append(_pj)
+                if SPAWN_MARK in line and last_body and not last_body.startswith(FRONTEND_BODY):
+                    _sp = parse_dt(p) if p else None
+                    if _sp:
+                        pu_spawns.append(_sp)
                 # cheap substring gates before any regex
                 if channel is None and "Bin64" in line:      # the Executable: line
                     m = EXE_CHANNEL_RE.search(line)
@@ -2988,9 +3007,13 @@ def scan_log(path):
                     m = CORPSE_ITEM_RE.search(line)
                     _ct = parse_dt(p) if p else None
                     if m and _ct:
-                        if corpse_at is None or (_ct - corpse_at).total_seconds() > CORPSE_GAP:
-                            corpse_lists.append([])
-                        corpse_lists[-1].append((m.group(1), m.group(2)))
+                        is_body = m.group(2).lower().startswith("body_")
+                        if (is_body or corpse_at is None
+                                or (_ct - corpse_at).total_seconds() > CORPSE_GAP):
+                            corpse_lists.append({"t": _ct, "body": None, "items": []})
+                        if is_body:
+                            corpse_lists[-1]["body"] = m.group(1)
+                        corpse_lists[-1]["items"].append((m.group(1), m.group(2)))
                         corpse_at = _ct
                 elif "<Accept invitation>" in line:
                     party_acc += 1
@@ -3024,6 +3047,9 @@ def scan_log(path):
                     mo = ATTACH_ID_RE.search(line)
                     if mo:
                         own_ids.add(mo.group(1))       # this entity is gear the player owns
+                        if "Port[Body_ItemPort]" in line:
+                            body_ids.add(mo.group(1))
+                            last_body = mo.group(1)
                     if ("weapon_attach_hand" in line or "wep_stocked" in line
                             or "wep_sidearm" in line):
                         m = ATTACH_RE.search(line)
@@ -3205,18 +3231,26 @@ def scan_log(path):
     # corpse loot = external wearable-gear inventories accessed that the player never
     # equipped (own worn gear also emits access-token lines, so we subtract it out).
     corpse_loots = len(loot_gear_ids - own_ids)
-    # gear lost on death: the lists on the player's own body, body parts left out
+    # gear lost on death: the lists on the player's own body, body parts left out.
+    # Ownership is settled here, after the whole log: on a rejoin the body attach comes
+    # ~30 ms after the corpse list it identifies.
     gear_lost, _gl_seen = None, set()
+    own_deaths = []                    # [local stamp, arrived dead] per own death
     for lst in corpse_lists:
-        ids = {i for i, _c in lst}
-        if sum(1 for i in ids if i in own_ids) * 2 < len(ids) or ids <= _gl_seen:
+        ids = {i for i, _c in lst["items"]}
+        mine = (lst["body"] in body_ids
+                or sum(1 for i in ids if i in own_ids) * 2 >= len(ids))
+        if not mine or ids <= _gl_seen:
             continue                   # someone else's body, or the same list again
         _gl_seen |= ids
-        gear = [c for _i, c in lst if not CORPSE_BODY_RE.match(c)]
+        gear = [c for _i, c in lst["items"] if not CORPSE_BODY_RE.match(c)]
         if gear_lost is None:
             gear_lost = {"sizes": [], "cls": Counter()}
         gear_lost["sizes"].append(len(gear))
         gear_lost["cls"].update(gear)
+        arrived = any(abs((lst["t"] - sp).total_seconds()) <= ARRIVED_DEAD_S for sp in pu_spawns)
+        own_deaths.append([(lst["t"] + timedelta(seconds=tz_off)).isoformat(timespec="seconds"),
+                           arrived])
 
     gameplay = bool(ships or weapons or missions or contracts
                     or deaths or purchases or qt or fleet_max or loot_boxes or transfers)
@@ -3325,6 +3359,7 @@ def scan_log(path):
         "softs": softs,                # times the client lost your player entity
         "servers": servers,            # [region, shard] per PU server join, in order
         "gear_lost": gear_lost,        # {sizes: items per death, cls: class -> count}
+        "own_deaths": own_deaths,      # [local stamp, arrived dead] per own death
         "limited": limited,           # session ran on a reduced-logging build
         # the channel this session ACTUALLY ran on (from its Executable: path),
         # so attribution survives logs being copied between channel folders.
