@@ -5,7 +5,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and CSR
 uses [Semantic Versioning](https://semver.org/) (MAJOR.MINOR.PATCH).
 
 
-## [1.6.0] — unreleased
+## [1.6.0] — 2026-10-20
 
 ### Added
 - **Gear lost on death** (Combat). About 30 seconds after you die the game writes down
