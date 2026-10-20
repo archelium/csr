@@ -98,6 +98,18 @@ class ScanLogDeathTests(unittest.TestCase):
         self.assertEqual(agg["own_deaths"],
                          [("2026-10-18T11:59:36", False, "deaths.log", "2026-10-18T12:02:35")])
 
+    def test_naked_deaths_each_count(self):
+        # head, hair and mobiGlas keep their ids from life to life; only gear changes
+        parts = [("PU_Protos_Head", "869680109050"), ("MobiGlas", "869680109047")]
+        s = self.scan(stamped("11:30:00", attach(*BODY, "Body_ItemPort"))
+                      + corpse_list("12:00:00", BODY, parts)
+                      + corpse_list("12:05:00", BODY, parts)
+                      + corpse_list("12:10:00", BODY, parts + GEAR)
+                      + corpse_list("12:10:20", BODY, parts + GEAR))
+        self.assertEqual([t for t, _a in s["own_deaths"]],
+                         ["2026-10-18T12:00:00", "2026-10-18T12:05:00", "2026-10-18T12:10:00"])
+        self.assertEqual(s["gear_lost"]["sizes"], [3])
+
     def test_no_body_attach_falls_back_to_gear(self):
         worn = "".join(stamped("11:30:00", attach(c, i, "Armor_Torso")) for c, i in GEAR)
         s = self.scan(worn + corpse_list("12:00:00", BODY, GEAR))

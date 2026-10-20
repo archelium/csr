@@ -3334,14 +3334,19 @@ def scan_log(path):
         ids = {i for i, _c in lst["items"]}
         mine = (lst["body"] in body_ids
                 or sum(1 for i in ids if i in own_ids) * 2 >= len(ids))
-        if not mine or ids <= _gl_seen:
+        # A repeat is judged on the gear alone: the body, head, hair and mobiGlas keep
+        # their ids from life to life, so a death with nothing on would otherwise look
+        # like the one before it — and dying naked over and over is what a loop does.
+        gear_items = [(i, c) for i, c in lst["items"] if not CORPSE_BODY_RE.match(c)]
+        gear_ids = {i for i, _c in gear_items}
+        if not mine or (gear_ids and gear_ids <= _gl_seen):
             continue                   # someone else's body, or the same list again
-        _gl_seen |= ids
-        gear = [c for _i, c in lst["items"] if not CORPSE_BODY_RE.match(c)]
-        if gear_lost is None:
-            gear_lost = {"sizes": [], "cls": Counter()}
-        gear_lost["sizes"].append(len(gear))
-        gear_lost["cls"].update(gear)
+        _gl_seen |= gear_ids
+        if gear_items:
+            if gear_lost is None:
+                gear_lost = {"sizes": [], "cls": Counter()}
+            gear_lost["sizes"].append(len(gear_items))
+            gear_lost["cls"].update(c for _i, c in gear_items)
         arrived = any(abs((lst["t"] - sp).total_seconds()) <= ARRIVED_DEAD_S for sp in pu_spawns)
         own_deaths.append([(lst["t"] + timedelta(seconds=tz_off)).isoformat(timespec="seconds"),
                            arrived])

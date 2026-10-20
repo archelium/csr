@@ -5,6 +5,31 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and CSR
 uses [Semantic Versioning](https://semver.org/) (MAJOR.MINOR.PATCH).
 
 
+## [1.7.0] — unreleased
+
+### Added
+- **Deathloops** (Stability). When you rejoin, the game spawns your character where you
+  left it. If that body already died, its corpse list is written as you load in, a
+  fraction of a second before you spawn, and you arrive dead. An ordinary respawn writes
+  it 13 to 25 seconds before. CSR counts a deathloop from that arrival plus the deaths
+  leading up to it, each within 10 minutes of the next, even across a quit and rejoin.
+  Rows show the deaths, the gaps between them and how long you stayed after arriving.
+  Stretches of 3 or more deaths each less than a minute apart are listed separately and
+  not counted as loops, since the log doesn't say what killed you. Checked against 1,336
+  logs: two deathloops, on 1 January and 18 October 2026.
+- **Arrived dead** alert in Live monitoring. It goes off when you spawn into a body that
+  had already died, with how many deaths led up to it.
+
+### Changed
+- **Gear lost on death** (Combat). A corpse list now counts as yours when it carries your
+  body, not when most of its items were put on earlier in the session. Bodies that loaded
+  in the same second are no longer read as one list, so a neighbour's gear doesn't end up
+  in your figures. Deaths whose gear came from an earlier session, arriving dead
+  included, are counted now. On my logs: 682 deaths with gear lost instead of 666.
+- Parser **23**: own deaths are re-read from the log, so the next refresh re-reads your
+  archive once.
+
+
 ## [1.6.0] — 2026-10-20
 
 ### Added
