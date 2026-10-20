@@ -764,6 +764,7 @@ _WATCH = {
     "boot_pending": {},  # channel -> (time seen, is_test); see _scan_chunk
     "soft_last": {},     # channel -> time a lost-player alert was last raised
     "dead": {},          # channel -> deathloop state; see _watch_deaths
+    "partial": {},       # log path -> (unfinished last line, time read); see watch_tick
     "game": None,        # is StarCitizen.exe running? None until first checked
 }
 WATCH_FAST = 2.0        # seconds between checks while a session is writing
@@ -988,6 +989,7 @@ def _scan_chunk(text, channel, test=False):
 
 LOG_TS_RE = re.compile(r"^<(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?)Z>")
 WATCH_CORPSE_WAIT = 30      # log seconds a corpse list waits for its body or a spawn
+WATCH_PARTIAL_WAIT = 5      # seconds an unfinished last line waits for its newline
 
 
 def _log_ts(line):
@@ -1004,16 +1006,14 @@ def _watch_deaths(text, channel, test=False):
     per channel and survives the log rotating, which is what lets a rejoin's alert count
     the death from the session before."""
     st = _WATCH["dead"].setdefault(
-        channel, {"body": None, "last": None, "spawn": None, "corpse": None, "deaths": []})
-    if not (st["corpse"] or "Body_ItemPort" in text or "CSCActorCorpseUtils" in text
+        channel, {"body": None, "last": None, "spawn": None, "corpses": [], "deaths": []})
+    if not (st["corpses"] or "Body_ItemPort" in text or "CSCActorCorpseUtils" in text
             or SPAWN_MARK in text):
         return
 
     def settle(c):
         if c[1] == st["body"]:
-            st["deaths"] = (st["deaths"] + [c[0]])[-100:]
-            return True
-        return False
+            st["deaths"] = sorted(st["deaths"] + [c[0]])[-100:]
 
     for line in text.splitlines():
         if "Port[Body_ItemPort]" in line and "AttachmentReceived" in line:
@@ -1029,36 +1029,42 @@ def _watch_deaths(text, channel, test=False):
             m = CORPSE_ITEM_RE.search(line)
             t = _log_ts(line)
             if m and t is not None and m.group(2).lower().startswith("body_"):
-                if st["corpse"]:
-                    settle(st["corpse"])
-                st["corpse"] = (t, m.group(1))
-    c = st["corpse"]
-    if not c:
-        return
-    if (c[1] == st["body"] and st["spawn"] is not None
-            and abs(st["spawn"] - c[0]) <= ARRIVED_DEAD_S):
-        st["corpse"] = None
-        settle(c)
-        chain = [st["deaths"][-1]]
-        for t in reversed(st["deaths"][:-1]):
-            if chain[-1] - t > LOOP_CHAIN_S:
-                break
-            chain.append(t)
-        detail = ("Your corpse was written as you spawned in: the game put you back in a "
-                  "body that had already died.")
-        if len(chain) > 1:
-            mins = max(1, round((chain[0] - chain[-1]) / 60))
-            detail += f" {len(chain)} deaths in the last {mins} min."
-        _push_event("loop", "bad", f"Arrived dead — {channel}", detail, {"test": test})
+                # every body is held: arriving into a busy place, another body's list
+                # can land right after yours
+                st["corpses"].append((t, m.group(1)))
+    if not st["corpses"]:
         return
     now = None
     for line in reversed(text.splitlines()):
         now = _log_ts(line)
         if now is not None:
             break
-    if now is not None and now - c[0] > WATCH_CORPSE_WAIT:
-        st["corpse"] = None
-        settle(c)
+    keep = []
+    for c in st["corpses"]:
+        if (c[1] == st["body"] and st["spawn"] is not None
+                and abs(st["spawn"] - c[0]) <= ARRIVED_DEAD_S):
+            settle(c)
+            _raise_arrived(st, c[0], channel, test)
+        elif now is not None and now - c[0] > WATCH_CORPSE_WAIT:
+            settle(c)
+        else:
+            keep.append(c)
+    st["corpses"] = keep
+
+
+def _raise_arrived(st, t, channel, test):
+    """The Arrived dead alert, with the deaths that led up to it."""
+    chain = [t]
+    for d in reversed([d for d in st["deaths"] if d < t]):
+        if chain[-1] - d > LOOP_CHAIN_S:
+            break
+        chain.append(d)
+    detail = ("Your corpse was written as you spawned in: the game put you back in a "
+              "body that had already died.")
+    if len(chain) > 1:
+        mins = max(1, round((chain[0] - chain[-1]) / 60))
+        detail += f" {len(chain)} deaths in the last {mins} min."
+    _push_event("loop", "bad", f"Arrived dead — {channel}", detail, {"test": test})
 
 
 def watch_tick():
@@ -1093,7 +1099,13 @@ def watch_tick():
             continue
         if st.st_size < off:               # log rotated / new session started
             off = 0
+            _WATCH["partial"].pop(path, None)
+        part = _WATCH["partial"].get(path)
         if st.st_size == off:
+            # a last line that never got its newline: the game stopped mid-write
+            if part and now - part[1] >= WATCH_PARTIAL_WAIT:
+                _WATCH["partial"].pop(path, None)
+                _scan_chunk(part[0].decode("utf-8", "replace"), label)
             continue
         try:
             with open(path, "rb") as fh:
@@ -1102,6 +1114,17 @@ def watch_tick():
         except OSError:
             continue
         _WATCH["tails"][path] = st.st_size
+        # A read can end mid-line. Hold the unfinished line back for the next read, or
+        # both halves fail every marker and regex in _scan_chunk.
+        chunk = (part[0] if part else b"") + chunk
+        cut = chunk.rfind(b"\n") + 1
+        if cut < len(chunk):
+            _WATCH["partial"][path] = (chunk[cut:], now)
+            chunk = chunk[:cut]
+        else:
+            _WATCH["partial"].pop(path, None)
+        if not chunk:
+            continue
         # A parked drop is confirmed by the log growing again well after it: the
         # player rejoined. Checked BEFORE this chunk is scanned, so a fresh drop in
         # this same chunk doesn't confirm itself.
@@ -3686,8 +3709,10 @@ def fold(agg, s):
         agg["gl_cls"].update(_gl.get("cls") or {})
     _od = s.get("own_deaths")
     if _od:
+        # only a session you quit says when you left: the live log is still going,
+        # and a crash or a drop isn't you quitting
         _end = ((s["start"] + timedelta(seconds=s["dur"])).isoformat(timespec="seconds")
-                if s.get("start") else None)
+                if s.get("start") and s.get("outcome") == "clean" else None)
         agg["own_deaths"].extend((t, arrived, s.get("_src"), _end) for t, arrived in _od)
     for sys_ in s["systems"]:
         agg["systems"][sys_] += 1

@@ -37,6 +37,8 @@ def corpse_list(hms, body, gear):
     return stamped(hms, corpse(*body)) + "".join(stamped(hms, corpse(c, i)) for c, i in gear)
 
 
+QUIT = ("[Notice] <SystemQuit> CSystem::Quit invoked with - cause=30016, reason=User closed the "
+        "application, exitCode=0 [Team_Unknown][System]")
 GEAR = [("cds_undersuit_01_02_01", "885021851797"), ("cds_armor_heavy_core_01_01_01", "885021851798"),
         ("hdgw_rifle_ballistic_01_mag", "885021851799")]
 
@@ -92,11 +94,21 @@ class ScanLogDeathTests(unittest.TestCase):
     def test_fold_collects_own_deaths(self):
         s = self.scan(stamped("11:30:00", attach(*BODY, "Body_ItemPort"))
                       + corpse_list("11:59:36", BODY, GEAR)
-                      + stamped("12:02:35", "[Notice] <SystemQuit> CSystem::Quit invoked"))
+                      + stamped("12:02:35", QUIT))
         agg = sc_stats.blank_patch()
         sc_stats.fold(agg, s)
         self.assertEqual(agg["own_deaths"],
                          [("2026-10-18T11:59:36", False, "deaths.log", "2026-10-18T12:02:35")])
+
+    def test_fold_no_end_unless_quit(self):
+        # the live Game.log has no exit yet: "then quit 40 s later" would be made up
+        s = self.scan(stamped("11:30:00", attach(*BODY, "Body_ItemPort"))
+                      + corpse_list("11:59:36", BODY, GEAR)
+                      + stamped("12:02:35", "[Notice] still playing"), name="Game.log")
+        self.assertNotEqual(s["outcome"], "clean")
+        agg = sc_stats.blank_patch()
+        sc_stats.fold(agg, s)
+        self.assertIsNone(agg["own_deaths"][0][3])
 
     def test_naked_deaths_each_count(self):
         # head, hair and mobiGlas keep their ids from life to life; only gear changes
@@ -221,6 +233,33 @@ class WatcherDeathTests(unittest.TestCase):
         self.assertEqual(len(got), 2)
         self.assertNotIn("deaths in the last", got[0]["detail"])
         self.assertIn("2 deaths in the last 5 min", got[1]["detail"])
+
+    def test_stranger_after_yours_live(self):
+        # arriving into a busy instance: another body's list lands right after yours
+        sc_stats._scan_chunk(corpse_list("12:04:22.009", BODY, GEAR)
+                             + corpse_list("12:04:22.012", STRANGER, GEAR)
+                             + stamped("12:04:22.040", attach(*BODY, "Body_ItemPort"))
+                             + stamped("12:04:22.137", SPAWN), "LIVE")
+        self.assertEqual(len(self.loops()), 1)
+
+    def test_read_split_mid_line(self):
+        # watch_tick hands over whatever bytes were appended, which can end mid-line
+        text = (corpse_list("12:04:22.009", BODY, GEAR)
+                + stamped("12:04:22.040", attach(*BODY, "Body_ItemPort"))
+                + stamped("12:04:22.137", SPAWN)).encode()
+        cut = text.index(b"Spawned!") + 3
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "Game.log")
+            with mock.patch.dict(sc_stats._CHANNEL_DIRS, {"LIVE": d}, clear=True),                     mock.patch.object(sc_stats, "crashes_dir", return_value=None):
+                with open(path, "wb") as fh:
+                    fh.write(text[:cut])
+                sc_stats._WATCH["tails"][path] = 0
+                sc_stats.watch_tick()
+                with open(path, "ab") as fh:
+                    fh.write(text[cut:])
+                sc_stats.watch_tick()
+                sc_stats._WATCH["tails"].pop(path, None)
+        self.assertEqual(len(self.loops()), 1)
 
     def test_no_body_known_no_alert(self):
         sc_stats._scan_chunk(corpse_list("12:04:22.009", BODY, GEAR)
