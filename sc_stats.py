@@ -763,6 +763,7 @@ _WATCH = {
     "lock": threading.Lock(),
     "boot_pending": {},  # channel -> (time seen, is_test); see _scan_chunk
     "soft_last": {},     # channel -> time a lost-player alert was last raised
+    "dead": {},          # channel -> deathloop state; see _watch_deaths
     "game": None,        # is StarCitizen.exe running? None until first checked
 }
 WATCH_FAST = 2.0        # seconds between checks while a session is writing
@@ -982,6 +983,82 @@ def _scan_chunk(text, channel, test=False):
         cut = BOOT_DISCO_RE.search(text).start()
         if not any(k in text[max(0, cut - 4000):cut] for k in BOOT_INTENT):
             _WATCH["boot_pending"][channel] = (time.time(), test)
+    _watch_deaths(text, channel, test)
+
+
+LOG_TS_RE = re.compile(r"^<(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?)Z>")
+WATCH_CORPSE_WAIT = 30      # log seconds a corpse list waits for its body or a spawn
+
+
+def _log_ts(line):
+    """Seconds of a log line's own stamp (ms kept), or None. Only ever compared with
+    each other, so the time zone they are read in doesn't matter."""
+    m = LOG_TS_RE.match(line)
+    return datetime.fromisoformat(m.group(1)).timestamp() if m else None
+
+
+def _watch_deaths(text, channel, test=False):
+    """Arrived dead, live. Same rule as scan_log: your corpse list within ARRIVED_DEAD_S
+    of a PU spawn. The body attach that says whose list it is can land in the next
+    chunk, so a list is parked until it is settled, by log time, not wall time. State is
+    per channel and survives the log rotating, which is what lets a rejoin's alert count
+    the death from the session before."""
+    st = _WATCH["dead"].setdefault(
+        channel, {"body": None, "last": None, "spawn": None, "corpse": None, "deaths": []})
+    if not (st["corpse"] or "Body_ItemPort" in text or "CSCActorCorpseUtils" in text
+            or SPAWN_MARK in text):
+        return
+
+    def settle(c):
+        if c[1] == st["body"]:
+            st["deaths"] = (st["deaths"] + [c[0]])[-100:]
+            return True
+        return False
+
+    for line in text.splitlines():
+        if "Port[Body_ItemPort]" in line and "AttachmentReceived" in line:
+            m = ATTACH_ID_RE.search(line)
+            if m:
+                st["last"] = m.group(1)
+                if not st["last"].startswith(FRONTEND_BODY):
+                    st["body"] = st["last"]
+        elif SPAWN_MARK in line:
+            if st["last"] and not st["last"].startswith(FRONTEND_BODY):
+                st["spawn"] = _log_ts(line)
+        elif CORPSE_ITEM_MARK in line:
+            m = CORPSE_ITEM_RE.search(line)
+            t = _log_ts(line)
+            if m and t is not None and m.group(2).lower().startswith("body_"):
+                if st["corpse"]:
+                    settle(st["corpse"])
+                st["corpse"] = (t, m.group(1))
+    c = st["corpse"]
+    if not c:
+        return
+    if (c[1] == st["body"] and st["spawn"] is not None
+            and abs(st["spawn"] - c[0]) <= ARRIVED_DEAD_S):
+        st["corpse"] = None
+        settle(c)
+        chain = [st["deaths"][-1]]
+        for t in reversed(st["deaths"][:-1]):
+            if chain[-1] - t > LOOP_CHAIN_S:
+                break
+            chain.append(t)
+        detail = ("Your corpse was written as you spawned in: the game put you back in a "
+                  "body that had already died.")
+        if len(chain) > 1:
+            mins = max(1, round((chain[0] - chain[-1]) / 60))
+            detail += f" {len(chain)} deaths in the last {mins} min."
+        _push_event("loop", "bad", f"Arrived dead — {channel}", detail, {"test": test})
+        return
+    now = None
+    for line in reversed(text.splitlines()):
+        now = _log_ts(line)
+        if now is not None:
+            break
+    if now is not None and now - c[0] > WATCH_CORPSE_WAIT:
+        st["corpse"] = None
+        settle(c)
 
 
 def watch_tick():
@@ -1137,9 +1214,26 @@ _TEST_CHUNKS = {
              'MapUserEntityId: 0 [Team_CGP5][UI]\n'
              '<t> [Notice] <CMapDisplayStarMap::CancelQuantumRoute> We are requesting a '
              'cancellation of the quantum route [Team_CGP5][UI]\n'),
+    # arriving dead: the corpse list, the body it belongs to, and the spawn 0.13 s on.
+    # Literal stamps, not <t>: the 5-second window reads them.
+    "loop": ('<2026-01-01T00:00:00.000Z> [Notice] <Adding non kept item [CSCActorCorpseUtils::'
+             "PopulateItemPortForItemRecoveryEntitlement]> Item 'body_01_noMagicPocket_100000000001 - "
+             "Class(body_01_noMagicPocket) - Context(Streamable Runtime-spawned) - Socpak()'\n"
+             '<2026-01-01T00:00:00.030Z> [Notice] <AttachmentReceived> Player[CSR] Attachment['
+             'body_01_noMagicPocket_100000000001, body_01_noMagicPocket, 100000000001] '
+             'Status[persistent] Port[Body_ItemPort] Elapsed[1.0] [Team_CoreGameplayFeatures][Inventory]\n'
+             '<2026-01-01T00:00:00.130Z> [CSessionManager::OnClientSpawned] Spawned!\n'),
     "benign": ('<t> [Notice] <Channel Disconnected> cause=30010 reason="Nub destroyed"\n' * 4 +
                '<t> [Notice] <Channel Disconnected> cause=30016 reason="Remote Disconnect - Player requested disconnect"\n'
-               '<t> [Notice] <Channel Disconnected> cause=30028 reason="Remote Disconnect - player inactive"\n'),
+               '<t> [Notice] <Channel Disconnected> cause=30028 reason="Remote Disconnect - player inactive"\n'
+               # an ordinary respawn: your corpse list, then the spawn 18 s later
+               '<2026-01-01T00:00:00.000Z> [Notice] <AttachmentReceived> Player[CSR] Attachment['
+               'body_01_noMagicPocket_100000000002, body_01_noMagicPocket, 100000000002] '
+               'Status[persistent] Port[Body_ItemPort] Elapsed[1.0] [Team_CoreGameplayFeatures][Inventory]\n'
+               '<2026-01-01T00:01:00.000Z> [Notice] <Adding non kept item [CSCActorCorpseUtils::'
+               "PopulateItemPortForItemRecoveryEntitlement]> Item 'body_01_noMagicPocket_100000000002 - "
+               "Class(body_01_noMagicPocket) - Context(Streamable Runtime-spawned) - Socpak()'\n"
+               '<2026-01-01T00:01:18.000Z> [CSessionManager::OnClientSpawned] Spawned!\n'),
 }
 
 

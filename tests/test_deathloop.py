@@ -172,5 +172,50 @@ class DeathloopSummaryTests(unittest.TestCase):
         self.assertEqual(v["recent"][0]["at"], at(9 * 3600)[0])
 
 
+class WatcherDeathTests(unittest.TestCase):
+    def setUp(self):
+        sc_stats._WATCH["dead"].clear()
+        sc_stats._WATCH["events"].clear()
+
+    def loops(self):
+        return [e for e in sc_stats._WATCH["events"] if e["kind"] == "loop"]
+
+    def test_test_chunk_loop_raises(self):
+        self.assertEqual(sc_stats.fire_test_event("loop"), 1)
+        self.assertEqual(self.loops()[0]["title"].split(" — ")[0], "Arrived dead")
+
+    def test_benign_still_silent(self):
+        self.assertEqual(sc_stats.fire_test_event("benign"), 0)
+
+    def test_split_across_chunks(self):
+        sc_stats._scan_chunk(corpse_list("12:04:22.009", BODY, GEAR), "LIVE")
+        self.assertEqual(self.loops(), [])
+        sc_stats._scan_chunk(stamped("12:04:22.040", attach(*BODY, "Body_ItemPort"))
+                             + stamped("12:04:22.137", SPAWN), "LIVE")
+        self.assertEqual(len(self.loops()), 1)
+        self.assertEqual(self.loops()[0]["title"], "Arrived dead — LIVE")
+
+    def test_each_arrival_alerts_once(self):
+        def arrive(hms):
+            sc_stats._scan_chunk(stamped(hms, attach(*BODY, "Body_ItemPort"))
+                                 + corpse_list(hms, BODY, GEAR) + stamped(hms, SPAWN), "LIVE")
+        arrive("12:00:00")
+        sc_stats._scan_chunk(stamped("12:00:40", "[Notice] something else"), "LIVE")
+        self.assertEqual(len(self.loops()), 1)
+        for e in sc_stats._WATCH["events"]:
+            e["ts"] -= 120             # past the 60 s de-dup, as five real minutes would be
+        arrive("12:05:00")
+        got = self.loops()
+        self.assertEqual(len(got), 2)
+        self.assertNotIn("deaths in the last", got[0]["detail"])
+        self.assertIn("2 deaths in the last 5 min", got[1]["detail"])
+
+    def test_no_body_known_no_alert(self):
+        sc_stats._scan_chunk(corpse_list("12:04:22.009", BODY, GEAR)
+                             + stamped("12:04:22.100", SPAWN), "LIVE")
+        sc_stats._scan_chunk(stamped("12:05:00", "[Notice] something else"), "LIVE")
+        self.assertEqual(self.loops(), [])
+
+
 if __name__ == "__main__":
     unittest.main()
