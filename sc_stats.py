@@ -48,7 +48,7 @@ CSR_CONTACT = "support@archelium.com"      # publisher/contact (archelium.com)
 # Bump whenever scan_log() learns to extract something new or fixes an extraction bug.
 # A quick refresh reuses archived sessions only when they were parsed by THIS version,
 # so improved parsing always re-reads old logs instead of silently keeping stale numbers.
-PARSER_VERSION = 21
+PARSER_VERSION = 22
 
 
 # --------------------------------------------------------------------------- #
@@ -1518,6 +1518,26 @@ BOOT_FRONTEND_WINDOW = 15    # seconds allowed between the drop and the menu loa
 SOFT_MARK = "No player entity available when populating quantum path"
 SOFT_NULL = "Vehicle entity: null"
 SOFT_GAP = 600               # seconds; hits closer than this are the same episode
+#  ---- servers -----------------------------------------------------------------------
+#  Every PU server join names the shard: shard[pub_euw1b_12881860_020] is a Europe server
+#  on build 12881860. Logged from June 2025. Four regions in practice, matching the four
+#  the launcher offers; anything new falls back to its code rather than a guess.
+JOIN_PU_RE = re.compile(r"<Join PU>.*?shard\[([a-z]+_([a-z]+\d+)[a-z]?_[^\]]*)\]")
+REGION_NAMES = {"use1": "US East", "usw2": "US West", "euw1": "Europe",
+                "ape1": "Asia", "apse2": "Australia"}
+#  ---- gear lost on death -----------------------------------------------------------
+#  About 30 s after a death the client builds the body's item-recovery record and logs
+#  every item on it, one line each, all within the same second. The line also fires for
+#  other bodies streamed in nearby (2,587 lists against 666 of the player's own across
+#  the archive), so a list is the player's only when most of its item ids are gear they
+#  attached to themselves earlier in the session. It covers on-foot deaths, which the
+#  ship-death count can't see: 543 of the 666 have no death line near them.
+CORPSE_ITEM_MARK = "Adding non kept item [CSCActorCorpseUtils"
+CORPSE_ITEM_RE = re.compile(r"Item '[A-Za-z0-9_]+?_(\d{6,}) - Class\(([^)]+)\)")
+CORPSE_GAP = 5               # seconds; one body's list is written inside one second
+#: the body itself, not gear — present on every list, lost on none
+CORPSE_BODY_RE = re.compile(r"(body_|pu_protos_|pu_head_|default_lensdisplay|hair|facial_hair|"
+                            r"universal_stubble|universal_necksock|mobiglas|fp_visor)", re.I)
 #: codes that fire during EVERY normal session — 30010 alone appears ~5× per log.
 #: Alerting on these would bury a real fault in noise, so they are never raised.
 BENIGN_NET_CODES = {"30010", "30016", "30028"}
@@ -2717,6 +2737,9 @@ def scan_log(path):
     boot_intent = None                 # last time the CLIENT asked to leave
     prof = {}                          # last Level Profile Statistics block (FPS etc.)
     net_events = Counter()             # non-benign disconnect codes seen
+    servers = []                       # [region code, shard] per PU server join, in order
+    corpse_lists = []                  # per body: [(item id, class)] the game listed on it
+    corpse_at = None                   # when the list being read last grew
     try:
         with open(path, "r", encoding="utf-8", errors="replace") as fh:
             patch, build = detect_patch(fh)
@@ -2957,6 +2980,18 @@ def scan_log(path):
                     if mb:
                         parts = [k for k, v in re.findall(r"(\w+): (true|false)", mb.group(4)) if v == "true"]
                         medbed.append((mb.group(1), mb.group(3) != "none", parts))
+                elif "<Join PU>" in line:
+                    m = JOIN_PU_RE.search(line)
+                    if m:
+                        servers.append([m.group(2), m.group(1)])
+                elif CORPSE_ITEM_MARK in line:
+                    m = CORPSE_ITEM_RE.search(line)
+                    _ct = parse_dt(p) if p else None
+                    if m and _ct:
+                        if corpse_at is None or (_ct - corpse_at).total_seconds() > CORPSE_GAP:
+                            corpse_lists.append([])
+                        corpse_lists[-1].append((m.group(1), m.group(2)))
+                        corpse_at = _ct
                 elif "<Accept invitation>" in line:
                     party_acc += 1
                     party_open = party_open or (parse_dt(p) if p else None)
@@ -3170,6 +3205,18 @@ def scan_log(path):
     # corpse loot = external wearable-gear inventories accessed that the player never
     # equipped (own worn gear also emits access-token lines, so we subtract it out).
     corpse_loots = len(loot_gear_ids - own_ids)
+    # gear lost on death: the lists on the player's own body, body parts left out
+    gear_lost, _gl_seen = None, set()
+    for lst in corpse_lists:
+        ids = {i for i, _c in lst}
+        if sum(1 for i in ids if i in own_ids) * 2 < len(ids) or ids <= _gl_seen:
+            continue                   # someone else's body, or the same list again
+        _gl_seen |= ids
+        gear = [c for _i, c in lst if not CORPSE_BODY_RE.match(c)]
+        if gear_lost is None:
+            gear_lost = {"sizes": [], "cls": Counter()}
+        gear_lost["sizes"].append(len(gear))
+        gear_lost["cls"].update(gear)
 
     gameplay = bool(ships or weapons or missions or contracts
                     or deaths or purchases or qt or fleet_max or loot_boxes or transfers)
@@ -3276,7 +3323,9 @@ def scan_log(path):
         "net_events": dict(net_events),
         "boots": boots,                # times the server dropped you to the main menu
         "softs": softs,                # times the client lost your player entity
-        "limited": limited,            # session ran on a reduced-logging build
+        "servers": servers,            # [region, shard] per PU server join, in order
+        "gear_lost": gear_lost,        # {sizes: items per death, cls: class -> count}
+        "limited": limited,           # session ran on a reduced-logging build
         # the channel this session ACTUALLY ran on (from its Executable: path),
         # so attribution survives logs being copied between channel folders.
         "channel": channel,
@@ -3342,6 +3391,12 @@ def blank_patch():
         "boot_sessions": 0,            # sessions that suffered at least one
         "softs": [],                   # local-time stamps of lost-player episodes
         "soft_sessions": 0,
+        # servers: joins per region, sessions per region, distinct shards, hops
+        "regions": Counter(), "region_sessions": Counter(), "shards": set(),
+        "server_joins": 0, "join_sessions": 0, "hops": 0, "hop_sessions": 0,
+        "region_last": None, "region_last_at": None,
+        # gear lost on death: items per death, and what they were
+        "gl_sizes": [], "gl_cls": Counter(),
     }
 
 
@@ -3471,6 +3526,28 @@ def fold(agg, s):
     if _sf:
         agg["softs"].extend(_sf)
         agg["soft_sessions"] += 1
+    # A hop is joining a DIFFERENT server than the one you were on. Rejoining the same
+    # shard after a drop is a reconnect, not a move.
+    _sv = s.get("servers") or []
+    if _sv:
+        agg["join_sessions"] += 1
+        agg["server_joins"] += len(_sv)
+        _hops = sum(1 for a, b in zip(_sv, _sv[1:]) if a[1] != b[1])
+        agg["hops"] += _hops
+        if _hops:
+            agg["hop_sessions"] += 1
+        for reg, shard in _sv:
+            agg["regions"][reg] += 1
+            agg["shards"].add(shard)
+        for reg in {r for r, _sh in _sv}:
+            agg["region_sessions"][reg] += 1
+        st = s.get("start")
+        if st and (agg["region_last_at"] is None or st > agg["region_last_at"]):
+            agg["region_last"], agg["region_last_at"] = _sv[-1][0], st
+    _gl = s.get("gear_lost")
+    if _gl:
+        agg["gl_sizes"].extend(_gl.get("sizes") or [])
+        agg["gl_cls"].update(_gl.get("cls") or {})
     for sys_ in s["systems"]:
         agg["systems"][sys_] += 1
     dt = s["start"]
@@ -3711,6 +3788,76 @@ def _episode_summary(stamps, sessions_hit, agg):
     }
 
 
+def region_label(code):
+    return REGION_NAMES.get(code) or (code or "?").upper()
+
+
+def _server_summary(agg):
+    """Regions you played on and how often you changed server mid-session. Regions are
+    merged by name, so a second US-East zone letter doesn't split the bar."""
+    if not agg["server_joins"]:
+        return None
+    joins, sess = Counter(), Counter()
+    for code, n in agg["regions"].items():
+        joins[region_label(code)] += n
+    for code, n in agg["region_sessions"].items():
+        sess[region_label(code)] += n
+    js = agg["join_sessions"]
+    return {
+        "joins": agg["server_joins"],
+        "sessions": js,
+        "shards": len(agg["shards"]),
+        "hops": agg["hops"],
+        "hop_sessions": agg["hop_sessions"],
+        "hop_pct": round(100 * agg["hop_sessions"] / js, 1) if js else 0,
+        "regions": [[k, n, sess[k]] for k, n in joins.most_common()],
+        "last": region_label(agg["region_last"]) if agg["region_last"] else None,
+    }
+
+
+def _gear_category(cls):
+    """What kind of thing a lost item was. Order matters: a magazine's class carries
+    its gun's name, and an optic carries a size tag."""
+    n = cls.lower()
+    if n.endswith("_mag") or "_mag_" in n or "rocket" in n or "_ammo" in n or "_battery" in n:
+        return "Magazines & ammo"
+    if "gren" in n:
+        return "Grenades"
+    if any(w in n for w in ("optics", "barrel", "ubarrel", "_lasr", "flashlight")):
+        return "Weapon attachments"
+    if n.startswith("crlf_consumable") or "_vial" in n or "medpen" in n:
+        return "Medical"
+    if any(w in n for w in ("multitool", "tractor", "medgun", "salvage", "mining", "scanner", "cutter")):
+        return "Tools"
+    if any(w in n for w in ("helmet", "_core", "_arms", "_legs", "backpack", "undersuit",
+                            "armor", "flightsuit", "_torso")):
+        return "Armor"
+    if sc_names.weapon_display(cls)[1] == "gun":
+        return "Weapons"
+    return "Other"
+
+
+def _gear_lost_summary(agg):
+    sizes = sorted(agg["gl_sizes"])
+    if not sizes:
+        return None
+    cats, named = Counter(), Counter()
+    for cls, n in agg["gl_cls"].items():
+        cat = _gear_category(cls)
+        cats[cat] += n
+        nm = sc_names.weapon_display(cls)[0] if cat == "Weapons" else purchase_display(cls)
+        named[nm] += n
+    return {
+        "n": len(sizes),
+        "items": sum(sizes),
+        "median": sizes[len(sizes) // 2],
+        "max": sizes[-1],
+        "weapons": cats.get("Weapons", 0),
+        "cats": cats.most_common(),
+        "top": named.most_common(10),
+    }
+
+
 def finalize(agg):
     miss = Counter(agg["missions"].values())
     complete = miss.get("Complete", 0)
@@ -3924,6 +4071,8 @@ def finalize(agg):
     return {
         "boots": boot_sum,
         "soft": soft_sum,
+        "servers": _server_summary(agg),
+        "gear_lost": _gear_lost_summary(agg),
         "gun_meta": gun_meta,
         "legacy": legacy,
         "shops": shops_named.most_common(10),
@@ -6998,7 +7147,7 @@ function splitbar(el, parts, center){
 
 const NOTE = noteFold(
   `Built from your client logs. Playtime, ships, missions, deaths, travel and loadout are real; kills, K/D and accuracy aren't in the log any more.`,
-  `CIG moved combat server-side in the 2026 builds. A weapon's drawn count is how often you pulled it into your hand, not shots fired. Reloads are magazine swaps read off the weapon from 4.10 (ammo-box repools are counted separately), and the repool events before that; carried comes from your stow and holster slots. Armour, attachments and props are left out of the loadout lists. Ship deaths are the only death type logged.`);
+  `CIG moved combat server-side in the 2026 builds. A weapon's drawn count is how often you pulled it into your hand, not shots fired. Reloads are magazine swaps read off the weapon from 4.10 (ammo-box repools are counted separately), and the repool events before that; carried comes from your stow and holster slots. Armour, attachments and props are left out of the loadout lists. Ship deaths are the only death the log names; gear lost on death comes from the list the game writes for your body, so it covers on-foot deaths too.`);
 // Patch labels. A numeric version reads "Patch 4.8"; a Tech-Preview feature branch
 // carries no version at all (Branch: scp-crafting) so it is named after the feature
 // it was previewing, and 'unknown' is the catch-all for anything else.
@@ -7206,7 +7355,8 @@ function secCombat(v){
   const lb=v.loot_boxes||{};
   const lootSub=['Small','Medium','Large','Other'].filter(k=>lb[k]).map(k=>fmt(lb[k])+' '+k[0]).join(' · ')||'crates & lockers';
   const info = callout(icon('satellite'),
-    `Current-patch combat (${scopeLabel()}). The 2026 builds only log your ship deaths — no kills, K/D or damage, and no on-foot deaths. `+
+    `Current-patch combat (${scopeLabel()}). The 2026 builds only log your ship deaths — no kills, K/D or damage. `+
+    `On-foot deaths only show up as the gear you lost. `+
     `Loadout is ranked by how often you drew each weapon. Your old kills are under `+
     `<a class="clink" onclick="gotoSec('legacy')">Legacy Combat</a> →.`);
   $('#content').innerHTML=metaLine(v)+info+
@@ -7219,7 +7369,9 @@ function secCombat(v){
       cardHTML('How your ship was lost','ship-destruction deaths only','causeChart')+
       `<div style="margin-top:16px">`+barsCard('Ships you died in most','deaths per ship','deathShips')+`</div>`
     )+
-    group(2,'gun','FPS combat','Your on-foot loadout — ranked by how often you drew each weapon',
+    group(2,'deaths','Gear lost on death','What was on your body when you died, on foot or in a ship',
+      gearLostHTML(v))+
+    group(3,'gun','FPS combat','Your on-foot loadout — ranked by how often you drew each weapon',
       kpiRow([
         [icon('gun'), v.guns_distinct||guns.length, 'Guns carried', `distinct weapons`],
         (v.reloads_total
@@ -7231,7 +7383,7 @@ function secCombat(v){
       barsCard('Favorite guns','times drawn','gunBars')+
       barsCard('Tools & utility','times drawn','toolBars')+`</div>`
     )+
-    group(3,'medical','Injuries &amp; treatment','What hurt you, and where you had it fixed',
+    group(4,'medical','Injuries &amp; treatment','What hurt you, and where you had it fixed',
       ((v.injuries_total||(v.medbed&&v.medbed.n)) ? kpiRow([
         [icon('warning'), fmt(v.injuries_total||0), 'Injuries', `HUD warnings, 4.4 onward`],
         [icon('damage'), fmt(v.injuries_severe||0), 'Severe or worse', `needed a proper bed`],
@@ -7242,7 +7394,7 @@ function secCombat(v){
       barsCard('What the bed fixed','body parts treated','medBars')+`</div>`
       : `<div class="card"><div class="empty">No injuries or treatments in this scope. Injury warnings are in the log from 4.4; med-bed surgeries from every patch.</div></div>`)
     )+
-    group(4,'cargo','Looting &amp; inventory','What you hauled — client-side events, so this spans every patch',
+    group(5,'cargo','Looting &amp; inventory','What you hauled — client-side events, so this spans every patch',
       kpiRow([
         [icon('cargo'), fmt(v.containers_looted||0), 'Containers looted', lootSub],
         [icon('transfer'), fmt(v.transfers||0), 'Items transferred', `moved between inventories`],
@@ -7256,6 +7408,30 @@ function secCombat(v){
   hbars($('#deathShips'), toItems(v.death_ships,'#ff5468', true));
   const ib=$('#injBars'); if(ib) hbars(ib, (v.injury_parts||[]).map(([k,n])=>({label:k, value:n, disp:fmt(n), color:'#ff9147'})));
   const mb=$('#medBars'); if(mb) hbars(mb, ((v.medbed||{}).parts||[]).map(([k,n])=>({label:k, value:n, disp:fmt(n), color:'#4ade80'})));
+  const gl=v.gear_lost;
+  const gc=$('#glCats'); if(gc&&gl) splitbar(gc, gl.cats.map(([k,n])=>({label:k, value:n, color:GEAR_COLOR[k]||'#8b9bb4'})),
+    {big:fmt(gl.items), small:'items lost'});
+  const gt=$('#glTop'); if(gt&&gl) hbars(gt, toItems(gl.top,'#ff5468', true));
+}
+const GEAR_COLOR={'Magazines & ammo':'#f4a92a','Grenades':'#ff9147','Medical':'#4ade80','Tools':'#b98bff',
+  'Armor':'#42d0e6','Weapon attachments':'#6fbf7f','Weapons':'#ff5468'};
+function gearLostHTML(v){
+  const g=v.gear_lost;
+  if(!g) return `<div class="card"><div class="empty">No gear lost to a death in this scope. `+
+    `The game lists what was on your body about 30 seconds after you die.</div></div>`;
+  return kpiRow([
+      [icon('deaths'), fmt(g.n), 'Deaths with gear lost', 'on foot and in ships'],
+      [icon('cargo'), fmt(g.items), 'Items lost', `${fmt(g.median)} per death, typically`],
+      [icon('gun'), fmt(g.weapons), 'Guns lost', 'not counting magazines'],
+      [icon('warning'), fmt(g.max), 'Most in one death', 'items on the body'],
+    ])+
+    callout(icon('satellite'),
+      `About 30 seconds after you die, the game writes down everything on your body. That list is the only `+
+      `trace an on-foot death leaves, so this counts deaths the ship-death figure above can't see. `+
+      `Your body itself (head, hair, mobiGlas) is left out.`)+
+    `<div class="grid2">`+
+    cardHTML('What you lose','items by kind','glCats')+
+    barsCard('Lost most often','items, across every death','glTop')+`</div>`;
 }
 
 function renderCombat(v, L, o){
@@ -8418,6 +8594,28 @@ function softHTML(v){
       `all turn up in sessions that played on fine, so none of them can be the trigger.`)+
     trend+recent;
 }
+const REGION_COLOR={'US East':'#42d0e6','US West':'#5bd1e6','Europe':'#b98bff','Asia':'#f4a92a','Australia':'#4ade80'};
+function serversHTML(v){
+  const s=v.servers;
+  if(!s) return `<div class="card"><div class="empty">No server joins in this scope. `+
+    `The log names the server you join from June 2025 onward.</div></div>`;
+  const top=s.regions[0]||['—',0,0];
+  return kpiRow([
+      [icon('satellite'), esc(top[0]), 'Main region', `${Math.round(100*top[1]/s.joins)}% of server joins`],
+      [icon('pulse'), fmt(s.shards), 'Servers joined', `${fmt(s.joins)} joins in ${fmt(s.sessions)} sessions`],
+      [icon('transfer'), fmt(s.hops), 'Server hops', 'moved to a different server mid-session'],
+      [icon('profile'), s.hop_pct+'%', 'Sessions with a hop', `${fmt(s.hop_sessions)} of ${fmt(s.sessions)}`],
+    ])+
+    callout(icon('satellite'),
+      `The region comes from the server ID the game joins: <b>pub_euw1b_…</b> is Europe. A hop is joining a `+
+      `different server in the same session — after a 30k, a crash recovery or a shard switch from the menu. `+
+      `Rejoining the server you were on isn't counted.`)+
+    `<div class="grid2">`+
+    cardHTML('Joins by region','share of '+fmt(s.joins)+' joins','regionChart')+
+    ((A().order||[]).length>1 ? barsCard('Sessions with a hop, by patch','% of sessions that joined a server','hopsByPatch')
+      : '<div class="card"><div class="empty">Only one patch in this scope.</div></div>')+
+    `</div>`;
+}
 // One renderer, two tabs: `STAB` picks which half of System & Stability to draw.
 function secStability(v){ return secSystem(v, true); }
 function secSystem(v, STAB){
@@ -8540,7 +8738,9 @@ function secSystem(v, STAB){
       softHTML(v))+
     group(4,'no','Back to the main menu','Returned to the front end mid-session and carried on — a server drop or an exit to menu',
       bootsHTML(v))+
-    group(5,'warning','Session outcomes','How your sessions ended',
+    group(5,'satellite','Servers','Which region you played on, and how often you changed server mid-session',
+      serversHTML(v))+
+    group(6,'warning','Session outcomes','How your sessions ended',
       rated ? stabKpis+ctx+newcomerVerdict(v,oc,rated,thin)+stabNote+
         `<div class="grid2" style="margin-top:16px">`+
         cardHTML('How sessions ended','share of '+fmt(rated)+' sessions','outcomeChart')+
@@ -8641,6 +8841,23 @@ function secSystem(v, STAB){
   };
   episodeTrend($('#bootTrend'), v.boots, 'drop');
   episodeTrend($('#softTrend'), v.soft, 'episode');
+  if(STAB && v.servers){
+    const rc=$('#regionChart');
+    if(rc) splitbar(rc, v.servers.regions.map(([k,n])=>({label:k, value:n, color:REGION_COLOR[k]||'#8b9bb4'})),
+      {big:esc(v.servers.regions[0][0]), small:'main region'});
+    const hb=$('#hopsByPatch');
+    if(hb){
+      // same floor as the rough-sessions chart: a patch with a handful of sessions can't carry a %
+      const series=patchSeries(p=>{
+        const q=p.servers; if(!q || q.sessions<MIN_RATE) return null;
+        return {value:q.hop_pct, disp:q.hop_pct+'%', n:q.sessions};
+      });
+      if(!series.length) hb.innerHTML='<div class="empty">Not enough sessions per patch yet.</div>';
+      else vbars(hb, series.map(s=>({...s, full:`${s.full} — ${s.disp} of ${fmt(s.n)} sessions`,
+          color:s.value>=40?'#ff9147':'var(--cyan)'})),
+        {h:230, w:Math.max(460, series.length*70), maxbw:48, fmtY:x=>Math.round(x)+'%'});
+    }
+  }
   const sx=$('#shareTxt');
   if(sx){
     sx.value=shareText(v);

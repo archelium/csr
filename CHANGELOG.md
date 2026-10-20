@@ -7,6 +7,22 @@ uses [Semantic Versioning](https://semver.org/) (MAJOR.MINOR.PATCH).
 
 ## [1.6.0] — unreleased
 
+### Added
+- **Gear lost on death** (Combat). About 30 seconds after you die the game writes down
+  every item on your body, one line each. CSR reads that list: deaths with gear lost,
+  items lost, guns lost, the most you lost in one go, what kind of thing it was
+  (magazines, armour, medical, tools…) and the items you lose most often. The same
+  line fires for other bodies nearby, so a list only counts as yours when most of its
+  items are gear you put on earlier in the session. It is also the only trace an
+  on-foot death leaves, so it counts deaths the ship-death figure can't see. Your head, hair and mobiGlas
+  are on every list and are left out.
+- **Servers** (Stability). Every PU join names the server, and the server ID carries
+  its region: `pub_euw1b_…` is Europe. The new group shows your main region, joins by
+  region, distinct servers joined, and server hops — joining a different server in the
+  same session, after a 30k, a crash recovery or a shard switch from the menu.
+  Rejoining the server you were on isn't a hop. A per-patch chart shows the share of
+  sessions with a hop. The join line is in the log from June 2025.
+
 ### Changed
 - **Crash rows say where and when it happened** (Stability). Each row now leads with
   what you were doing when the game went down: *Loading*, *Main menu*, *In game*,
@@ -22,14 +38,14 @@ uses [Semantic Versioning](https://semver.org/) (MAJOR.MINOR.PATCH).
   seconds before the crash, every crash time of a loop and, for a failed attachment,
   what the parts were being attached to. *Copy a bug report* gets the phase, place,
   time in and last errors too.
-  - Parser version **21**: the crash context is read from the log, so the next refresh
-    re-reads your archive once.
 - **What has crashed you is split into yours to fix and Star Citizen bugs** (Stability).
   Crashes that point at your machine (out of memory, graphics driver, hang) sit on the
   left with the usual fix and the date of the last one. Once you've played 50 hours
   since the last one, it reads *none since 29-Mar* with a tick. Bugs inside the game sit
   on the right with how many distinct bugs they spread over and the worst repeat
   offender. Click a line to filter Every crash to it.
+- Parser **22**: crash context, gear lost and servers are all read from the log, so the
+  next refresh re-reads your archive once.
 
 ## [1.5.2] — 2026-10-16
 
