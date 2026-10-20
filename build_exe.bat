@@ -12,7 +12,7 @@ echo [2/2] Building CSR.exe ...
 python -m PyInstaller csr.spec --noconfirm --clean || goto :err
 
 echo.
-echo Done.  ->  dist\CSR.exe
+echo Done.  -^>  dist\CSR.exe
 echo Next:  python make_release.py   (assembles the shareable zip)
 pause >nul
 goto :eof
