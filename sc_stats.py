@@ -3432,6 +3432,8 @@ def blank_patch():
         "region_last": None, "region_last_at": None,
         # gear lost on death: items per death, and what they were
         "gl_sizes": [], "gl_cls": Counter(),
+        # own deaths: (local stamp, arrived dead, source log, session end)
+        "own_deaths": [],
     }
 
 
@@ -3583,6 +3585,11 @@ def fold(agg, s):
     if _gl:
         agg["gl_sizes"].extend(_gl.get("sizes") or [])
         agg["gl_cls"].update(_gl.get("cls") or {})
+    _od = s.get("own_deaths")
+    if _od:
+        _end = ((s["start"] + timedelta(seconds=s["dur"])).isoformat(timespec="seconds")
+                if s.get("start") else None)
+        agg["own_deaths"].extend((t, arrived, s.get("_src"), _end) for t, arrived in _od)
     for sys_ in s["systems"]:
         agg["systems"][sys_] += 1
     dt = s["start"]
@@ -3872,6 +3879,90 @@ def _gear_category(cls):
     return "Other"
 
 
+LOOP_CHAIN_S = 600     # deaths this close to the next one lead into an arrival: one loop
+QUICK_GAP_S = 60       # quick deaths: each within this of the one before…
+QUICK_MIN = 3          # …at least this many in a row, in one session
+QUICK_MERGE_S = 600    # quick runs this close in one session are one stretch
+
+
+def _deathloop_summary(deaths):
+    """Deathloops and quick-death stretches from folded own deaths, which are
+    (local stamp, arrived dead, source log, session end). A loop is an arrival plus the
+    deaths leading up to it, each within LOOP_CHAIN_S of the next — across a quit and
+    rejoin, which is how both loops in the archive went. Quick stretches are shown, not
+    counted as loops: the log can't tell a fight going badly from respawning into
+    something that kills you. None when there is neither."""
+    ds = sorted(deaths)
+    ts = [datetime.fromisoformat(d[0]) for d in ds]
+
+    def gap(k):
+        return (ts[k] - ts[k - 1]).total_seconds()
+
+    spans = []                         # [first, last] index per loop
+    for i, d in enumerate(ds):
+        if not d[1]:
+            continue
+        lo = i
+        while lo > 0 and gap(lo) <= LOOP_CHAIN_S:
+            lo -= 1
+        if spans and lo <= spans[-1][1]:
+            spans[-1][1] = i           # chained to the previous arrival: same loop
+        else:
+            spans.append([lo, i])
+    loops, in_loop, loop_keys = [], set(), set()
+    for lo, hi in spans:
+        seg = range(lo, hi + 1)
+        in_loop.update(seg)
+        keys = {ds[k][2] for k in seg}
+        loop_keys |= keys
+        last = max(k for k in seg if ds[k][1])
+        end = ds[last][3]
+        loops.append({
+            "start": ds[lo][0], "at": ds[hi][0], "n": len(seg),
+            "arrived": sum(1 for k in seg if ds[k][1]),
+            "rejoins": len(keys) - 1,
+            "gaps": [round(gap(k)) for k in range(lo + 1, hi + 1)],
+            "after_s": round((datetime.fromisoformat(end) - ts[last]).total_seconds())
+            if end else None,
+        })
+    by_key = defaultdict(list)
+    for k, d in enumerate(ds):
+        if k not in in_loop:
+            by_key[d[2]].append(k)
+    rows = []
+    for idx in by_key.values():
+        runs, cur = [], [idx[0]]
+        for a, b in zip(idx, idx[1:]):
+            if (ts[b] - ts[a]).total_seconds() <= QUICK_GAP_S:
+                cur.append(b)
+            else:
+                runs.append(cur)
+                cur = [b]
+        runs.append(cur)
+        merged = []
+        for r in runs:
+            if len(r) < QUICK_MIN:
+                continue
+            if merged and (ts[r[0]] - ts[merged[-1][1]]).total_seconds() <= QUICK_MERGE_S:
+                merged[-1][1] = r[-1]
+            else:
+                merged.append([r[0], r[-1]])
+        for a, b in merged:
+            rows.append({"start": ds[a][0], "at": ds[b][0],
+                         "n": sum(1 for k in idx if a <= k <= b)})
+    if not loops and not rows:
+        return None
+    rows.sort(key=lambda r: r["at"], reverse=True)
+    return {
+        "n": len(loops),
+        "arrived": sum(lp["arrived"] for lp in loops),
+        "sessions": len(loop_keys),
+        "recent": loops[::-1][:8],
+        "quick": rows[:8],
+        "quick_n": len(rows),
+    }
+
+
 def _gear_lost_summary(agg):
     sizes = sorted(agg["gl_sizes"])
     if not sizes:
@@ -4108,6 +4199,7 @@ def finalize(agg):
         "soft": soft_sum,
         "servers": _server_summary(agg),
         "gear_lost": _gear_lost_summary(agg),
+        "deathloops": _deathloop_summary(agg["own_deaths"]),
         "gun_meta": gun_meta,
         "legacy": legacy,
         "shops": shops_named.most_common(10),

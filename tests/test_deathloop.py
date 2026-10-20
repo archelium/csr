@@ -89,12 +89,87 @@ class ScanLogDeathTests(unittest.TestCase):
         self.assertEqual(len(s["own_deaths"]), 1)
         self.assertEqual(s["gear_lost"]["sizes"], [2])
 
+    def test_fold_collects_own_deaths(self):
+        s = self.scan(stamped("11:30:00", attach(*BODY, "Body_ItemPort"))
+                      + corpse_list("11:59:36", BODY, GEAR)
+                      + stamped("12:02:35", "[Notice] <SystemQuit> CSystem::Quit invoked"))
+        agg = sc_stats.blank_patch()
+        sc_stats.fold(agg, s)
+        self.assertEqual(agg["own_deaths"],
+                         [("2026-10-18T11:59:36", False, "deaths.log", "2026-10-18T12:02:35")])
+
     def test_no_body_attach_falls_back_to_gear(self):
         worn = "".join(stamped("11:30:00", attach(c, i, "Armor_Torso")) for c, i in GEAR)
         s = self.scan(worn + corpse_list("12:00:00", BODY, GEAR))
         self.assertEqual(s["own_deaths"], [["2026-10-18T12:00:00", False]])
         s = self.scan(corpse_list("12:00:00", BODY, GEAR), name="unworn.log")
         self.assertEqual(s["own_deaths"], [])
+
+
+def at(sec, arrived=False, key="a.log", end=None):
+    """A folded death `sec` seconds after 18-Oct 18:00:00 local."""
+    t = sc_stats.datetime(2026, 10, 18, 18, 0, 0) + sc_stats.timedelta(seconds=sec)
+    return (t.isoformat(timespec="seconds"), arrived, key, end)
+
+
+class DeathloopSummaryTests(unittest.TestCase):
+    summ = staticmethod(sc_stats._deathloop_summary)
+
+    def test_rejoin_loop(self):
+        v = self.summ([("2026-10-18T18:59:36", False, "a.log", "2026-10-18T19:02:35"),
+                       ("2026-10-18T19:04:22", True, "b.log", "2026-10-18T19:04:54")])
+        self.assertEqual((v["n"], v["arrived"], v["sessions"], v["quick_n"]), (1, 1, 2, 0))
+        lp = v["recent"][0]
+        self.assertEqual((lp["start"], lp["at"]), ("2026-10-18T18:59:36", "2026-10-18T19:04:22"))
+        self.assertEqual((lp["n"], lp["arrived"], lp["rejoins"], lp["gaps"], lp["after_s"]),
+                         (2, 1, 1, [286], 32))
+
+    def test_chain_breaks_past_600(self):
+        v = self.summ([at(0, key="a.log"), at(601, True, key="b.log")])
+        lp = v["recent"][0]
+        self.assertEqual((lp["n"], lp["rejoins"], lp["gaps"]), (1, 0, []))
+
+    def test_two_arrivals_one_loop(self):
+        v = self.summ([at(0), at(300, True), at(500, True)])
+        self.assertEqual(v["n"], 1)
+        self.assertEqual((v["recent"][0]["n"], v["recent"][0]["arrived"]), (3, 2))
+
+    def test_quick_run(self):
+        v = self.summ([at(0), at(55), at(110)])
+        self.assertEqual((v["n"], v["quick_n"]), (0, 1))
+        self.assertEqual(v["quick"][0], {"start": at(0)[0], "at": at(110)[0], "n": 3})
+        self.assertIsNone(self.summ([at(0), at(55)]))
+        self.assertIsNone(self.summ([at(0), at(55), at(116)]))
+
+    def test_quick_merge(self):
+        first = [at(0), at(55), at(110)]
+        between = [at(400), at(500)]
+        second = [at(110 + 590 + k * 55) for k in range(3)]
+        v = self.summ(first + between + second)
+        self.assertEqual(v["quick_n"], 1)
+        self.assertEqual(v["quick"][0]["n"], 8)
+        apart = [at(110 + 610 + k * 55) for k in range(3)]
+        self.assertEqual(self.summ(first + apart)["quick_n"], 2)
+        other = [at(110 + 590 + k * 55, key="b.log") for k in range(3)]
+        self.assertEqual(self.summ(first + other)["quick_n"], 2)
+
+    def test_quick_inside_loop_excluded(self):
+        v = self.summ([at(0), at(50), at(100, True)])
+        self.assertEqual((v["n"], v["quick_n"]), (1, 0))
+
+    def test_loop_without_session_end(self):
+        v = self.summ([at(0, key="a.log"), at(286, True, key="b.log", end=None)])
+        self.assertIsNone(v["recent"][0]["after_s"])
+
+    def test_lone_deaths_give_none(self):
+        self.assertIsNone(self.summ([at(0), at(3600)]))
+        self.assertIsNone(self.summ([]))
+
+    def test_newest_first_capped_at_8(self):
+        v = self.summ([at(k * 3600, True) for k in range(10)])
+        self.assertEqual(v["n"], 10)
+        self.assertEqual(len(v["recent"]), 8)
+        self.assertEqual(v["recent"][0]["at"], at(9 * 3600)[0])
 
 
 if __name__ == "__main__":
