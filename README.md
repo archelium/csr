@@ -7,7 +7,7 @@ broken down by patch and by account.
 
 Pure Python **standard library** (no pip installs to run from source).
 
-**Patch coverage — tested on 4.1 → 4.10** (September 2026; 4.10 from its first LIVE sessions — the changelog lists what is still unconfirmed there). CSR reads the version out of each
+**Patch coverage — tested on 4.1 → 4.10** (October 2026). CSR reads the version out of each
 log rather than working from a fixed list, so **older patches will often work too**, and
 newer ones should. Neither is tested: Star Citizen changes its log format between
 builds, so expect gaps or misparsed figures outside that range — and please
@@ -31,10 +31,13 @@ pieces to go, so you can see which set is one drop from complete — ship weapon
 
 ### Stability
 
-Crashes named in the game's own words, a full crash history, and **returns to the main
+Crashes named in the game's own words, split into ones you can fix and Star Citizen
+bugs. Each crash row says what you were doing, where, and how long you'd been in.
+Repeats of the same bug fold into one *crash loop* row. Also **returns to the main
 menu mid-session** — the "it booted me for no reason" moment, which Star Citizen records
 as *you* asking to disconnect, and which nothing else counts. Since the 2026 builds a
-deliberate *Exit to menu* leaves the same trace, so CSR counts both and says so.
+deliberate *Exit to menu* leaves the same trace, so CSR counts both and says so. And the
+servers you joined: region, distinct servers, and hops between them.
 
 ![Stability — crash analysis and returns to the main menu](docs/img/stability.png)
 
@@ -102,12 +105,12 @@ CSR is portable, so updating is just **replace the exe**:
 keeps sessions Star Citizen has since deleted from your log folder. If you want a
 belt-and-braces backup first, open CSR and use **💾 Backup & transfer → Export**.
 
-What happens on your first run of v1.5.1, depending on where you're coming from:
+What happens on your first run of v1.7.0, depending on where you're coming from:
 
 | Coming from | What to expect |
 |---|---|
 | **v1.0.0** | v1.0.0 kept no archive, so your history is rebuilt from whatever logs you still have. If your saved folder was `…\StarCitizen\LIVE`, CSR now finds `PTU` and `TECH-PREVIEW` beside it on its own — **no need to re-pick a folder** — and a **Channel** dropdown appears if it finds any. |
-| **v1.1.0 – v1.5.0** | Your archive carries over untouched. |
+| **v1.1.0 – v1.6.0** | Your archive carries over untouched. |
 | **any** | The first scan re-reads **every** log (a minute or so). This is deliberate: each release fixes parsing bugs or extracts new data, so nothing older is trusted. It happens once — after that CSR starts, and refreshes, in about a second. |
 
 Coming from **v1.2.0** specifically, the first run also *moves* some existing numbers,
@@ -156,7 +159,8 @@ Patch* to filter to that patch (and *↩ View career* to reset).
   *travel & navigation* (quantum jumps, jumps per session/hour, systems visited)
 - **Combat** — *ship combat* (how you lost ships), *FPS combat* (loadout ranked by
   how often each weapon was drawn, plus reloads and carry), *injuries & treatment*
-  (what hurt you, med-bed surgeries, hospital vs ship medbay), and *looting & inventory*
+  (what hurt you, med-bed surgeries, hospital vs ship medbay), *gear lost on death*
+  (items and guns lost, what you lose most often), and *looting & inventory*
   (containers looted, items transferred, corpse loots)
 - **Legacy Combat** — real PvP/PvE kills & K/D from patches 4.1–4.3 (PU vs Arena
   Commander toggle) — the only builds that still logged combat client-side
@@ -171,17 +175,24 @@ Patch* to filter to that patch (and *↩ View career* to reset).
   card**
 - **Stability** — everything that goes wrong, with a **live dot in the sidebar** that
   pulses while CSR is tailing your logs:
-  - **Crash analysis** naming the fault in the game's own words, **every crash listed**
-    (paged, newest first, with times), and a **Copy a bug report** button that formats
-    build, exception, crash digest, memory and rig for an Issue Council filing
+  - **Crash analysis** naming the fault in the game's own words, split into faults you
+    can fix and Star Citizen bugs. **Every crash listed** (paged, newest first) with what
+    you were doing, where, and how long you'd been in. The same bug crashing again within
+    30 minutes is one *crash loop* row. A **Copy a bug report** button formats build,
+    exception, crash digest, memory, rig and the last errors for an Issue Council filing
+  - **Lost your player** — the soft crash where the game keeps running but you have no
+    body and the starmap won't plot a route. Counted per episode, with a rate per 10 hours
+    and a monthly trend
   - **Back to the main menu** — the "it just booted me for no reason" moment, counted
     for the first time. Star Citizen logs it as *you* asking to disconnect, which is why
     nothing has ever counted it. Since the 2026 builds a deliberate *Exit to menu* looks
     identical in the log, so the figure includes both, is labelled that way, and is
     reported as a rate per 10 hours played with a by-month trend
   - How your sessions **ended**, per patch
+  - **Servers** — your main region, joins by region, distinct servers joined, and server
+    hops (a different server in the same session) per patch
 - **Live crash alerts** — while CSR is running it watches your log and pops an alert on
-  the dashboard within seconds of a crash or a genuine disconnect, saying what broke and
+  the dashboard within seconds of a crash, a lost player or a genuine disconnect, saying what broke and
   whether it was your PC or CIG's servers. Routine disconnect chatter is filtered out.
   A **🔔 bell in the top bar** carries a badge and keeps every alert raised while the page
   has been open; *Stability → Live monitoring* shows the watcher's status lights. CSR also checks whether
@@ -250,7 +261,7 @@ Citizen is running, and **one click restores the original**.
 build_exe.bat          # installs PyInstaller if needed, then builds dist\CSR.exe
 ```
 or manually: `python -m PyInstaller csr.spec --noconfirm`. The one-file exe
-(~8 MB) bundles the game-data caches; share that single file. To give it an icon,
+(~9 MB) bundles the game-data caches; share that single file. To give it an icon,
 drop a `csr.ico` next to `csr.spec` and rebuild.
 
 ---
