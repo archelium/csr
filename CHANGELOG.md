@@ -5,6 +5,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and CSR
 uses [Semantic Versioning](https://semver.org/) (MAJOR.MINOR.PATCH).
 
 
+## [Unreleased]
+
+### Added
+- **Ship time** (Flight). Hours aboard each ship and hours in its pilot seat, on the
+  Most-flown ships card. A new tile shows time aboard any ship and time in other
+  players' ships. Aboard time comes from the ship's crew channel, logged from 4.5.167
+  (Dec 2025). Logging in already aboard counts from the server join to your last seat
+  exit in that ship. Seat time is exact up to Nov 2025. Later builds don't log the seat
+  entry, it starts at the first nav or docking line for that ship.
+
+
 ## [1.6.0] — 2026-10-20
 
 ### Added

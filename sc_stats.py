@@ -48,7 +48,7 @@ CSR_CONTACT = "support@archelium.com"      # publisher/contact (archelium.com)
 # Bump whenever scan_log() learns to extract something new or fixes an extraction bug.
 # A quick refresh reuses archived sessions only when they were parsed by THIS version,
 # so improved parsing always re-reads old logs instead of silently keeping stale numbers.
-PARSER_VERSION = 22
+PARSER_VERSION = 23
 
 
 # --------------------------------------------------------------------------- #
@@ -1709,6 +1709,178 @@ class CrashContext:
         return out
 
 
+# Ship time. Boarding puts you in the ship's crew channel ("You have joined channel
+# '<ship> : <owner>'", 5 lines per burst), getting off writes the matching "left" line.
+# Both are in the log from build 10967244 (Dec 2025). A log that starts with you already
+# aboard (bedlogged in the ship) has no join: a seat exit or "left" line for a ship with
+# no channel line yet starts it at the PU join that began that stretch of play. Such a
+# span almost never gets a "left" line (4 of 434 in a real archive), so it ends at that
+# ship's last seat exit, the last sign you were aboard.
+# Seat time: the exit is the exact ClearDriver line. Builds up to 10633661 (Nov 2025)
+# also logged the "granted" entry; later ones don't, and the first ItemNavigation or
+# auto-dock line naming the ship since the last exit stands in for it.
+SHIP_CHAN_RE = re.compile(r"You have (joined|left the) channel '(.+?) : ([^']+)'")
+SHIP_TOKEN_RE = re.compile(r"(granted|releasing) control token for '([A-Za-z][A-Za-z0-9_]+?)_(\d{6,})'")
+SHIP_NAV_RE = re.compile(r"\| (?:NOT )?AUTH \| ([A-Za-z][A-Za-z0-9_]+?)_(\d{6,})\[")
+SHIP_DOCK_RE = re.compile(r"AutoDock vehicle \[([A-Za-z][A-Za-z0-9_]+?)_(\d{6,}) ")
+SHIP_SPAN_MAX = 12 * 3600      # one stretch aboard or seated, same guard as party time
+SHIP_UNLOC = "@vehicle_Name"   # some builds write the channel name as this key + the class
+
+
+def _ship_model(cls):
+    """'RSI_Constellation_Mk5_Centaurus' -> 'constellation': the word a crew channel
+    name ('RSI Constellation Mk V Centaurus') shares with the game class."""
+    parts = cls.split("_")
+    return (parts[1] if len(parts) > 1 else parts[0]).lower()
+
+
+def _ship_is_cls(key):
+    return " " not in key and "_" in key
+
+
+def _ship_key_has(key, model):
+    """Does an aboard key (channel ship name, or a class) name the ship whose model word
+    is `model`? Names split on anything not a letter or digit ('Aegis Idris-P')."""
+    if _ship_is_cls(key):
+        return _ship_model(key) == model
+    return model in re.split(r"[^a-z0-9]+", key.lower())
+
+
+def has_crew_channel(patch, build):
+    """Does this build log crew-channel joins? From 4.5.167 (build 10967244) on. An
+    unknown patch counts as yes. 4.10 rebranded the build to 1.0.x, so the patch decides
+    first and the build only splits 4.5."""
+    p = _ver_tuple(patch)
+    if p == (0,):
+        return True
+    return p > (4, 5) or (p == (4, 5) and _ver_tuple(build)[:3] >= (4, 5, 167))
+
+
+def _union_secs(spans):
+    total, end = 0.0, None
+    for a, b in sorted(spans):
+        if end is None or a > end:
+            total += (b - a).total_seconds()
+            end = b
+        elif b > end:
+            total += (b - end).total_seconds()
+            end = b
+    return total
+
+
+class ShipTime:
+    """Time aboard each ship and in its pilot seat, for one log. Fed every line in
+    order; result() closes whatever is still open at the log's last line. A log is one
+    run of the game, so time offline never lands inside one."""
+
+    def __init__(self, chan=True):
+        self.chan = chan               # build logs crew channels (else no woke-aboard guess)
+        self.anchor = None             # PU join that began this stretch of play
+        self.open = {}                 # aboard key -> (start, owner)
+        self.woke = {}                 # woke-aboard key -> last seat exit
+        self.seen = set()              # aboard keys that had any line this log
+        self.spans = []                # (key, start, end, owner)
+        self.grant = {}                # entity id -> (class, granted at)  (old builds)
+        self.first = {}                # entity id -> (class, first line) since the last exit
+        self.seat = Counter()          # class -> seconds
+
+    def _close(self, key, end, name=None):
+        start, owner = self.open.pop(key)
+        last_exit = self.woke.pop(key, None)
+        if last_exit and not name:             # only a "left" line outlasts the exit
+            end = last_exit
+        self.spans.append((name or key, start, end, owner))
+
+    def _close_all(self, ts):
+        for key in list(self.open):
+            self._close(key, ts)
+        for cls, t0 in self.grant.values():
+            self.seat[cls] += min(max((ts - t0).total_seconds(), 0), SHIP_SPAN_MAX)
+        self.grant.clear()
+        self.first.clear()
+        self.anchor = None
+
+    def feed(self, line, prefix):
+        if "control token for '" in line:
+            m = SHIP_TOKEN_RE.search(line)
+            ts = parse_dt(prefix) if m else None
+            if not ts:
+                return
+            kind, cls, eid = m.groups()
+            if kind == "granted":
+                self.grant.setdefault(eid, (cls, ts))
+                return
+            t0 = (self.grant.pop(eid, None) or self.first.get(eid) or (None, None))[1]
+            if t0:
+                self.seat[cls] += min(max((ts - t0).total_seconds(), 0), SHIP_SPAN_MAX)
+            self.first.clear()
+            model = _ship_model(cls)
+            woke = next((k for k in self.woke if _ship_key_has(k, model)), None)
+            if woke:
+                self.woke[woke] = ts
+            elif (self.chan and self.anchor and not any(_ship_key_has(k, model) for k in self.open)
+                    and not any(_ship_key_has(k, model) for k in self.seen)):
+                self.open[cls] = (self.anchor, None)      # woke up aboard
+                self.woke[cls] = ts
+                self.seen.add(cls)
+        elif "channel '" in line and "notification" in line:
+            m = SHIP_CHAN_RE.search(line)
+            ts = parse_dt(prefix) if m else None
+            if not ts:
+                return
+            kind, name, owner = m.group(1), m.group(2).strip(), m.group(3).strip()
+            if name.startswith(SHIP_UNLOC):
+                name = name[len(SHIP_UNLOC):]
+            woke = next((k for k in self.woke if k != name
+                         and _ship_key_has(name, _ship_model(k))), None)
+            if kind == "joined":
+                if name not in self.open:
+                    if woke:
+                        self._close(woke, ts)
+                    self.open[name] = (ts, owner)
+            elif name in self.open:
+                self._close(name, ts)
+            elif woke:
+                self._close(woke, ts, name)                # the woke-aboard span gets its name
+            elif name not in self.seen and self.anchor:
+                self.spans.append((name, self.anchor, ts, owner))
+            self.seen.add(name)
+        elif "[ItemNavigation]" in line or "AutoDock vehicle [" in line:
+            m = SHIP_NAV_RE.search(line) or SHIP_DOCK_RE.search(line)
+            if m and m.group(2) not in self.first:
+                ts = parse_dt(prefix)
+                if ts:
+                    self.first[m.group(2)] = (m.group(1), ts)
+        elif DEAD_RE in line or "Loading screen for Frontend_Main" in line:
+            ts = parse_dt(prefix)
+            if ts:
+                self._close_all(ts)
+        elif "Context Establisher Done" in line and all(k in line for k in PU_JOIN):
+            ts = parse_dt(prefix)
+            if ts:
+                self.first.clear()
+                if self.anchor is None:
+                    self.anchor = ts
+
+    def result(self, end, handle):
+        if end:
+            self._close_all(end)
+        me = (handle or "").lower().strip()
+        aboard, all_spans, crew = Counter(), [], []
+        for key, a, b, owner in self.spans:
+            b = min(b, a + timedelta(seconds=SHIP_SPAN_MAX))
+            if b <= a:
+                continue
+            aboard[key] += (b - a).total_seconds()
+            all_spans.append((a, b))
+            if owner and me and owner.lower() != me:
+                crew.append((a, b))
+        return {"aboard": {k: round(v) for k, v in aboard.items()},
+                "aboard_secs": round(_union_secs(all_spans)),
+                "crew_secs": round(_union_secs(crew)),
+                "seat": {k: round(v) for k, v in self.seat.items() if round(v) > 0}}
+
+
 def _mk_combat():
     """Empty per-venue combat tally (used for both PU and Arena Commander)."""
     return {"lc": Counter(), "wpn_ship": Counter(), "wpn_fps": Counter(),
@@ -2730,6 +2902,7 @@ def scan_log(path):
     except OSError:
         pass
     ctx = CrashContext() if crash_tail else None   # phase / place / ship / errors
+    ship_time = ShipTime()             # time aboard each ship and in its pilot seat
     boots = []                         # dropped back to the main menu, mid-session
     boot_pending = None                # a drop awaiting its front-end confirmation
     softs = []                         # lost the player entity ("soft crash"), by episode
@@ -2743,6 +2916,7 @@ def scan_log(path):
     try:
         with open(path, "r", encoding="utf-8", errors="replace") as fh:
             patch, build = detect_patch(fh)
+            ship_time.chan = has_crew_channel(patch, build)
             # 4.10 dropped the AmmoRepool inventory request that reloads were read from.
             # From there a reload is the magazine landing on the weapon's magazine port —
             # counted only when it arrives ALONE, because zone changes re-attach every
@@ -2759,6 +2933,7 @@ def scan_log(path):
                     last = p
                 if ctx is not None and not saw_crash:
                     ctx.feed(line, p)
+                ship_time.feed(line, p)
                 # --- startup rig banner: cheap, and switched off once we're past it ---
                 if _in_hdr:
                     if "Host CPU:" in line:
@@ -3159,6 +3334,7 @@ def scan_log(path):
 
     if handle is None:                 # no normal login line — use the fallback
         handle = handle_fb
+    ship_t = ship_time.result(parse_dt(last), handle)
 
     # Did the game render on the best card it could see? Storing just the verdict
     # (rather than the whole adapter list, on every session, forever) keeps the
@@ -3291,6 +3467,8 @@ def scan_log(path):
     return {
         "patch": patch, "build": build, "start": dt0, "dur": dur,
         "ships": ships, "ship_events": ship_events, "missions": missions, "weapons": weapons,
+        "aboard": ship_t["aboard"], "aboard_secs": ship_t["aboard_secs"],
+        "crew_secs": ship_t["crew_secs"], "seat": ship_t["seat"],
         "reloads": reloads, "repools": repools, "carried": carried,
         "loot_boxes": loot_boxes, "transfers": transfers, "corpse_loots": corpse_loots,
         "deaths": deaths, "collisions": collisions, "death_ships": death_ships,
@@ -3353,6 +3531,8 @@ def blank_patch():
         "durations": [],
         "ships": Counter(), "ship_set": set(), "ship_first": {}, "ship_last": {},
         "ship_events": Counter(),
+        "aboard": Counter(), "seat": Counter(),   # ship key -> seconds aboard / in the pilot seat
+        "aboard_secs": 0.0, "crew_secs": 0.0,
         "missions": {}, "weapons": Counter(),
         "reloads": Counter(), "repools": 0, "carried": Counter(),
         "loot_boxes": Counter(), "transfers": 0, "corpse_loots": 0,
@@ -3466,6 +3646,10 @@ def fold(agg, s):
         agg["ships"][ship] += 1
         agg["ship_set"].add(ship)
     agg["ship_events"].update(s.get("ship_events", {}))   # control-token count (≈ flights)
+    agg["aboard"].update(s.get("aboard") or {})
+    agg["seat"].update(s.get("seat") or {})
+    agg["aboard_secs"] += s.get("aboard_secs", 0) or 0
+    agg["crew_secs"] += s.get("crew_secs", 0) or 0
     for mid, ctype in s["missions"].items():
         agg["missions"][mid] = ctype          # last completion type wins
     # The build shown for a scope is the one from its most RECENT session. It used to be
@@ -3898,8 +4082,21 @@ def finalize(agg):
         if is_ship_junk(cls):
             continue
         ship_takeoffs[SHIPS.display(cls)[0]] += c
-    # most-flown ships: [name, sessions, first_date, last_date, takeoffs]
-    top_ships = [[n, c, ship_first_named.get(n), ship_last_named.get(n), ship_takeoffs.get(n, 0)]
+    # time aboard (crew channel) and in the pilot seat, per ship name. An aboard key is
+    # the channel's ship name, or a class (a woke-aboard span, or an unlocalized name).
+    ship_aboard, ship_seat = Counter(), Counter()
+    for key, secs in agg["aboard"].items():
+        if not _ship_is_cls(key):
+            rec = SHIPS.match_display(key)
+            ship_aboard[rec["name"] if rec else key] += secs
+        elif not is_ship_junk(key):
+            ship_aboard[SHIPS.display(key)[0]] += secs
+    for cls, secs in agg["seat"].items():
+        if not is_ship_junk(cls):
+            ship_seat[SHIPS.display(cls)[0]] += secs
+    # most-flown ships: [name, sessions, first_date, last_date, takeoffs, aboard_h, seat_h]
+    top_ships = [[n, c, ship_first_named.get(n), ship_last_named.get(n), ship_takeoffs.get(n, 0),
+                  round(ship_aboard.get(n, 0) / 3600, 1), round(ship_seat.get(n, 0) / 3600, 1)]
                  for n, c in ship_named.most_common(12)]
 
     # ---- weapons: resolve names, drop noise, merge variants, split gun/tool ----
@@ -4144,6 +4341,8 @@ def finalize(agg):
         "ships_top": top_ships,
         "ships_flown_total": sum(agg["ships"].values()),
         "takeoffs_total": sum(agg["ship_events"].values()),
+        "aboard_hours": round(agg["aboard_secs"] / 3600, 1),
+        "crew_hours": round(agg["crew_secs"] / 3600, 1),
         "ship_size": ship_size.most_common(),
         "ship_role": ship_role.most_common(8),
         "weapons_top": top_w,
@@ -6949,6 +7148,12 @@ function qtTile(v){
 // out of M vehicules"). Older builds report an "entitlements" figure that counts pledge
 // items, not ships — it reads 42, 68, then 209, 227 while the real fleet is ~60 — so it
 // is deliberately NOT used rather than showing a number that is wrong.
+// Crew-channel lines are in the log from build 10967244 (Dec 2025).
+function aboardTile(v){
+  if(!v.aboard_hours) return [icon('time'), 'N/A', 'Time aboard ships', 'crew channel, from Dec 2025', 'na'];
+  return [icon('time'), v.aboard_hours+'h', 'Time aboard ships',
+          v.crew_hours ? `${v.crew_hours}h in other players’ ships` : 'crew channel, from Dec 2025'];
+}
 function fleetTile(n){
   return n ? [icon('fleet'), n, 'Fleet size', 'ships at ASOP (all-time)']
            : [icon('fleet'), 'N/A', 'Fleet size', 'not logged before patch 4.8', 'na'];
@@ -6973,10 +7178,12 @@ function group(n, ic, title, sub, body){
 const ddmm = s => { const p=(s||'').split('-'); return p.length===3 ? `${String(p[2]).padStart(2,'0')}-${MON[+p[1]-1]||p[1]}-${p[0]}` : (s||''); };
 // flight-recorder HUD chips: take-offs + first/last flown, for a ship
 // ---- ship chips: TAKE-OFFS + one FLOWN range chip (was FIRST FLOWN + LAST FLOWN) ----
-function shipMetaHTML(to,first,last){
+function shipMetaHTML(to,first,last,aboard,seat){
   const cell=(k,v,cls,ttl)=>`<span class="mchip ${cls||''}"${ttl?` title="${ttl}"`:''}><span class="mk">${k}</span><span class="mv">${v}</span></span>`;
   let out='';
   if(to) out+=cell('TAKE-OFFS',fmt(to),'to');
+  if(aboard) out+=cell('ABOARD',aboard+'h','','Time aboard, from the ship’s crew channel');
+  if(seat) out+=cell('SEAT',seat+'h','','Time in the pilot seat');
   if(first) out+=cell('FLOWN', ddmm(first)+(last&&last!==first?' → '+ddmm(last):''), '', 'First and last time you flew it');
   return out?`<div class="mchips">${out}</div>`:'';
 }
@@ -7295,11 +7502,12 @@ function secFlight(v){
         [icon('ship'), v.ships_unique, 'Distinct ships', `types piloted`],
         [icon('flight'), fmt(v.ships_flown_total), 'Ship boardings', `sessions × ship`],
         [icon('space'), fmt(v.takeoffs_total||0), 'Take-offs', `flights recorded`],
+        aboardTile(v),
         fleetTile(v.fleet_max),
       ])+
       cardHTML('Ship size mix','sessions by hull size','sizeChart')+
       `<div class="grid2" style="margin-top:16px">`+
-      barsCard('Most-flown ships','sessions flown · take-offs · first / last','shipBars')+
+      barsCard('Most-flown ships','sessions flown · take-offs · aboard · seat · first / last','shipBars')+
       barsCard('Roles flown','sessions by ship role','roleBars')+`</div>`
     )+
     group(2,'satellite','Travel &amp; navigation','Where you went — quantum travel and the systems you visited',
@@ -7335,9 +7543,9 @@ function secFlight(v){
         `From the HUD notices the game writes to the log, 4.5 onward.`,
         `A jurisdiction is who owns the space: UEE for open Stanton space, the four corporations for their planets, Ungoverned, Rough &amp; Ready and People\u2019s Alliance for Pyro, Klescher for prison. Armistice-zone notices fire at every hangar door, so entries within ten minutes count as one visit. The calibration notice names the pilot, so a jump someone else started is a crew jump. Party time runs from accepting an invite to leaving the group; a party you host leaves no trace.`))
   ;
-  const shipItems=(v.ships_top||[]).map(([n,c,first,last,to])=>({label:n, full:n, value:c,
+  const shipItems=(v.ships_top||[]).map(([n,c,first,last,to,aboard,seat])=>({label:n, full:n, value:c,
     disp:`${fmt(c)} <span class="vv-u">sess</span>`, href:wikiURL(n),
-    subHtml: shipMetaHTML(to,first,last)}));
+    subHtml: shipMetaHTML(to,first,last,aboard,seat)}));
   hbars($('#shipBars'), shipItems);
   // the headline counts ships; the bar measures sessions by hull size (the caption says so)
   const sz=v.ship_size.map(([n,c])=>({label:n,value:c,color:SIZE_COLOR[n]||'#8aa0b8'}));
