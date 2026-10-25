@@ -503,8 +503,14 @@ def weapon_kind(cls, name=""):
 SHIP_VARIANT = re.compile(
     r"_(collector|indust|industrial|best_in_show|bis|pirate|emerald|harbinger|"
     r"stella|fortuna|solstice|auspicious|firebird|blue|red|platinum|citizencon"
-    r"\d*|cc\d*|s42|edition|paint|test|template|modifiers?)\w*", re.I)
+    r"\d*|cc\d*|s42|edition|paint|test|template|modifiers?|military|stealth)\w*", re.I)
 
+
+# Variants the Ship Matrix doesn't list, mapped to the hull they're built on: by game
+# class prefix, and by crew-channel name.
+SHIP_ALIAS_CLS = {"ANVL_Hornet_F7_Mk2_Collector": "F7C-M Super Hornet Mk II",  # Wikelo F7
+                  "ANVL_Lightning_F8C": "F8C Lightning"}   # PYAM Exec and Executive Edition too
+SHIP_ALIAS_NAME = {"f7 hornet mk wikelo": "F7C-M Super Hornet Mk II"}
 
 _ROMAN = {"i": "1", "ii": "2", "iii": "3", "iv": "4", "v": "5"}
 _MK_RE = re.compile(r"\bmk\.?\s*(iv|iii|ii|i|v)\b", re.I)
@@ -634,6 +640,10 @@ class ShipIndex:
     def match(self, cls):
         if cls in self._resolved:
             return self._resolved[cls]
+        alias = next((n for pre, n in SHIP_ALIAS_CLS.items() if cls.startswith(pre)), None)
+        if alias in self.by_name:
+            self._resolved[cls] = self.by_name[alias]
+            return self.by_name[alias]
         base = SHIP_VARIANT.sub("", cls)
         parts = base.split("_")
         code, tokens = parts[0], [p for p in parts[1:] if p]
@@ -644,6 +654,35 @@ class ShipIndex:
             rec = self._best(list(self.by_name.values()), tokens, strict=True)
         self._resolved[cls] = rec
         return rec
+
+    def match_display(self, name):
+        """Record for a ship named the way the game shows it in a crew channel
+        ('Anvil C8R Pisces Rescue', 'RSI Ursa Medivac'): the longest matrix name found
+        in it as whole words, so 'Ursa Medivac' wins over 'Ursa'."""
+        key = "@" + name
+        if key in self._resolved:
+            return self._resolved[key]
+        low, best = " " + re.sub(r"\s+", " ", name.lower()) + " ", None
+        alias = next((n for ph, n in SHIP_ALIAS_NAME.items() if ph in low), None)
+        if alias in self.by_name:
+            self._resolved[key] = self.by_name[alias]
+            return self.by_name[alias]
+        for n, rec in self.by_name.items():
+            if n and f" {n.lower()} " in low and (best is None or len(n) > len(best["name"])):
+                best = rec
+        if best is None:
+            # variants the matrix doesn't list ('Origin 600i', 'Drake Dragonfly Star
+            # Kitten'): among ships whose model word is in the name, most shared words
+            # wins, then the shortest name (the base hull, as the class route picks)
+            words = set(low.split())
+            makers = {w.lower() for r in self.by_name.values()
+                      for w in ((r.get("man") or "").split()[:1] + [r.get("code") or ""]) if w}
+            cands = [r for n, r in self.by_name.items()
+                     if n and n.split()[0].lower() in words - makers]
+            best = min(cands, default=None, key=lambda r: (
+                -len(words & set(r["name"].lower().split())), len(r["name"])))
+        self._resolved[key] = best
+        return best
 
     def display(self, cls):
         rec = self.match(cls)

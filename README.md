@@ -47,7 +47,7 @@ configuration check that flags what is measurably wrong.
 
 ### Flight &amp; Travel
 
-Ships flown, hull-size mix, roles, and quantum travel.
+Ships flown, time aboard and in the pilot seat, hull-size mix, roles, and quantum travel.
 
 ![Flight and Travel — ships, hulls and quantum travel](docs/img/flight.png)
 
@@ -150,9 +150,9 @@ is scoped by account × patch. On **Overview**, click any bar in *Playtime by
 Patch* to filter to that patch (and *↩ View career* to reset).
 
 - **Overview** — RSI profile, snapshot KPIs, click-to-filter playtime-by-patch,
-  signature top-3 ships & guns with artwork
-- **Flight & Travel** — where you've been (jurisdictions, landing-zone visits, hangars requested, jumps as crew and the pilots you flew under, time in a party, CrimeStat rises — from the HUD notices, 4.5+), *ships & hulls* (distinct ships, boardings, take-offs, fleet
-  size, most-flown with first/last flown dates, hull-size mix, roles) and
+  signature top-3 ships (by time aboard) & guns with artwork
+- **Flight & Travel** — where you've been (jurisdictions, landing-zone visits, hangars requested, jumps as crew and the pilots you flew under, time in a party, CrimeStat rises — from the HUD notices, 4.5+), *ships & hulls* (distinct ships, boardings, take-offs, time aboard ships, fleet
+  size, most-flown by time aboard with seat time and first/last flown dates, hull-size mix, roles) and
   *travel & navigation* (quantum jumps, jumps per session/hour, systems visited)
 - **Combat** — *ship combat* (how you lost ships), *FPS combat* (loadout ranked by
   how often each weapon was drawn, plus reloads and carry), *injuries & treatment*
