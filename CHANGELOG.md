@@ -15,7 +15,7 @@ uses [Semantic Versioning](https://semver.org/) (MAJOR.MINOR.PATCH).
   exit in that ship. Seat time is exact up to Nov 2025. Later builds don't log the seat
   entry, it starts at the first nav or docking line for that ship. Command Module time
   goes to its Caterpillar or Ironclad. The Wikelo F7 counts as an F7C-M Super Hornet
-  Mk II.
+  Mk II. Every F8C variant counts as one F8C Lightning.
 
 ### Changed
 - **Most-flown ships and Signature ships rank by time aboard** (Flight, Overview).

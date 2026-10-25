@@ -508,7 +508,8 @@ SHIP_VARIANT = re.compile(
 
 # Variants the Ship Matrix doesn't list, mapped to the hull they're built on: by game
 # class prefix, and by crew-channel name.
-SHIP_ALIAS_CLS = {"ANVL_Hornet_F7_Mk2_Collector": "F7C-M Super Hornet Mk II"}   # Wikelo F7
+SHIP_ALIAS_CLS = {"ANVL_Hornet_F7_Mk2_Collector": "F7C-M Super Hornet Mk II",  # Wikelo F7
+                  "ANVL_Lightning_F8C": "F8C Lightning"}   # PYAM Exec and Executive Edition too
 SHIP_ALIAS_NAME = {"f7 hornet mk wikelo": "F7C-M Super Hornet Mk II"}
 
 _ROMAN = {"i": "1", "ii": "2", "iii": "3", "iv": "4", "v": "5"}

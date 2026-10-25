@@ -399,6 +399,13 @@ class MatchDisplayTests(unittest.TestCase):
         self.assertEqual(self.ix.display("MRAI_Guardian_QI_Collector_Indust")[0], "Guardian QI")
         self.assertEqual(self.ix.display("MRAI_Guardian_MX_Collector_Military")[0], "Guardian MX")
 
+    def test_every_f8c_variant_is_one_f8c_lightning(self):
+        for cls in ("ANVL_Lightning_F8C", "ANVL_Lightning_F8C_Exec_Stealth",
+                    "ANVL_Lightning_F8C_Exec_Military", "ANVL_Lightning_F8C_Collector_Military"):
+            self.assertEqual(self.ix.display(cls)[0], "F8C Lightning", cls)
+        for name in ("Anvil F8C Lightning", "F8C Lightning PYAM Exec"):
+            self.assertEqual(self.name(name), "F8C Lightning", name)
+
     def test_wikelo_f7_is_a_super_hornet_mk_ii_both_ways(self):
         self.assertEqual(self.name("Anvil F7 Hornet Mk Wikelo"), "F7C-M Super Hornet Mk II")
         self.assertEqual(self.ix.display("ANVL_Hornet_F7_Mk2_Collector_Mod")[0], "F7C-M Super Hornet Mk II")
