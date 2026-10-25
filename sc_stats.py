@@ -10,6 +10,7 @@ web page: CSR.html  (no server, no dependencies — just open it).
 What it CAN report (things SC writes to the client log):
   * Playtime — total, per patch, per month, sessions, avg/longest, active days
   * Ships flown  (from vehicle control-token events)  + your most-flown
+  * Time aboard each ship (crew channel, 4.5.167+) and in its pilot seat
   * Missions — completed / failed / abandoned, completion rate
   * Deaths (ship-destruction deaths — the only kind SC logs in 2026 builds)
   * Quantum-travel activity, hour-of-day / day-of-week play patterns
