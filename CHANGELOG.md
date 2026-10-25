@@ -5,6 +5,34 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and CSR
 uses [Semantic Versioning](https://semver.org/) (MAJOR.MINOR.PATCH).
 
 
+## [Unreleased]
+
+### Added
+- **Loading screens** (Your Machine). The game logs how long each loading screen stayed
+  up. CSR shows the median load into the PU, the slowest one, total time on loading
+  screens and the median time from launch to login. Bars split loads by destination:
+  Stanton, Pyro, Nyx, Arena Commander. A per-patch chart shows the median PU load.
+  Screens stuck for over 15 minutes are left out and counted. Every patch.
+- **Where your hours go** (Activity). Playtime split into starting up, loading screens,
+  main menu, aboard a ship and on foot. Aboard time is logged from Dec 2025, older
+  sessions show as *In game*. Sessions whose log Star Citizen has since deleted show as
+  *Not split*.
+- **Places visited** (Flight & Travel → Where you've been). The game loads your stored
+  items when you land or dock, and again when an inventory or shop screen opens. That
+  line names the place: cities, stations, rest stops, outposts, distribution centres,
+  Wikelo's emporiums. CSR shows how many places you've been, your home base, and the 15
+  you visit most with their first visit. Names come from the Star Citizen wiki. A place
+  with no confirmed name gets a label built from the game's code for it (*Castra jump
+  point (Nyx)*). Flybys don't show. Every patch.
+- **Out of air** (Combat). Suffocation and depressurization from the game's stamina
+  notices: episodes, time without air, the longest one, and how many had no helmet on.
+  The two notices fire together and count as one episode. Episodes under 2 s are
+  airlock blips and are left out.
+
+### Changed
+- Parser **24**: the next refresh re-reads your archive once.
+
+
 ## [1.7.0] — 2026-10-25
 
 ### Added
