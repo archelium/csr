@@ -304,6 +304,63 @@ class SeatTests(unittest.TestCase):
         self.assertEqual(st.result(dt("10:20:00"), ME)["seat"], {"ANVL_C8R_Pisces": 1200})
 
 
+class FloorTests(unittest.TestCase):
+    def test_uncovered_seat_stint_counts_as_aboard(self):
+        st = ShipTime()
+        pu_join(st, "10:00:00")
+        dead(st, "10:10:00")
+        nav(st, "10:20:00", "KRIG_P72_Archimedes")
+        released(st, "10:26:00", "KRIG_P72_Archimedes")
+        r = st.result(dt("11:00:00"), ME)
+        self.assertEqual(r["aboard"], {"KRIG_P72_Archimedes": 360})
+        self.assertEqual(r["seat"], {"KRIG_P72_Archimedes": 360})
+
+    def test_no_floor_on_builds_before_crew_channels(self):
+        st = ShipTime(chan=False)
+        granted(st, "10:00:00", "ANVL_C8R_Pisces")
+        released(st, "10:05:00", "ANVL_C8R_Pisces")
+        self.assertEqual(st.result(dt("11:00:00"), ME)["aboard"], {})
+
+    def test_no_floor_inside_an_open_channel(self):
+        st = ShipTime()
+        joined(st, "10:00:00", CONNIE)
+        nav(st, "10:05:00", CONNIE_CLS)
+        released(st, "10:10:00", CONNIE_CLS)
+        left(st, "10:20:00", CONNIE)
+        self.assertEqual(st.result(dt("11:00:00"), ME)["aboard"], {CONNIE: 1200})
+
+
+class CommandModuleTests(unittest.TestCase):
+    CM, CM_CLS = "Drake Command Module", "DRAK_Command_Module"
+    HOST, HOST_CLS = "Drake Ironclad Assault", "DRAK_Ironclad_Assault"
+
+    def test_module_time_goes_to_the_host_once(self):
+        st = ShipTime()
+        joined(st, "09:55:00", self.HOST)
+        joined(st, "10:00:00", self.CM)
+        nav(st, "10:05:00", self.CM_CLS, eid="900000000001")
+        released(st, "10:15:00", self.CM_CLS, eid="900000000001")
+        left(st, "10:30:00", self.CM)
+        left(st, "10:40:00", self.HOST)
+        r = st.result(dt("11:00:00"), ME)
+        self.assertEqual(r["aboard"], {self.HOST: 2700})
+        self.assertEqual(r["aboard_secs"], 2700)
+        self.assertEqual(r["seat"], {self.HOST: 600})
+
+    def test_host_from_a_seat_exit_when_it_has_no_channel_line(self):
+        st = ShipTime(chan=False)
+        joined(st, "10:00:00", self.CM)
+        left(st, "10:30:00", self.CM)
+        released(st, "10:40:00", "DRAK_Caterpillar")
+        self.assertEqual(st.result(dt("11:00:00"), ME)["aboard"], {"DRAK_Caterpillar": 1800})
+
+    def test_module_with_no_host_keeps_its_own_key(self):
+        st = ShipTime()
+        joined(st, "10:00:00", self.CM)
+        left(st, "10:30:00", self.CM)
+        self.assertEqual(st.result(dt("11:00:00"), ME)["aboard"], {self.CM: 1800})
+
+
 class MatchDisplayTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -334,7 +391,10 @@ class MatchDisplayTests(unittest.TestCase):
     def test_unknown_name_is_none(self):
         self.assertIsNone(self.name("Totally Made Up Ship"))
         self.assertIsNone(self.name("Drake Command Module"))
-        self.assertIsNone(self.name("Anvil F7 Hornet Mk Wikelo"))   # not 'Anvil Ballista Snowblind'
+
+    def test_wikelo_f7_is_a_super_hornet_mk_ii_both_ways(self):
+        self.assertEqual(self.name("Anvil F7 Hornet Mk Wikelo"), "F7C-M Super Hornet Mk II")
+        self.assertEqual(self.ix.display("ANVL_Hornet_F7_Mk2_Collector_Mod")[0], "F7C-M Super Hornet Mk II")
 
 
 class ScanLogWiringTests(unittest.TestCase):
@@ -362,6 +422,50 @@ class ScanLogWiringTests(unittest.TestCase):
         self.assertEqual(s["aboard_secs"], 1080)
         self.assertEqual(s["crew_secs"], 0)
         self.assertEqual(s["seat"], {CONNIE_CLS: 600})
+
+
+def _base_session():
+    with tempfile.TemporaryDirectory() as d:
+        p = os.path.join(d, "Game.log")
+        with open(p, "w", encoding="utf-8") as fh:
+            fh.write(line("10:00:00", "Log started") + "\n" + line("11:00:00", "end") + "\n")
+        return sc_stats.scan_log(p)
+
+
+def _agg(sessions):
+    base, agg = _base_session(), sc_stats.blank_patch()
+    for s in sessions:
+        sc_stats.fold(agg, dict(base, **s))
+    return agg
+
+
+class RankTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        sc_stats.SHIPS.load(allow_fetch=False)
+
+    def sessions(self, patch="4.9", build="4.9.188.3"):
+        # Asgard: 1 session, 3 h aboard. Corsair: 2 sessions, 1 h aboard.
+        return [
+            {"ships": {"ANVL_Asgard"}, "ship_events": {"ANVL_Asgard": 1},
+             "aboard": {"Anvil Asgard": 10800}, "aboard_secs": 10800, "patch": patch, "build": build},
+            {"ships": {"DRAK_Corsair"}, "ship_events": {"DRAK_Corsair": 1},
+             "aboard": {"Drake Corsair": 1800}, "aboard_secs": 1800, "patch": patch, "build": build},
+            {"ships": {"DRAK_Corsair"}, "ship_events": {"DRAK_Corsair": 1},
+             "aboard": {"Drake Corsair": 1800}, "aboard_secs": 1800, "patch": patch, "build": build},
+        ]
+
+    def test_covered_scope_ranks_by_time_aboard(self):
+        v = sc_stats.finalize(_agg(self.sessions()))
+        self.assertEqual([r[0] for r in v["ships_top"]], ["Asgard", "Corsair"])
+        self.assertEqual(v["ships_rank"], "time")
+
+    def test_scope_with_older_builds_ranks_by_sessions(self):
+        old = self.sessions()
+        old[0].update(patch="4.4", build="4.4.164.18318")
+        v = sc_stats.finalize(_agg(old))
+        self.assertEqual([r[0] for r in v["ships_top"]], ["Corsair", "Asgard"])
+        self.assertEqual(v["ships_rank"], "sessions")
 
 
 class FinalizeTests(unittest.TestCase):

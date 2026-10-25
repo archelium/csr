@@ -13,7 +13,13 @@ uses [Semantic Versioning](https://semver.org/) (MAJOR.MINOR.PATCH).
   players' ships. Aboard time comes from the ship's crew channel, logged from 4.5.167
   (Dec 2025). Logging in already aboard counts from the server join to your last seat
   exit in that ship. Seat time is exact up to Nov 2025. Later builds don't log the seat
-  entry, it starts at the first nav or docking line for that ship.
+  entry, it starts at the first nav or docking line for that ship. Command Module time
+  goes to its Caterpillar or Ironclad. The Wikelo F7 counts as an F7C-M Super Hornet
+  Mk II.
+
+### Changed
+- **Most-flown ships rank by time aboard** (Flight) on patches 4.6 and later. Career
+  and older patches still rank by sessions. Signature ships follow the same order.
 
 
 ## [1.6.0] — 2026-10-20

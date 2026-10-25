@@ -1715,7 +1715,10 @@ class CrashContext:
 # aboard (bedlogged in the ship) has no join: a seat exit or "left" line for a ship with
 # no channel line yet starts it at the PU join that began that stretch of play. Such a
 # span almost never gets a "left" line (4 of 434 in a real archive), so it ends at that
-# ship's last seat exit, the last sign you were aboard.
+# ship's last seat exit, the last sign you were aboard. A seat stint no stretch covers
+# (after a death, or after the channel was left) counts as aboard for its own length.
+# The Drake Command Module has its own channel and token. Its time goes to the
+# Caterpillar or Ironclad seen in the same log.
 # Seat time: the exit is the exact ClearDriver line. Builds up to 10633661 (Nov 2025)
 # also logged the "granted" entry; later ones don't, and the first ItemNavigation or
 # auto-dock line naming the ship since the last exit stands in for it.
@@ -1756,6 +1759,19 @@ def has_crew_channel(patch, build):
     return p > (4, 5) or (p == (4, 5) and _ver_tuple(build)[:3] >= (4, 5, 167))
 
 
+SHIP_HOSTS = {"caterpillar", "ironclad"}    # ships a Drake Command Module plugs into
+
+
+def _ship_words(key):
+    if _ship_is_cls(key):
+        return {_ship_model(key)}
+    return set(re.split(r"[^a-z0-9]+", key.lower()))
+
+
+def _ship_is_cm(key):
+    return "command module" in key.lower() or "command_module" in key.lower()
+
+
 def _union_secs(spans):
     total, end = 0.0, None
     for a, b in sorted(spans):
@@ -1782,7 +1798,8 @@ class ShipTime:
         self.spans = []                # (key, start, end, owner)
         self.grant = {}                # entity id -> (class, granted at)  (old builds)
         self.first = {}                # entity id -> (class, first line) since the last exit
-        self.seat = Counter()          # class -> seconds
+        self.stints = []               # (class, start, end) in the pilot seat
+        self.hosts = []                # (time, key) a Caterpillar / Ironclad was seen
 
     def _close(self, key, end, name=None):
         start, owner = self.open.pop(key)
@@ -1795,10 +1812,24 @@ class ShipTime:
         for key in list(self.open):
             self._close(key, ts)
         for cls, t0 in self.grant.values():
-            self.seat[cls] += min(max((ts - t0).total_seconds(), 0), SHIP_SPAN_MAX)
+            self.stints.append((cls, t0, ts))
         self.grant.clear()
         self.first.clear()
         self.anchor = None
+
+    def _host(self, key, ts):
+        if SHIP_HOSTS & _ship_words(key):
+            self.hosts.append((ts, key))
+
+    def _rekey(self, key, t):
+        """A Command Module key -> the host it was plugged into: the host named by a
+        channel if there is one (seat and aboard then share a key), the latest seen at
+        or before `t`, else the first seen after."""
+        if not _ship_is_cm(key) or not self.hosts:
+            return key
+        pool = [h for h in self.hosts if not _ship_is_cls(h[1])] or self.hosts
+        before = [k for ts, k in pool if ts <= t]
+        return before[-1] if before else pool[0][1]
 
     def feed(self, line, prefix):
         if "control token for '" in line:
@@ -1807,22 +1838,27 @@ class ShipTime:
             if not ts:
                 return
             kind, cls, eid = m.groups()
+            self._host(cls, ts)
             if kind == "granted":
                 self.grant.setdefault(eid, (cls, ts))
                 return
             t0 = (self.grant.pop(eid, None) or self.first.get(eid) or (None, None))[1]
             if t0:
-                self.seat[cls] += min(max((ts - t0).total_seconds(), 0), SHIP_SPAN_MAX)
+                self.stints.append((cls, t0, ts))
             self.first.clear()
             model = _ship_model(cls)
             woke = next((k for k in self.woke if _ship_key_has(k, model)), None)
             if woke:
                 self.woke[woke] = ts
-            elif (self.chan and self.anchor and not any(_ship_key_has(k, model) for k in self.open)
+            elif any(_ship_key_has(k, model) for k in self.open):
+                pass
+            elif (self.chan and self.anchor
                     and not any(_ship_key_has(k, model) for k in self.seen)):
                 self.open[cls] = (self.anchor, None)      # woke up aboard
                 self.woke[cls] = ts
                 self.seen.add(cls)
+            elif self.chan and t0:
+                self.spans.append((cls, t0, ts, None))    # at least the seat stint
         elif "channel '" in line and "notification" in line:
             m = SHIP_CHAN_RE.search(line)
             ts = parse_dt(prefix) if m else None
@@ -1831,6 +1867,7 @@ class ShipTime:
             kind, name, owner = m.group(1), m.group(2).strip(), m.group(3).strip()
             if name.startswith(SHIP_UNLOC):
                 name = name[len(SHIP_UNLOC):]
+            self._host(name, ts)
             woke = next((k for k in self.woke if k != name
                          and _ship_key_has(name, _ship_model(k))), None)
             if kind == "joined":
@@ -1851,6 +1888,7 @@ class ShipTime:
                 ts = parse_dt(prefix)
                 if ts:
                     self.first[m.group(2)] = (m.group(1), ts)
+                    self._host(m.group(1), ts)
         elif DEAD_RE in line or "Loading screen for Frontend_Main" in line:
             ts = parse_dt(prefix)
             if ts:
@@ -1866,19 +1904,26 @@ class ShipTime:
         if end:
             self._close_all(end)
         me = (handle or "").lower().strip()
-        aboard, all_spans, crew = Counter(), [], []
+        cap = timedelta(seconds=SHIP_SPAN_MAX)
+        per_ship, seat, all_spans, crew = defaultdict(list), defaultdict(list), [], []
         for key, a, b, owner in self.spans:
-            b = min(b, a + timedelta(seconds=SHIP_SPAN_MAX))
+            b = min(b, a + cap)
             if b <= a:
                 continue
-            aboard[key] += (b - a).total_seconds()
+            per_ship[self._rekey(key, a)].append((a, b))
             all_spans.append((a, b))
             if owner and me and owner.lower() != me:
                 crew.append((a, b))
-        return {"aboard": {k: round(v) for k, v in aboard.items()},
+        for cls, a, b in self.stints:
+            b = min(b, a + cap)
+            if b > a:
+                seat[self._rekey(cls, a)].append((a, b))
+        # per ship as one combined stretch: a ship and its Command Module overlap
+        return {"aboard": {k: round(_union_secs(v)) for k, v in per_ship.items()},
                 "aboard_secs": round(_union_secs(all_spans)),
                 "crew_secs": round(_union_secs(crew)),
-                "seat": {k: round(v) for k, v in self.seat.items() if round(v) > 0}}
+                "seat": {k: round(_union_secs(v)) for k, v in seat.items()
+                         if round(_union_secs(v)) > 0}}
 
 
 def _mk_combat():
@@ -3533,6 +3578,7 @@ def blank_patch():
         "ship_events": Counter(),
         "aboard": Counter(), "seat": Counter(),   # ship key -> seconds aboard / in the pilot seat
         "aboard_secs": 0.0, "crew_secs": 0.0,
+        "pre_chan": 0,                 # sessions on builds before crew channels (no aboard time)
         "missions": {}, "weapons": Counter(),
         "reloads": Counter(), "repools": 0, "carried": Counter(),
         "loot_boxes": Counter(), "transfers": 0, "corpse_loots": 0,
@@ -3650,6 +3696,8 @@ def fold(agg, s):
     agg["seat"].update(s.get("seat") or {})
     agg["aboard_secs"] += s.get("aboard_secs", 0) or 0
     agg["crew_secs"] += s.get("crew_secs", 0) or 0
+    if not has_crew_channel(s.get("patch"), s.get("build")):
+        agg["pre_chan"] += 1
     for mid, ctype in s["missions"].items():
         agg["missions"][mid] = ctype          # last completion type wins
     # The build shown for a scope is the one from its most RECENT session. It used to be
@@ -4084,20 +4132,28 @@ def finalize(agg):
         ship_takeoffs[SHIPS.display(cls)[0]] += c
     # time aboard (crew channel) and in the pilot seat, per ship name. An aboard key is
     # the channel's ship name, or a class (a woke-aboard span, or an unlocalized name).
-    ship_aboard, ship_seat = Counter(), Counter()
-    for key, secs in agg["aboard"].items():
+    def _named(key):
         if not _ship_is_cls(key):
             rec = SHIPS.match_display(key)
-            ship_aboard[rec["name"] if rec else key] += secs
-        elif not is_ship_junk(key):
-            ship_aboard[SHIPS.display(key)[0]] += secs
-    for cls, secs in agg["seat"].items():
-        if not is_ship_junk(cls):
-            ship_seat[SHIPS.display(cls)[0]] += secs
+            return rec["name"] if rec else key
+        return None if is_ship_junk(key) else SHIPS.display(key)[0]
+    ship_aboard, ship_seat = Counter(), Counter()
+    for src, dst in ((agg["aboard"], ship_aboard), (agg["seat"], ship_seat)):
+        for key, secs in src.items():
+            nm = _named(key)
+            if nm:
+                dst[nm] += secs
+    # Ranked by time aboard when every session in the scope could log it, else by
+    # sessions: aboard time only exists from 4.5.167, and a career mixing both eras
+    # would sink ships flown before it.
+    by_time = agg["sessions"] > 0 and agg["pre_chan"] == 0
+    order = (sorted(ship_named, key=lambda n: (-ship_aboard.get(n, 0), -ship_named[n]))[:12]
+             if by_time else [n for n, _ in ship_named.most_common(12)])
     # most-flown ships: [name, sessions, first_date, last_date, takeoffs, aboard_h, seat_h]
-    top_ships = [[n, c, ship_first_named.get(n), ship_last_named.get(n), ship_takeoffs.get(n, 0),
+    top_ships = [[n, ship_named[n], ship_first_named.get(n), ship_last_named.get(n),
+                  ship_takeoffs.get(n, 0),
                   round(ship_aboard.get(n, 0) / 3600, 1), round(ship_seat.get(n, 0) / 3600, 1)]
-                 for n, c in ship_named.most_common(12)]
+                 for n in order]
 
     # ---- weapons: resolve names, drop noise, merge variants, split gun/tool ----
     gun_named, tool_named = Counter(), Counter()
@@ -4339,6 +4395,7 @@ def finalize(agg):
         "bp_since": min(bp_firsts) if bp_firsts else None,
         "ships_unique": len(agg["ship_set"]),
         "ships_top": top_ships,
+        "ships_rank": "time" if by_time else "sessions",
         "ships_flown_total": sum(agg["ships"].values()),
         "takeoffs_total": sum(agg["ship_events"].values()),
         "aboard_hours": round(agg["aboard_secs"] / 3600, 1),
@@ -4983,7 +5040,7 @@ def _gun_img(name):
     return img
 
 
-def _ship_entry(name, count, first=None, last=None, takeoffs=0):
+def _ship_entry(name, count, first=None, last=None, takeoffs=0, aboard=0, seat=0, rank="sessions"):
     rec = SHIPS.record_by_name(name)
     man = rec["man"] if rec else ""
     return {"name": name, "man": man,
@@ -4992,6 +5049,7 @@ def _ship_entry(name, count, first=None, last=None, takeoffs=0):
             "role": (rec.get("focus") or rec.get("type") if rec else "") or "",
             "url": (rec.get("url") if rec else "") or "",
             "count": count, "first": first, "last": last, "takeoffs": takeoffs,
+            "aboard": aboard, "seat": seat, "rank": rank,
             "logo": _man_logo(man), "img": _ship_img(rec)}
 
 
@@ -5008,8 +5066,10 @@ def _gun_entry(name, count, meta, reloads=0, carried=0, reloads_known=True):
 
 
 def _view_showcase(v):
+    rank = v.get("ships_rank", "sessions")
     ships = [_ship_entry(n, c, (t[0] if t else None), (t[1] if len(t) > 1 else None),
-                         (t[2] if len(t) > 2 else 0))
+                         (t[2] if len(t) > 2 else 0), (t[3] if len(t) > 3 else 0),
+                         (t[4] if len(t) > 4 else 0), rank)
              for n, c, *t in v["ships_top"][:3]]
     meta = v.get("gun_meta", {})
     rl, ca = v.get("gun_reloads", {}), v.get("gun_carried", {})
@@ -7178,9 +7238,10 @@ function group(n, ic, title, sub, body){
 const ddmm = s => { const p=(s||'').split('-'); return p.length===3 ? `${String(p[2]).padStart(2,'0')}-${MON[+p[1]-1]||p[1]}-${p[0]}` : (s||''); };
 // flight-recorder HUD chips: take-offs + first/last flown, for a ship
 // ---- ship chips: TAKE-OFFS + one FLOWN range chip (was FIRST FLOWN + LAST FLOWN) ----
-function shipMetaHTML(to,first,last,aboard,seat){
+function shipMetaHTML(to,first,last,aboard,seat,sess){
   const cell=(k,v,cls,ttl)=>`<span class="mchip ${cls||''}"${ttl?` title="${ttl}"`:''}><span class="mk">${k}</span><span class="mv">${v}</span></span>`;
   let out='';
+  if(sess) out+=cell('SESSIONS',fmt(sess),'','Play sessions this ship appeared in');
   if(to) out+=cell('TAKE-OFFS',fmt(to),'to');
   if(aboard) out+=cell('ABOARD',aboard+'h','','Time aboard, from the ship’s crew channel');
   if(seat) out+=cell('SEAT',seat+'h','','Time in the pilot seat');
@@ -7226,8 +7287,11 @@ function showCard(item, rank, kind){
   let chips, cnt;
   if(kind==='ship'){
     chips = chip(item.size, 'sz '+(item.size||''))+chip(item.role)+maker;   // existing .chip-c.sz.Large etc.
-    cnt = `<div class="sig-count" title="Distinct play sessions this ship appeared in — not individual flights">${fmt(item.count)} sessions flown</div>`+
-          shipMetaHTML(item.takeoffs, item.first, item.last);
+    cnt = item.rank==='time'
+      ? `<div class="sig-count" title="Time aboard, from the ship’s crew channel">${item.aboard}h aboard</div>`+
+        shipMetaHTML(item.takeoffs, item.first, item.last, 0, item.seat, item.count)
+      : `<div class="sig-count" title="Distinct play sessions this ship appeared in — not individual flights">${fmt(item.count)} sessions flown</div>`+
+        shipMetaHTML(item.takeoffs, item.first, item.last, item.aboard, item.seat);
   } else {
     chips = chip(item.type)+chip(item.ammo, (item.ammo||'').toLowerCase())+maker;
     cnt = `<div class="sig-count g" title="How many times you drew this weapon into your hand — not shots fired (SC doesn't log those)">drawn ${fmt(item.count)}×</div>`+
@@ -7244,7 +7308,8 @@ function showcaseHTML(){
   const scope = current==='all' ? 'career' : ('patch '+current);
   const ships = sc.ships.map((s,i)=>showCard(s,i+1,'ship')).join('') || '<div class="empty">No ships flown in this scope.</div>';
   const guns  = sc.guns.map((g,i)=>showCard(g,i+1,'gun')).join('')  || '<div class="empty">No weapons drawn in this scope.</div>';
-  return `<div class="row-title">Signature ships <span class="tag">· most-flown · ${scope} · art from RSI</span></div>`+
+  const how = (sc.ships[0]||{}).rank==='time' ? 'most time aboard' : 'most-flown';
+  return `<div class="row-title">Signature ships <span class="tag">· ${how} · ${scope} · art from RSI</span></div>`+
     `<div class="showcase">${ships}</div>`+
     `<div class="row-title">Signature guns <span class="tag">· most-drawn · ${scope}</span></div>`+
     `<div class="showcase">${guns}</div>`;
@@ -7507,7 +7572,7 @@ function secFlight(v){
       ])+
       cardHTML('Ship size mix','sessions by hull size','sizeChart')+
       `<div class="grid2" style="margin-top:16px">`+
-      barsCard('Most-flown ships','sessions flown · take-offs · aboard · seat · first / last','shipBars')+
+      barsCard('Most-flown ships', v.ships_rank==='time' ? 'hours aboard · sessions · take-offs · seat · first / last' : 'sessions flown · take-offs · aboard · seat · first / last','shipBars')+
       barsCard('Roles flown','sessions by ship role','roleBars')+`</div>`
     )+
     group(2,'satellite','Travel &amp; navigation','Where you went — quantum travel and the systems you visited',
@@ -7543,9 +7608,11 @@ function secFlight(v){
         `From the HUD notices the game writes to the log, 4.5 onward.`,
         `A jurisdiction is who owns the space: UEE for open Stanton space, the four corporations for their planets, Ungoverned, Rough &amp; Ready and People\u2019s Alliance for Pyro, Klescher for prison. Armistice-zone notices fire at every hangar door, so entries within ten minutes count as one visit. The calibration notice names the pilot, so a jump someone else started is a crew jump. Party time runs from accepting an invite to leaving the group; a party you host leaves no trace.`))
   ;
-  const shipItems=(v.ships_top||[]).map(([n,c,first,last,to,aboard,seat])=>({label:n, full:n, value:c,
-    disp:`${fmt(c)} <span class="vv-u">sess</span>`, href:wikiURL(n),
-    subHtml: shipMetaHTML(to,first,last,aboard,seat)}));
+  const byTime = v.ships_rank==='time';
+  const shipItems=(v.ships_top||[]).map(([n,c,first,last,to,aboard,seat])=>({label:n, full:n,
+    value: byTime ? aboard : c, href:wikiURL(n),
+    disp: byTime ? `${aboard} <span class="vv-u">h</span>` : `${fmt(c)} <span class="vv-u">sess</span>`,
+    subHtml: byTime ? shipMetaHTML(to,first,last,0,seat,c) : shipMetaHTML(to,first,last,aboard,seat)}));
   hbars($('#shipBars'), shipItems);
   // the headline counts ships; the bar measures sessions by hull size (the caption says so)
   const sz=v.ship_size.map(([n,c])=>({label:n,value:c,color:SIZE_COLOR[n]||'#8aa0b8'}));
