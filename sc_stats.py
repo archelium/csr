@@ -1952,10 +1952,10 @@ class LoadScreens:
         self.loads = []            # [dest, secs] per screen, hung ones left out
         self.hung = 0
         self.login_at = None       # first <LoginCompleted>
-        self.startup_at = None     # close of the first main-menu screen
+        self.startup_at = None     # when the first main-menu screen opened
         self.menu_at = None        # when the menu you are sitting on came up
         self.menu_s = 0.0
-        self.load_s = 0.0          # screen seconds outside startup
+        self.load_s = 0.0          # seconds of every screen that was not hung
 
     def feed(self, line, prefix):
         if "Loading screen for " in line:
@@ -1971,15 +1971,14 @@ class LoadScreens:
                 self.menu_at = None
             first_menu = dest == "menu" and self.startup_at is None
             if first_menu:
-                self.startup_at = close           # this screen is part of startup
+                self.startup_at = opened          # startup ends where this screen came up
             if dest == "menu":
                 self.menu_at = close
             if secs > LOAD_HUNG:
                 self.hung += 1
             else:
                 self.loads.append([dest, secs])
-                if not first_menu:
-                    self.load_s += secs
+                self.load_s += secs
         elif self.login_at is None and "<LoginCompleted>" in line:
             self.login_at = parse_dt(prefix)
 
@@ -1991,7 +1990,7 @@ class LoadScreens:
             "loads": self.loads, "loads_hung": self.hung, "load_s": round(self.load_s, 1),
             "login_s": round((self.login_at - first).total_seconds(), 1)
             if self.login_at and first else None,
-            "startup_s": round((self.startup_at - first).total_seconds(), 1)
+            "startup_s": round(max(0.0, (self.startup_at - first).total_seconds()), 1)
             if self.startup_at and first else None,
             "menu_s": round(self.menu_s, 1),
         }
@@ -3261,7 +3260,8 @@ def scan_log(path):
                 if ctx is not None and not saw_crash:
                     ctx.feed(line, p)
                 ship_time.feed(line, p)
-                load_t.feed(line, p)
+                if "Loading screen for " in line or (load_t.login_at is None and "<LoginCompleted>" in line):
+                    load_t.feed(line, p)
                 if air_blk is not None:         # detail lines carry the stamp, then [STAMINA]
                     if line[27:36] == "[STAMINA]":
                         if "Not Wearing Helmet" in line:
@@ -3934,7 +3934,7 @@ def blank_patch():
         # loading screens: [dest, secs] per screen, hung ones counted apart, the longest
         # PU load as [secs, date, dest], launch-to-login secs per session
         "loads": [], "loads_hung": 0, "load_slowest": None, "login_secs": [],
-        # where the hours went: seconds per bucket, over sessions that carry load data
+        # where the hours went: seconds per bucket, "old" holds sessions with no load data
         "split": Counter(),
         # places visited: name -> [system, kind, sessions, first local date]
         "places": {},
@@ -4124,8 +4124,10 @@ def fold(agg, s):
     if s.get("login_s") is not None:
         agg["login_secs"].append(s["login_s"])
     # Sessions archived before loading screens were read have no "loads" key at all, and
-    # their hours can't be split.
-    if "loads" in s and s["dur"] > 0:
+    # their hours can't be split. They go in one bucket of their own.
+    if "loads" not in s:
+        agg["split"]["old"] += max(0, s["dur"])
+    elif s["dur"] > 0:
         head = (s.get("startup_s") or 0) + (s.get("load_s") or 0) + (s.get("menu_s") or 0)
         agg["split"]["startup"] += s.get("startup_s") or 0
         agg["split"]["loading"] += s.get("load_s") or 0
@@ -4452,7 +4454,8 @@ def _air_summary(agg):
     eps = agg["air_eps"]
     if not eps:
         return None
-    return {"n": len(eps), "secs": round(sum(eps)), "longest": agg["air_longest"],
+    return {"n": len(eps), "secs": round(sum(eps)), "median": round(_median(eps), 1),
+            "longest": agg["air_longest"],
             "nohelm": agg["air_nohelm"], "sessions": agg["air_sessions"]}
 
 
@@ -4461,7 +4464,7 @@ def _hours_split(agg):
     if not agg["sessions"]:
         return None
     out = {k: round(agg["split"].get(k, 0)) for k in
-           ("startup", "loading", "menu", "aboard", "foot", "unsplit")}
+           ("startup", "loading", "menu", "aboard", "foot", "unsplit", "old")}
     out["total"] = sum(out.values())
     return out
 
@@ -7991,7 +7994,7 @@ function placesHTML(v){
   const out=(k.Outpost||0)+(k.Facility||0), st=(k.Station||0)+(k['Rest stop']||0);
   return kpiRow([
       [icon('planet'), fmt(p.n), 'Places visited', 'distinct places'],
-      [icon('hall'), esc(p.home), 'Home base', `${fmt(p.rows[0][3])} sessions`],
+      [icon('hall'), esc(p.home), 'Home base', `${fmt(p.rows[0][3])} ${p.rows[0][3]===1?'session':'sessions'}`],
       [icon('cargo'), fmt(out), 'Outposts & facilities', `${fmt(k.Outpost||0)} outposts · ${fmt(k.Facility||0)} facilities`],
       [icon('space'), fmt(st), 'Stations & rest stops', `${fmt(k.Station||0)} stations · ${fmt(k['Rest stop']||0)} rest stops`],
     ])+
@@ -8072,11 +8075,11 @@ function secFlight(v){
 function airHTML(v){
   const a=v.air;
   if(!a) return '';
-  return `<div class="card"><h3>Out of air</h3>`+kpiRow([
-      [icon('warning'), fmt(a.n), 'Episodes', `in ${fmt(a.sessions)} ${a.sessions===1?'session':'sessions'}`],
-      [icon('time'), loadSecs(a.secs), 'Time without air', 'all episodes together'],
+  return `<div style="margin-top:16px">`+kpiRow([
+      [icon('warning'), fmt(a.n), 'Out of air episodes', `in ${fmt(a.sessions)} ${a.sessions===1?'session':'sessions'}`],
+      [icon('time'), loadSecs(a.secs), 'Time without air', `median ${loadSecs(a.median)}`],
       [icon('pulse'), loadSecs(a.longest[0]), 'Longest', a.longest[1]?ddmm(a.longest[1]):'—'],
-      [icon('deaths'), fmt(a.nohelm), 'Helmet off', 'no helmet when it started'],
+      [icon('deaths'), fmt(a.nohelm), 'Helmet off', 'no helmet'],
     ])+noteFold(`Episodes under 2 s are left out.`)+`</div>`;
 }
 function secCombat(v){
@@ -8581,7 +8584,7 @@ function secMissions(v){
 // Where the logged hours went. Buckets come from finalize() as seconds; zero ones drop out.
 const HOURS_PARTS=[['startup','Starting up','#8b9bb4'],['loading','Loading screens','#ff9147'],
   ['menu','Main menu','#b98bff'],['aboard','Aboard a ship','#42d0e6'],['foot','On foot','#6fbf7f'],
-  ['unsplit','In game (before Dec 2025)','#f4a92a']];
+  ['unsplit','In game (before Dec 2025)','#f4a92a'],['old','Not split (log deleted)','#5f6b7d']];
 function hoursCard(v){
   const h=v.hours_split;
   if(!h || !h.total) return '';
@@ -9368,6 +9371,7 @@ function serversHTML(v){
 }
 // Loading screens: the game logs how long each one stayed up. PU = Stanton, Pyro, Nyx.
 const loadSecs=x=>x===null||x===undefined ? '—'
+  : x>=3600 ? Math.floor(x/3600)+'h '+String(Math.floor(x%3600/60)).padStart(2,'0')+'m'
   : (x>=60 ? Math.floor(x/60)+'m '+String(Math.round(x%60)).padStart(2,'0')+'s' : Math.round(x)+'s');
 function loadingHTML(v){
   const l=v.loading;

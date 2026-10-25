@@ -52,6 +52,9 @@ class ScanLogTests(unittest.TestCase):
         self.assertIsNone(scan(pair("10:10:00.000", "10:10:01.900"))["air"])
         self.assertIsNone(scan(pair("10:10:00.235", "10:10:00.247"))["air"])
 
+    def test_pair_of_exactly_two_seconds_is_kept(self):
+        self.assertEqual(scan(pair("10:10:00.000", "10:10:02.000"))["air"], {"eps": [2.0], "nohelm": 1})
+
     def test_ten_second_pair_is_kept_and_helmet_off_counted(self):
         air = scan(pair("10:10:00.000", "10:10:10.000"))["air"]
         self.assertEqual(air, {"eps": [10.0], "nohelm": 1})
@@ -111,7 +114,7 @@ class AggregateTests(unittest.TestCase):
             _session("2026-03-02", {"eps": [40.0], "nohelm": 0}),
             _session("2026-03-03", None),
         ])["air"]
-        self.assertEqual(v, {"n": 3, "secs": 56, "longest": [40.0, "2026-03-02"],
+        self.assertEqual(v, {"n": 3, "secs": 56, "median": 12.5, "longest": [40.0, "2026-03-02"],
                              "nohelm": 1, "sessions": 2})
 
     def test_sessions_archived_before_the_metric_are_ignored(self):

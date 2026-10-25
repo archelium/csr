@@ -46,11 +46,22 @@ class ScanLogTests(unittest.TestCase):
                                       ["Stanton", 60.0], ["menu", 2.0]])
         self.assertEqual(s["loads_hung"], 1)
         self.assertEqual(s["login_s"], 20.0)
-        self.assertEqual(s["startup_s"], 30.0)
+        self.assertEqual(s["startup_s"], 27.5)            # up to where the first menu screen opened
         # 10:00:30 to 10:01:20, 10:30:00 to 10:31:00, 10:55:00 to 11:00:00
         self.assertEqual(s["menu_s"], 50 + 60 + 300)
-        # every screen but the first menu one, which is inside startup
-        self.assertEqual(s["load_s"], 105.0)
+        # every screen that was not hung, the first menu one included
+        self.assertEqual(s["load_s"], 2.5 + 40.0 + 3.0 + 60.0 + 2.0)
+        self.assertEqual(s["load_s"], sum(secs for _d, secs in s["loads"]))
+
+    def test_hung_first_menu_screen_stays_out_of_startup_and_loading(self):
+        s = scan(line("10:00:00", "Log started")
+                 + screen("13:00:00", "Frontend_Main", 10000.0)    # opened 10:13:20, hung
+                 + screen("13:01:00", "pu", 40.0)
+                 + line("13:05:00", "end"))
+        self.assertEqual(s["loads"], [["Stanton", 40.0]])
+        self.assertEqual(s["loads_hung"], 1)
+        self.assertEqual(s["startup_s"], 800.0)                    # ends where the hung screen opened
+        self.assertEqual(s["load_s"], 40.0)
 
     def test_destinations_are_normalised(self):
         s = scan(line("10:00:00", "Log started")
@@ -114,14 +125,17 @@ class AggregateTests(unittest.TestCase):
         self.assertEqual(v["aboard"], 1200)
         self.assertEqual(v["foot"], 3600 - 30 - 103 - 400 - 1200)
         self.assertEqual(v["unsplit"], 1800 - 20 - 130 - 100)
+        self.assertEqual(v["old"], 0)
         self.assertEqual(v["total"], 3600 + 1800)
 
-    def test_sessions_without_load_data_stay_out_of_the_hours(self):
+    def test_sessions_without_load_data_go_in_their_own_bucket(self):
         a, b = self.two_sessions()
         old = {k: v for k, v in b.items() if k not in ("loads", "loads_hung", "login_s",
                                                        "startup_s", "menu_s", "load_s")}
         v = self.finalize([a, old])
-        self.assertEqual(v["hours_split"]["total"], 3600)
+        self.assertEqual(v["hours_split"]["old"], 1800)
+        self.assertEqual(v["hours_split"]["total"], 3600 + 1800)
+        self.assertEqual(v["hours_split"]["loading"], 103)         # the old session adds none
         self.assertEqual(v["loading"]["n"], 2)
 
     def test_scope_with_no_loads(self):
