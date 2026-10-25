@@ -2971,8 +2971,7 @@ def _place_table():
             ("StantonMagnus", "Magnus Gateway (Stanton)", "Stanton"),
             ("PyroStanton", "Stanton Gateway (Pyro)", "Pyro"),
             ("PyroNyx", "Nyx Gateway (Pyro)", "Pyro"),
-            ("NyxPyro", "Pyro Gateway (Nyx)", "Nyx"),
-            ("NyxCastra", "Stanton Gateway (Nyx)", "Nyx")):
+            ("NyxPyro", "Pyro Gateway (Nyx)", "Nyx")):
         t["RR_JP_" + code] = (name, system, "Jump point")
     for code, name, system, kind in (
             ("Stanton1_Lorville", "Lorville", "Stanton", "City"),

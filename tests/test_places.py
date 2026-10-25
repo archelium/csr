@@ -45,6 +45,10 @@ class PlaceNameTests(unittest.TestCase):
         self.assertEqual(sc_stats.place_name("RR_JP_StantonPyro"),
                          ("Pyro Gateway (Stanton)", "Stanton", "Jump point"))
 
+    def test_unconfirmed_jump_point_station_keeps_the_mechanical_label(self):
+        self.assertEqual(sc_stats.place_name("RR_JP_NyxCastra"),
+                         ("Castra jump point (Nyx)", "Nyx", "Jump point"))
+
     def test_mechanical_label_when_no_name_is_confirmed(self):
         self.assertEqual(sc_stats.place_name("RR_P2_L2"), ("Pyro II L2 rest stop", "Pyro", "Rest stop"))
         self.assertEqual(sc_stats.place_name("RR_CRU_L3"), ("Crusader L3 rest stop", "Stanton", "Rest stop"))
