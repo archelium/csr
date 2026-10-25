@@ -3096,6 +3096,41 @@ def place_name(code):
     return name, _place_system(code), kind
 
 
+# ---- out of air: [STAMINA] suffocation / depressurization notices ----
+# The game writes a start and a stop notice per kind, followed by a detail block of
+# [STAMINA] lines (no [Notice] tag) that says whether a helmet was on. On real logs the two
+# kinds start within a second of each other 97% of the time, so the pairs are merged into
+# one out-of-air episode per overlapping stretch.
+AIR_RE = re.compile(r"\[STAMINA\] Player (started|stopped) (suffocating|depressurization)> Player\[([^\]]+)\]")
+AIR_MIN = 2.0              # shorter episodes are airlock and room-transition blips
+
+
+def _stamp_dt(line):
+    """The full-precision stamp of a log line (UTC, milliseconds), or None."""
+    try:
+        return datetime.strptime(line[1:24], "%Y-%m-%dT%H:%M:%S.%f")
+    except ValueError:
+        return None
+
+
+def air_episodes(spans, me):
+    """Merge the (player, start, end, helmet off?) spans of `me` into out-of-air episodes.
+    Returns {"eps": [secs, ...], "nohelm": n}, or None when no episode reaches AIR_MIN."""
+    mine = sorted((s, e, nh) for a, s, e, nh in spans if not me or a.lower() == me)
+    merged = []
+    for s, e, nh in mine:
+        if merged and s <= merged[-1][1]:
+            merged[-1][1] = max(merged[-1][1], e)
+            merged[-1][2] = merged[-1][2] or nh
+        else:
+            merged.append([s, e, nh])
+    eps = [(e - s).total_seconds() for s, e, _nh in merged if (e - s).total_seconds() >= AIR_MIN]
+    if not eps:
+        return None
+    return {"eps": [round(x, 1) for x in eps],
+            "nohelm": sum(1 for s, e, nh in merged if nh and (e - s).total_seconds() >= AIR_MIN)}
+
+
 def scan_log(path):
     """Extract one session's stats from a single Game.log file."""
     try:
@@ -3118,6 +3153,9 @@ def scan_log(path):
     injuries = Counter()               # "Severity|Part|Tier" -> notices
     medbed = []                        # (actor, in a ship?, [parts]) per surgery
     places = []                        # (player, location code) per inventory request
+    air_open = {}                      # (kind, player) -> [start, helmet off?] while a notice is open
+    air_blk = None                     # the open record whose [STAMINA] detail block is being read
+    air_spans = []                     # (player, start, end, helmet off?) per closed pair
     crew_jumps = Counter()             # pilot -> jumps under their hands
     party_open = None                  # when the current party invite was accepted
     party_acc = 0                      # invites accepted
@@ -3224,6 +3262,22 @@ def scan_log(path):
                     ctx.feed(line, p)
                 ship_time.feed(line, p)
                 load_t.feed(line, p)
+                if air_blk is not None:         # detail lines carry the stamp, then [STAMINA]
+                    if line[27:36] == "[STAMINA]":
+                        if "Not Wearing Helmet" in line:
+                            air_blk[1] = True
+                    else:
+                        air_blk = None
+                if "[STAMINA] Player " in line:
+                    m = AIR_RE.search(line)
+                    at = _stamp_dt(line) if m else None
+                    if at:
+                        key = (m.group(2), m.group(3))
+                        if m.group(1) == "started":
+                            air_open[key] = air_blk = [at, False]
+                        elif key in air_open:
+                            rec = air_open.pop(key)
+                            air_spans.append((m.group(3), rec[0], at, rec[1]))
                 # --- startup rig banner: cheap, and switched off once we're past it ---
                 if _in_hdr:
                     if "Host CPU:" in line:
@@ -3736,6 +3790,7 @@ def scan_log(path):
     medbed_n = sum(1 for a, _ship, _p in medbed if not _me or a.lower() == _me)
     medbed_ship = sum(1 for a, ship, _p in medbed if ship and (not _me or a.lower() == _me))
     places_seen = sorted({c for a, c in places if not _me or a.lower() == _me})
+    air = air_episodes(air_spans, _me)
     medbed_parts = Counter()
     for a, _ship, parts in medbed:
         if not _me or a.lower() == _me:
@@ -3776,7 +3831,7 @@ def scan_log(path):
         "contracts_failed": dict(contracts_failed),
         "injuries": dict(injuries), "medbed_n": medbed_n, "medbed_ship": medbed_ship,
         "medbed_parts": dict(medbed_parts), "crew_jumps": dict(crew_jumps),
-        "places": places_seen,
+        "places": places_seen, "air": air,
         "party_acc": party_acc, "party_secs": round(party_secs), "crimestat": crimestat,
         "haul_scu": haul_scu, "haul_runs": haul_runs, "haul_lost": haul_lost, "haul_max": haul_max,
         "haul_com": dict(haul_com), "haul_dest": dict(haul_dest),
@@ -3883,6 +3938,8 @@ def blank_patch():
         "split": Counter(),
         # places visited: name -> [system, kind, sessions, first local date]
         "places": {},
+        # out of air: episode seconds, those without a helmet, sessions with one, longest
+        "air_eps": [], "air_nohelm": 0, "air_sessions": 0, "air_longest": None,
     }
 
 
@@ -4049,6 +4106,14 @@ def fold(agg, s):
         row[2] += 1
         if _d and (not row[3] or _d < row[3]):
             row[3] = _d
+    _air = s.get("air")
+    if _air:
+        agg["air_eps"].extend(_air["eps"])
+        agg["air_nohelm"] += _air["nohelm"]
+        agg["air_sessions"] += 1
+        _top = max(_air["eps"])
+        if agg["air_longest"] is None or _top > agg["air_longest"][0]:
+            agg["air_longest"] = [_top, _d]
     _ld = s.get("loads") or []
     agg["loads"].extend(_ld)
     agg["loads_hung"] += s.get("loads_hung", 0)
@@ -4382,6 +4447,15 @@ def _places_summary(agg):
             "by_kind": [[k, n] for k, n in sorted(kinds.items(), key=lambda kv: (-kv[1], kv[0]))]}
 
 
+def _air_summary(agg):
+    """Out-of-air episodes, None when there are none in this scope."""
+    eps = agg["air_eps"]
+    if not eps:
+        return None
+    return {"n": len(eps), "secs": round(sum(eps)), "longest": agg["air_longest"],
+            "nohelm": agg["air_nohelm"], "sessions": agg["air_sessions"]}
+
+
 def _hours_split(agg):
     """Seconds per bucket: where the logged hours went. None for an empty scope."""
     if not agg["sessions"]:
@@ -4672,6 +4746,7 @@ def finalize(agg):
         "loading": _loading_summary(agg),
         "hours_split": _hours_split(agg),
         "places": _places_summary(agg),
+        "air": _air_summary(agg),
         "gear_lost": _gear_lost_summary(agg),
         "gun_meta": gun_meta,
         "legacy": legacy,
@@ -7993,6 +8068,17 @@ function secFlight(v){
     if(rows.length) hbars(cw, rows); else cw.innerHTML='<div class="empty">Every jump here was your own.</div>'; }
 }
 
+// Out of air: suffocation and depressurization notices, merged into one episode per stretch.
+function airHTML(v){
+  const a=v.air;
+  if(!a) return '';
+  return `<div class="card"><h3>Out of air</h3>`+kpiRow([
+      [icon('warning'), fmt(a.n), 'Episodes', `in ${fmt(a.sessions)} ${a.sessions===1?'session':'sessions'}`],
+      [icon('time'), loadSecs(a.secs), 'Time without air', 'all episodes together'],
+      [icon('pulse'), loadSecs(a.longest[0]), 'Longest', a.longest[1]?ddmm(a.longest[1]):'—'],
+      [icon('deaths'), fmt(a.nohelm), 'Helmet off', 'no helmet when it started'],
+    ])+noteFold(`Episodes under 2 s are left out.`)+`</div>`;
+}
 function secCombat(v){
   const dc=v.death_causes;
   const guns=v.weapons_top.filter(w=>!w[2]), tools=v.weapons_top.filter(w=>w[2]);
@@ -8036,7 +8122,8 @@ function secCombat(v){
       ])+`<div class="grid2">`+
       barsCard('Where it hurt','injury warnings by body part','injBars')+
       barsCard('What the bed fixed','body parts treated','medBars')+`</div>`
-      : `<div class="card"><div class="empty">No injuries or treatments in this scope. Injury warnings are in the log from 4.4; med-bed surgeries from every patch.</div></div>`)
+      : `<div class="card"><div class="empty">No injuries or treatments in this scope. Injury warnings are in the log from 4.4; med-bed surgeries from every patch.</div></div>`)+
+      airHTML(v)
     )+
     group(5,'cargo','Looting &amp; inventory','What you hauled — client-side events, so this spans every patch',
       kpiRow([
