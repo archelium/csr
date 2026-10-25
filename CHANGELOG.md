@@ -5,7 +5,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and CSR
 uses [Semantic Versioning](https://semver.org/) (MAJOR.MINOR.PATCH).
 
 
-## [Unreleased]
+## [1.7.0] — 2026-10-25
 
 ### Added
 - **Ship time** (Flight). Hours aboard each ship and hours in its pilot seat, on the
