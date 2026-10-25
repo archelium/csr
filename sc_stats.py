@@ -29,6 +29,7 @@ import argparse
 import glob
 import html
 import json
+import math
 import os
 import re
 import sys
@@ -49,7 +50,7 @@ CSR_CONTACT = "support@archelium.com"      # publisher/contact (archelium.com)
 # Bump whenever scan_log() learns to extract something new or fixes an extraction bug.
 # A quick refresh reuses archived sessions only when they were parsed by THIS version,
 # so improved parsing always re-reads old logs instead of silently keeping stale numbers.
-PARSER_VERSION = 23
+PARSER_VERSION = 24
 
 
 # --------------------------------------------------------------------------- #
@@ -1927,6 +1928,75 @@ class ShipTime:
                          if round(_union_secs(v)) > 0}}
 
 
+# Loading screens. The game writes one line when each screen closes, with how long it
+# stayed up: "Loading screen for pu : SC_Frontend closed after 36.19 seconds". The
+# screen opened that many seconds before its stamp. Every log has them. `Frontend_Main`
+# is the main menu; `pu` is Stanton, the other systems carry their own name and the
+# Arena Commander / Star Marine maps are `EA_<map>_<mode>`.
+LOADING_RE = re.compile(r"Loading screen for (\S+) : \S+ closed after ([\d.]+) seconds")
+LOAD_DEST = {"pu": "Stanton", "Frontend_Main": "menu"}
+LOAD_HUNG = 900                # a screen up for 15 min is a hang, kept out of every number
+PU_DESTS = ("Stanton", "Pyro", "Nyx")
+
+
+def load_dest(raw):
+    if raw.startswith("EA_"):
+        return "Arena Commander"
+    return LOAD_DEST.get(raw, raw)
+
+
+class LoadScreens:
+    """Loading-screen times, launch to login, and time on the main menu for one log."""
+
+    def __init__(self):
+        self.loads = []            # [dest, secs] per screen, hung ones left out
+        self.hung = 0
+        self.login_at = None       # first <LoginCompleted>
+        self.startup_at = None     # close of the first main-menu screen
+        self.menu_at = None        # when the menu you are sitting on came up
+        self.menu_s = 0.0
+        self.load_s = 0.0          # screen seconds outside startup
+
+    def feed(self, line, prefix):
+        if "Loading screen for " in line:
+            m = LOADING_RE.search(line)
+            close = parse_dt(prefix) if m else None
+            if close is None:
+                return
+            secs = float(m.group(2))
+            dest = load_dest(m.group(1))
+            opened = close - timedelta(seconds=secs)
+            if self.menu_at is not None:
+                self.menu_s += max(0.0, (opened - self.menu_at).total_seconds())
+                self.menu_at = None
+            first_menu = dest == "menu" and self.startup_at is None
+            if first_menu:
+                self.startup_at = close           # this screen is part of startup
+            if dest == "menu":
+                self.menu_at = close
+            if secs > LOAD_HUNG:
+                self.hung += 1
+            else:
+                self.loads.append([dest, secs])
+                if not first_menu:
+                    self.load_s += secs
+        elif self.login_at is None and "<LoginCompleted>" in line:
+            self.login_at = parse_dt(prefix)
+
+    def result(self, first, last):
+        """`first` / `last` are the log's first and last stamps (UTC datetimes)."""
+        if self.menu_at is not None and last:
+            self.menu_s += max(0.0, (last - self.menu_at).total_seconds())
+        return {
+            "loads": self.loads, "loads_hung": self.hung, "load_s": round(self.load_s, 1),
+            "login_s": round((self.login_at - first).total_seconds(), 1)
+            if self.login_at and first else None,
+            "startup_s": round((self.startup_at - first).total_seconds(), 1)
+            if self.startup_at and first else None,
+            "menu_s": round(self.menu_s, 1),
+        }
+
+
 def _mk_combat():
     """Empty per-venue combat tally (used for both PU and Arena Commander)."""
     return {"lc": Counter(), "wpn_ship": Counter(), "wpn_fps": Counter(),
@@ -2949,6 +3019,7 @@ def scan_log(path):
         pass
     ctx = CrashContext() if crash_tail else None   # phase / place / ship / errors
     ship_time = ShipTime()             # time aboard each ship and in its pilot seat
+    load_t = LoadScreens()             # loading screens, launch to login, time on the menu
     boots = []                         # dropped back to the main menu, mid-session
     boot_pending = None                # a drop awaiting its front-end confirmation
     softs = []                         # lost the player entity ("soft crash"), by episode
@@ -2980,6 +3051,7 @@ def scan_log(path):
                 if ctx is not None and not saw_crash:
                     ctx.feed(line, p)
                 ship_time.feed(line, p)
+                load_t.feed(line, p)
                 # --- startup rig banner: cheap, and switched off once we're past it ---
                 if _in_hdr:
                     if "Host CPU:" in line:
@@ -3381,6 +3453,7 @@ def scan_log(path):
     if handle is None:                 # no normal login line — use the fallback
         handle = handle_fb
     ship_t = ship_time.result(parse_dt(last), handle)
+    load_res = load_t.result(parse_dt(first), parse_dt(last))
 
     # Did the game render on the best card it could see? Storing just the verdict
     # (rather than the whole adapter list, on every session, forever) keeps the
@@ -3513,6 +3586,7 @@ def scan_log(path):
     return {
         "patch": patch, "build": build, "start": dt0, "dur": dur,
         "ships": ships, "ship_events": ship_events, "missions": missions, "weapons": weapons,
+        **load_res,
         "aboard": ship_t["aboard"], "aboard_secs": ship_t["aboard_secs"],
         "crew_secs": ship_t["crew_secs"], "seat": ship_t["seat"],
         "reloads": reloads, "repools": repools, "carried": carried,
@@ -3624,6 +3698,11 @@ def blank_patch():
         "region_last": None, "region_last_at": None,
         # gear lost on death: items per death, and what they were
         "gl_sizes": [], "gl_cls": Counter(),
+        # loading screens: [dest, secs] per screen, hung ones counted apart, the longest
+        # PU load as [secs, date, dest], launch-to-login secs per session
+        "loads": [], "loads_hung": 0, "load_slowest": None, "login_secs": [],
+        # where the hours went: seconds per bucket, over sessions that carry load data
+        "split": Counter(),
     }
 
 
@@ -3781,6 +3860,28 @@ def fold(agg, s):
     if _gl:
         agg["gl_sizes"].extend(_gl.get("sizes") or [])
         agg["gl_cls"].update(_gl.get("cls") or {})
+    _ld = s.get("loads") or []
+    agg["loads"].extend(_ld)
+    agg["loads_hung"] += s.get("loads_hung", 0)
+    for dest, secs in _ld:
+        slow = agg["load_slowest"]
+        if dest in PU_DESTS and (slow is None or secs > slow[0]):
+            agg["load_slowest"] = [secs, _d, dest]
+    if s.get("login_s") is not None:
+        agg["login_secs"].append(s["login_s"])
+    # Sessions archived before loading screens were read have no "loads" key at all, and
+    # their hours can't be split.
+    if "loads" in s and s["dur"] > 0:
+        head = (s.get("startup_s") or 0) + (s.get("load_s") or 0) + (s.get("menu_s") or 0)
+        agg["split"]["startup"] += s.get("startup_s") or 0
+        agg["split"]["loading"] += s.get("load_s") or 0
+        agg["split"]["menu"] += s.get("menu_s") or 0
+        if has_crew_channel(s.get("patch"), s.get("build")):
+            aboard = s.get("aboard_secs") or 0
+            agg["split"]["aboard"] += aboard
+            agg["split"]["foot"] += max(0, s["dur"] - head - aboard)
+        else:
+            agg["split"]["unsplit"] += max(0, s["dur"] - head)
     for sys_ in s["systems"]:
         agg["systems"][sys_] += 1
     dt = s["start"]
@@ -4046,6 +4147,49 @@ def _server_summary(agg):
         "regions": [[k, n, sess[k]] for k, n in joins.most_common()],
         "last": region_label(agg["region_last"]) if agg["region_last"] else None,
     }
+
+
+def _median(vals):
+    v = sorted(vals)
+    n = len(v)
+    return v[n // 2] if n % 2 else (v[n // 2 - 1] + v[n // 2]) / 2
+
+
+def _loading_summary(agg):
+    """Loading-screen times: the PU loads (Stanton, Pyro, Nyx) as the headline, every
+    destination for the split, plus launch to login. None when no screen was logged."""
+    loads = agg["loads"]
+    if not loads:
+        return None
+    pu = sorted(secs for dest, secs in loads if dest in PU_DESTS)
+    by = defaultdict(list)
+    for dest, secs in loads:
+        by[dest].append(secs)
+    by_dest = [[d, len(by[d]), round(_median(by[d]), 1)]
+               for d in (*PU_DESTS, "Arena Commander") if d in by]
+    by_dest.sort(key=lambda r: -r[1])
+    slow = agg["load_slowest"]
+    return {
+        "n": len(pu),
+        "median": round(_median(pu), 1) if pu else None,
+        "p90": round(pu[math.ceil(0.9 * len(pu)) - 1], 1) if pu else None,
+        "slowest": [round(slow[0], 1), slow[1], slow[2]] if slow else None,
+        "total_s": round(sum(secs for _d, secs in loads)),
+        "by_dest": by_dest,
+        "login_med": round(_median(agg["login_secs"]), 1) if agg["login_secs"] else None,
+        "login_n": len(agg["login_secs"]),
+        "hung": agg["loads_hung"],
+    }
+
+
+def _hours_split(agg):
+    """Seconds per bucket: where the logged hours went. None for an empty scope."""
+    if not agg["sessions"]:
+        return None
+    out = {k: round(agg["split"].get(k, 0)) for k in
+           ("startup", "loading", "menu", "aboard", "foot", "unsplit")}
+    out["total"] = sum(out.values())
+    return out
 
 
 def _gear_category(cls):
@@ -4325,6 +4469,8 @@ def finalize(agg):
         "boots": boot_sum,
         "soft": soft_sum,
         "servers": _server_summary(agg),
+        "loading": _loading_summary(agg),
+        "hours_split": _hours_split(agg),
         "gear_lost": _gear_lost_summary(agg),
         "gun_meta": gun_meta,
         "legacy": legacy,
@@ -7391,7 +7537,7 @@ function hbars(el, items, opts={}){
     const pct=Math.max(2, 100*d.value/max);
     const nm = d.href ? link(d.href, esc(d.label), 'lk') : esc(d.label);
     const sub = d.subHtml ? `<div class="bsub">${d.subHtml}</div>` : (d.sub ? `<div class="bsub">${esc(d.sub)}</div>` : '');
-    return `<div class="bar-row ${d.tool?'tool':''}">`+
+    return `<div class="bar-row ${d.tool?'tool':''}"${d.title?` title="${esc(d.title)}"`:''}>`+
       `<div class="bar-head"><div class="nm"><span class="rk">${i+1}</span>${nm}</div>`+
       `<div class="vv">${d.disp!==undefined?d.disp:d.value}</div></div>`+sub+
       `<div class="bar-track"><div class="bar-fill" style="width:${pct}%"></div></div></div>`;
@@ -8125,6 +8271,23 @@ function secMissions(v){
 }
 
 
+// Where the logged hours went. Buckets come from finalize() as seconds; zero ones drop out.
+const HOURS_PARTS=[['startup','Starting up','#8b9bb4'],['loading','Loading screens','#ff9147'],
+  ['menu','Main menu','#b98bff'],['aboard','Aboard a ship','#42d0e6'],['foot','On foot','#6fbf7f'],
+  ['unsplit','In game (before Dec 2025)','#f4a92a']];
+function hoursCard(v){
+  const h=v.hours_split;
+  if(!h || !h.total) return '';
+  return `<div class="card" style="margin-top:16px"><h3>Where your hours go <span class="u">— hours by activity</span></h3>`+
+    `<div id="hoursChart"></div>`+
+    (h.unsplit>0 ? `<div class="bsub">Aboard time is logged from Dec 2025.</div>` : '')+`</div>`;
+}
+function hoursChart(v){
+  const el=$('#hoursChart'), h=v.hours_split;
+  if(!el || !h) return;
+  splitbar(el, HOURS_PARTS.map(([k,label,color])=>({label, value:Math.round(h[k]/360)/10, color})),
+    {big:fmt(Math.round(h.total/3600)), small:'hours logged'});
+}
 function secActivity(v){
   const K=kpiRow([
     [icon('calendar'), v.active_days, 'Active days', `days you logged in`],
@@ -8134,6 +8297,7 @@ function secActivity(v){
   ]);
   $('#content').innerHTML=metaLine(v)+K+
     cardHTML('Playtime by month','hours per calendar month','monthChart')+
+    hoursCard(v)+
     `<div style="margin-top:16px">`+cardHTML('When you play','sessions started · weekday × hour','heatChart')+`</div>`+
     `<div class="grid3" style="margin-top:16px">`+
     cardHTML('By hour','play start time','hourChart')+
@@ -8143,6 +8307,7 @@ function secActivity(v){
   const mitems=ms.map(m=>{const [y,mm]=m.split('-');return {label:MON[+mm-1]+" '"+y.slice(2), value:+(v.months[m]/3600).toFixed(1), disp:(v.months[m]/3600).toFixed(0)+' h', full:m, color:'#3fd0e6'};});
   if(mitems.length) vbars($('#monthChart'), mitems, {h:230, w:Math.max(560,mitems.length*54), rot:true, fmtY:x=>x+'h'});
   else $('#monthChart').innerHTML='<div class="empty">No month data.</div>';
+  hoursChart(v);
   heatmap($('#heatChart'), v.weekhour);
   vbars($('#hourChart'), v.by_hour.map((c,i)=>({label:(i%3===0?String(i):''), value:c, full:i+':00', disp:c+' sessions', color:'#b98bff'})), {h:210, maxbw:16});
   vbars($('#dowChart'), v.by_dow.map((c,i)=>({label:DOW[i], value:c, full:DOW[i], disp:c+' sessions', color:'#f4a92a'})), {h:210});
@@ -8894,6 +9059,28 @@ function serversHTML(v){
       : '<div class="card"><div class="empty">Only one patch in this scope.</div></div>')+
     `</div>`;
 }
+// Loading screens: the game logs how long each one stayed up. PU = Stanton, Pyro, Nyx.
+const loadSecs=x=>x===null||x===undefined ? '—'
+  : (x>=60 ? Math.floor(x/60)+'m '+String(Math.round(x%60)).padStart(2,'0')+'s' : Math.round(x)+'s');
+function loadingHTML(v){
+  const l=v.loading;
+  if(!l) return `<div class="card"><div class="empty">No loading screens in this scope.</div></div>`;
+  const sl=l.slowest;
+  return kpiRow([
+      [icon('time'), loadSecs(l.median), 'Median PU load', l.n ? `p90 ${loadSecs(l.p90)} · ${fmt(l.n)} loads` : 'no PU loads here'],
+      [icon('warning'), sl?loadSecs(sl[0]):'—', 'Slowest PU load', sl?`${sl[1]?ddmm(sl[1])+' · ':''}${esc(sl[2])}`:'no PU loads here'],
+      [icon('pulse'), (l.total_s/3600).toFixed(1)+'h', 'On loading screens', 'every destination, menu included'],
+      [icon('system'), loadSecs(l.login_med), 'Launch to login', l.login_n ? `median of ${fmt(l.login_n)} launches` : 'no login logged'],
+    ])+
+    callout(icon('time'),
+      `The game logs how long each loading screen stayed up. Hung screens over 15 min are left out`+
+      (l.hung ? `, ${fmt(l.hung)} here` : '')+`.`)+
+    `<div class="grid2">`+
+    barsCard('Median load by destination','seconds','loadByDest')+
+    ((A().order||[]).length>1 ? barsCard('Median PU load by patch','seconds','loadByPatch')
+      : '<div class="card"><div class="empty">Only one patch in this scope.</div></div>')+
+    `</div>`;
+}
 // One renderer, two tabs: `STAB` picks which half of System & Stability to draw.
 function secStability(v){ return secSystem(v, true); }
 function secSystem(v, STAB){
@@ -9036,7 +9223,9 @@ function secSystem(v, STAB){
       `<div style="margin-top:16px">`+settingsAdvice(v)+`</div>`)+
     group(3,'pulse','Performance','Frame rate the game recorded for itself',
       fpsHTML(v) || `<div class="card"><div class="empty">No frame-rate statistics in this scope.</div></div>`)+
-    group(4,'system','Hardware score','Star Citizen’s own benchmark — comparable between machines',
+    group(4,'time','Loading screens','How long each screen stayed up, and the launch before it',
+      loadingHTML(v))+
+    group(5,'system','Hardware score','Star Citizen’s own benchmark — comparable between machines',
       benchKpis+benchNote+
       (pi&&hasPatchTrend?`<div style="margin-top:16px">`+
         barsCard('Score per patch','differences this small are noise','gpuByPatch')+`</div>`:'')+
@@ -9134,6 +9323,21 @@ function secSystem(v, STAB){
       else vbars(hb, series.map(s=>({...s, full:`${s.full} — ${s.disp} of ${fmt(s.n)} sessions`,
           color:s.value>=40?'#ff9147':'var(--cyan)'})),
         {h:230, w:Math.max(460, series.length*70), maxbw:48, fmtY:x=>Math.round(x)+'%'});
+    }
+  }
+  if(!STAB && v.loading){
+    const bd=$('#loadByDest');
+    if(bd) hbars(bd, v.loading.by_dest.map(([k,n,med])=>({label:k, value:med, disp:loadSecs(med),
+      title:`${fmt(n)} load${n===1?'':'s'}`})));
+    const lp=$('#loadByPatch');
+    if(lp){
+      const series=patchSeries(p=>{
+        const q=p.loading; if(!q || q.n<MIN_RATE) return null;
+        return {value:q.median, disp:loadSecs(q.median), n:q.n};
+      });
+      if(!series.length) lp.innerHTML='<div class="empty">Not enough loads per patch yet.</div>';
+      else vbars(lp, series.map(s=>({...s, full:`${s.full} — ${fmt(s.n)} loads`, color:'var(--cyan)'})),
+        {h:230, w:Math.max(460, series.length*70), maxbw:48, fmtY:x=>Math.round(x)+'s'});
     }
   }
   const sx=$('#shareTxt');
