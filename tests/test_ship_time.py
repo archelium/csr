@@ -392,6 +392,13 @@ class MatchDisplayTests(unittest.TestCase):
         self.assertIsNone(self.name("Totally Made Up Ship"))
         self.assertIsNone(self.name("Drake Command Module"))
 
+    def test_military_and_stealth_suffixes_keep_the_base_hull(self):
+        self.assertEqual(self.ix.display("MRAI_Guardian_Military")[0], "Guardian")
+        self.assertEqual(self.ix.display("RSI_Constellation_Taurus_Military")[0], "Constellation Mk IV Taurus")
+        self.assertEqual(self.ix.display("RSI_Scorpius_Stealth")[0], "Scorpius")
+        self.assertEqual(self.ix.display("MRAI_Guardian_QI_Collector_Indust")[0], "Guardian QI")
+        self.assertEqual(self.ix.display("MRAI_Guardian_MX_Collector_Military")[0], "Guardian MX")
+
     def test_wikelo_f7_is_a_super_hornet_mk_ii_both_ways(self):
         self.assertEqual(self.name("Anvil F7 Hornet Mk Wikelo"), "F7C-M Super Hornet Mk II")
         self.assertEqual(self.ix.display("ANVL_Hornet_F7_Mk2_Collector_Mod")[0], "F7C-M Super Hornet Mk II")
@@ -459,10 +466,20 @@ class RankTests(unittest.TestCase):
         v = sc_stats.finalize(_agg(self.sessions()))
         self.assertEqual([r[0] for r in v["ships_top"]], ["Asgard", "Corsair"])
         self.assertEqual(v["ships_rank"], "time")
+        self.assertIsNone(v["ships_since"])
 
-    def test_scope_with_older_builds_ranks_by_sessions(self):
+    def test_mixed_scope_ranks_by_time_and_names_the_cutoff(self):
+        mixed = self.sessions() + [{"ships": {"DRAK_Corsair"}, "ship_events": {"DRAK_Corsair": 1},
+                                    "patch": "4.4", "build": "4.4.164.18318"}]
+        v = sc_stats.finalize(_agg(mixed))
+        self.assertEqual([r[0] for r in v["ships_top"]], ["Asgard", "Corsair"])
+        self.assertEqual(v["ships_rank"], "time")
+        self.assertEqual(v["ships_since"], "Dec 2025")
+
+    def test_scope_with_no_aboard_time_ranks_by_sessions(self):
         old = self.sessions()
-        old[0].update(patch="4.4", build="4.4.164.18318")
+        for s in old:
+            s.update(patch="4.4", build="4.4.164.18318", aboard={}, aboard_secs=0)
         v = sc_stats.finalize(_agg(old))
         self.assertEqual([r[0] for r in v["ships_top"]], ["Corsair", "Asgard"])
         self.assertEqual(v["ships_rank"], "sessions")

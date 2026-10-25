@@ -503,7 +503,7 @@ def weapon_kind(cls, name=""):
 SHIP_VARIANT = re.compile(
     r"_(collector|indust|industrial|best_in_show|bis|pirate|emerald|harbinger|"
     r"stella|fortuna|solstice|auspicious|firebird|blue|red|platinum|citizencon"
-    r"\d*|cc\d*|s42|edition|paint|test|template|modifiers?)\w*", re.I)
+    r"\d*|cc\d*|s42|edition|paint|test|template|modifiers?|military|stealth)\w*", re.I)
 
 
 # Variants the Ship Matrix doesn't list, mapped to the hull they're built on: by game

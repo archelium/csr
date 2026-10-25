@@ -18,8 +18,14 @@ uses [Semantic Versioning](https://semver.org/) (MAJOR.MINOR.PATCH).
   Mk II.
 
 ### Changed
-- **Most-flown ships rank by time aboard** (Flight) on patches 4.6 and later. Career
-  and older patches still rank by sessions. Signature ships follow the same order.
+- **Most-flown ships and Signature ships rank by time aboard** (Flight, Overview).
+  Aboard time starts Dec 2025, scopes with older sessions say so. Patches with no
+  aboard time still rank by sessions.
+
+### Fixed
+- Ship classes with a `_Military` or `_Stealth` suffix matched the wrong hull: the
+  Guardian showed as Guardian QI, the Constellation Taurus as Centaurus, the Scorpius
+  as Scorpius Antares.
 
 
 ## [1.6.0] — 2026-10-20

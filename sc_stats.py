@@ -4143,10 +4143,9 @@ def finalize(agg):
             nm = _named(key)
             if nm:
                 dst[nm] += secs
-    # Ranked by time aboard when every session in the scope could log it, else by
-    # sessions: aboard time only exists from 4.5.167, and a career mixing both eras
-    # would sink ships flown before it.
-    by_time = agg["sessions"] > 0 and agg["pre_chan"] == 0
+    # Ranked by time aboard whenever the scope has any. It only exists from 4.5.167
+    # (Dec 2025): a scope with older sessions says so, one with none ranks by sessions.
+    by_time = sum(ship_aboard.values()) > 0
     order = (sorted(ship_named, key=lambda n: (-ship_aboard.get(n, 0), -ship_named[n]))[:12]
              if by_time else [n for n, _ in ship_named.most_common(12)])
     # most-flown ships: [name, sessions, first_date, last_date, takeoffs, aboard_h, seat_h]
@@ -4396,6 +4395,7 @@ def finalize(agg):
         "ships_unique": len(agg["ship_set"]),
         "ships_top": top_ships,
         "ships_rank": "time" if by_time else "sessions",
+        "ships_since": "Dec 2025" if by_time and agg["pre_chan"] else None,
         "ships_flown_total": sum(agg["ships"].values()),
         "takeoffs_total": sum(agg["ship_events"].values()),
         "aboard_hours": round(agg["aboard_secs"] / 3600, 1),
@@ -5040,7 +5040,8 @@ def _gun_img(name):
     return img
 
 
-def _ship_entry(name, count, first=None, last=None, takeoffs=0, aboard=0, seat=0, rank="sessions"):
+def _ship_entry(name, count, first=None, last=None, takeoffs=0, aboard=0, seat=0, rank="sessions",
+                since=None):
     rec = SHIPS.record_by_name(name)
     man = rec["man"] if rec else ""
     return {"name": name, "man": man,
@@ -5049,7 +5050,7 @@ def _ship_entry(name, count, first=None, last=None, takeoffs=0, aboard=0, seat=0
             "role": (rec.get("focus") or rec.get("type") if rec else "") or "",
             "url": (rec.get("url") if rec else "") or "",
             "count": count, "first": first, "last": last, "takeoffs": takeoffs,
-            "aboard": aboard, "seat": seat, "rank": rank,
+            "aboard": aboard, "seat": seat, "rank": rank, "since": since,
             "logo": _man_logo(man), "img": _ship_img(rec)}
 
 
@@ -5066,10 +5067,10 @@ def _gun_entry(name, count, meta, reloads=0, carried=0, reloads_known=True):
 
 
 def _view_showcase(v):
-    rank = v.get("ships_rank", "sessions")
+    rank, since = v.get("ships_rank", "sessions"), v.get("ships_since")
     ships = [_ship_entry(n, c, (t[0] if t else None), (t[1] if len(t) > 1 else None),
                          (t[2] if len(t) > 2 else 0), (t[3] if len(t) > 3 else 0),
-                         (t[4] if len(t) > 4 else 0), rank)
+                         (t[4] if len(t) > 4 else 0), rank, since)
              for n, c, *t in v["ships_top"][:3]]
     meta = v.get("gun_meta", {})
     rl, ca = v.get("gun_reloads", {}), v.get("gun_carried", {})
@@ -7287,7 +7288,7 @@ function showCard(item, rank, kind){
   let chips, cnt;
   if(kind==='ship'){
     chips = chip(item.size, 'sz '+(item.size||''))+chip(item.role)+maker;   // existing .chip-c.sz.Large etc.
-    cnt = item.rank==='time'
+    cnt = item.rank==='time' && item.aboard
       ? `<div class="sig-count" title="Time aboard, from the ship’s crew channel">${item.aboard}h aboard</div>`+
         shipMetaHTML(item.takeoffs, item.first, item.last, 0, item.seat, item.count)
       : `<div class="sig-count" title="Distinct play sessions this ship appeared in — not individual flights">${fmt(item.count)} sessions flown</div>`+
@@ -7308,7 +7309,8 @@ function showcaseHTML(){
   const scope = current==='all' ? 'career' : ('patch '+current);
   const ships = sc.ships.map((s,i)=>showCard(s,i+1,'ship')).join('') || '<div class="empty">No ships flown in this scope.</div>';
   const guns  = sc.guns.map((g,i)=>showCard(g,i+1,'gun')).join('')  || '<div class="empty">No weapons drawn in this scope.</div>';
-  const how = (sc.ships[0]||{}).rank==='time' ? 'most time aboard' : 'most-flown';
+  const s0 = sc.ships[0]||{};
+  const how = s0.rank==='time' ? 'most time aboard'+(s0.since?' since '+s0.since:'') : 'most-flown';
   return `<div class="row-title">Signature ships <span class="tag">· ${how} · ${scope} · art from RSI</span></div>`+
     `<div class="showcase">${ships}</div>`+
     `<div class="row-title">Signature guns <span class="tag">· most-drawn · ${scope}</span></div>`+
@@ -7572,7 +7574,7 @@ function secFlight(v){
       ])+
       cardHTML('Ship size mix','sessions by hull size','sizeChart')+
       `<div class="grid2" style="margin-top:16px">`+
-      barsCard('Most-flown ships', v.ships_rank==='time' ? 'hours aboard · sessions · take-offs · seat · first / last' : 'sessions flown · take-offs · aboard · seat · first / last','shipBars')+
+      barsCard('Most-flown ships', v.ships_rank==='time' ? `hours aboard${v.ships_since?' since '+v.ships_since:''} · sessions · take-offs · seat · first / last` : 'sessions flown · take-offs · aboard · seat · first / last','shipBars')+
       barsCard('Roles flown','sessions by ship role','roleBars')+`</div>`
     )+
     group(2,'satellite','Travel &amp; navigation','Where you went — quantum travel and the systems you visited',
