@@ -29,6 +29,7 @@ import argparse
 import glob
 import html
 import json
+import math
 import os
 import re
 import sys
@@ -49,7 +50,7 @@ CSR_CONTACT = "support@archelium.com"      # publisher/contact (archelium.com)
 # Bump whenever scan_log() learns to extract something new or fixes an extraction bug.
 # A quick refresh reuses archived sessions only when they were parsed by THIS version,
 # so improved parsing always re-reads old logs instead of silently keeping stale numbers.
-PARSER_VERSION = 23
+PARSER_VERSION = 24
 
 
 # --------------------------------------------------------------------------- #
@@ -1927,6 +1928,74 @@ class ShipTime:
                          if round(_union_secs(v)) > 0}}
 
 
+# Loading screens. The game writes one line when each screen closes, with how long it
+# stayed up: "Loading screen for pu : SC_Frontend closed after 36.19 seconds". The
+# screen opened that many seconds before its stamp. Every log has them. `Frontend_Main`
+# is the main menu; `pu` is Stanton, the other systems carry their own name and the
+# Arena Commander / Star Marine maps are `EA_<map>_<mode>`.
+LOADING_RE = re.compile(r"Loading screen for (\S+) : \S+ closed after ([\d.]+) seconds")
+LOAD_DEST = {"pu": "Stanton", "Frontend_Main": "menu"}
+LOAD_HUNG = 900                # a screen up for 15 min is a hang, kept out of every number
+PU_DESTS = ("Stanton", "Pyro", "Nyx")
+
+
+def load_dest(raw):
+    if raw.startswith("EA_"):
+        return "Arena Commander"
+    return LOAD_DEST.get(raw, raw)
+
+
+class LoadScreens:
+    """Loading-screen times, launch to login, and time on the main menu for one log."""
+
+    def __init__(self):
+        self.loads = []            # [dest, secs] per screen, hung ones left out
+        self.hung = 0
+        self.login_at = None       # first <LoginCompleted>
+        self.startup_at = None     # when the first main-menu screen opened
+        self.menu_at = None        # when the menu you are sitting on came up
+        self.menu_s = 0.0
+        self.load_s = 0.0          # seconds of every screen that was not hung
+
+    def feed(self, line, prefix):
+        if "Loading screen for " in line:
+            m = LOADING_RE.search(line)
+            close = parse_dt(prefix) if m else None
+            if close is None:
+                return
+            secs = float(m.group(2))
+            dest = load_dest(m.group(1))
+            opened = close - timedelta(seconds=secs)
+            if self.menu_at is not None:
+                self.menu_s += max(0.0, (opened - self.menu_at).total_seconds())
+                self.menu_at = None
+            first_menu = dest == "menu" and self.startup_at is None
+            if first_menu:
+                self.startup_at = opened          # startup ends where this screen came up
+            if dest == "menu":
+                self.menu_at = close
+            if secs > LOAD_HUNG:
+                self.hung += 1
+            else:
+                self.loads.append([dest, secs])
+                self.load_s += secs
+        elif self.login_at is None and "<LoginCompleted>" in line:
+            self.login_at = parse_dt(prefix)
+
+    def result(self, first, last):
+        """`first` / `last` are the log's first and last stamps (UTC datetimes)."""
+        if self.menu_at is not None and last:
+            self.menu_s += max(0.0, (last - self.menu_at).total_seconds())
+        return {
+            "loads": self.loads, "loads_hung": self.hung, "load_s": round(self.load_s, 1),
+            "login_s": round((self.login_at - first).total_seconds(), 1)
+            if self.login_at and first else None,
+            "startup_s": round(max(0.0, (self.startup_at - first).total_seconds()), 1)
+            if self.startup_at and first else None,
+            "menu_s": round(self.menu_s, 1),
+        }
+
+
 def _mk_combat():
     """Empty per-venue combat tally (used for both PU and Arena Commander)."""
     return {"lc": Counter(), "wpn_ship": Counter(), "wpn_fps": Counter(),
@@ -2855,6 +2924,212 @@ def _lz_visits(stamps):
     return n
 
 
+# ---- places visited: RequestLocationInventory codes -> display names ----
+# The game asks for your stored items when you land or dock somewhere, and again whenever
+# an inventory or shop screen opens there. Flying past a place doesn't log it.
+PLACE_RE = re.compile(r"<RequestLocationInventory> Player\[([^\]]+)\] requested inventory for Location\[([^\]]+)\]")
+_PLACE_BODY = {  # the planet or moon number in a location code
+    "Stanton1": "Hurston", "Stanton1a": "Arial", "Stanton1b": "Aberdeen", "Stanton1c": "Magda",
+    "Stanton1d": "Ita", "Stanton2": "Crusader", "Stanton2a": "Cellin", "Stanton2b": "Daymar",
+    "Stanton2c": "Yela", "Stanton3": "ArcCorp", "Stanton3a": "Lyria", "Stanton3b": "Wala",
+    "Stanton4": "microTech", "Stanton4a": "Calliope", "Stanton4b": "Clio", "Stanton4c": "Euterpe",
+}
+_PLACE_PLANET = {"HUR": "Hurston", "CRU": "Crusader", "ARC": "ArcCorp", "MIC": "microTech"}
+_ROMAN = ("", "I", "II", "III", "IV", "V", "VI")
+
+
+def _place_table():
+    # names checked against starcitizen.tools; the game's own RestStop_* object names agree
+    t = {}
+    for code, name in (("RR_HUR_LEO", "Everus Harbor"), ("RR_CRU_LEO", "Seraphim Station"),
+                       ("RR_ARC_LEO", "Baijini Point"), ("RR_MIC_LEO", "Port Tressler")):
+        t[code] = (name, "Stanton", "Station")
+    for code, name in (
+            ("HUR_L1", "HUR-L1 Green Glade Station"), ("HUR_L2", "HUR-L2 Faithful Dream Station"),
+            ("HUR_L3", "HUR-L3 Thundering Express Station"), ("HUR_L4", "HUR-L4 Melodic Fields Station"),
+            ("HUR_L5", "HUR-L5 High Course Station"), ("CRU_L1", "CRU-L1 Ambitious Dream Station"),
+            ("CRU_L4", "CRU-L4 Shallow Fields Station"), ("CRU_L5", "CRU-L5 Beautiful Glen Station"),
+            ("ARC_L1", "ARC-L1 Wide Forest Station"), ("ARC_L2", "ARC-L2 Lively Pathway Station"),
+            ("ARC_L3", "ARC-L3 Modern Express Station"), ("ARC_L4", "ARC-L4 Faint Glen Station"),
+            ("ARC_L5", "ARC-L5 Yellow Core Station"), ("MIC_L1", "MIC-L1 Shallow Frontier Station"),
+            ("MIC_L2", "MIC-L2 Long Forest Station"), ("MIC_L3", "MIC-L3 Endless Odyssey Station"),
+            ("MIC_L4", "MIC-L4 Red Crossroads Station"), ("MIC_L5", "MIC-L5 Modern Icarus Station")):
+        t["RR_" + code] = (name, "Stanton", "Rest stop")
+    for code, name, kind in (
+            ("P2_L4", "Checkmate Station", "Rest stop"), ("P3_LEO", "Orbituary", "Station"),
+            ("P3_L1", "Starlight Service Station", "Rest stop"), ("P3_L3", "Patch City", "Rest stop"),
+            ("P5_L2", "Gaslight", "Rest stop"), ("P5_L4", "Rod's Fuel 'N Supplies", "Rest stop"),
+            ("P5_L5", "Rat's Nest", "Rest stop"), ("P6_LEO", "Ruin Station", "Station"),
+            ("P6_L3", "Endgame", "Rest stop"), ("P6_L4", "Dudley & Daughters", "Rest stop"),
+            ("P6_L5", "Megumi Refueling", "Rest stop")):
+        t["RR_" + code] = (name, "Pyro", kind)
+    # RR_JP_<from><to>: the gateway on the <from> side, named for where it leads
+    for code, name, system in (
+            ("StantonPyro", "Pyro Gateway (Stanton)", "Stanton"),
+            ("StantonTerra", "Terra Gateway (Stanton)", "Stanton"),
+            ("StantonMagnus", "Magnus Gateway (Stanton)", "Stanton"),
+            ("PyroStanton", "Stanton Gateway (Pyro)", "Pyro"),
+            ("PyroNyx", "Nyx Gateway (Pyro)", "Pyro"),
+            ("NyxPyro", "Pyro Gateway (Nyx)", "Nyx")):
+        t["RR_JP_" + code] = (name, system, "Jump point")
+    for code, name, system, kind in (
+            ("Stanton1_Lorville", "Lorville", "Stanton", "City"),
+            ("Stanton2_Orison", "Orison", "Stanton", "City"),
+            ("Stanton3_Area18", "Area18", "Stanton", "City"),
+            ("Stanton4_NewBabbage", "New Babbage", "Stanton", "City"),
+            ("Nyx_Levski", "Levski", "Nyx", "City"),
+            ("GrimHEX", "GrimHEX", "Stanton", "Station"),
+            ("PrisonMine_Stanton1b", "Klescher Rehabilitation Facility", "Stanton", "Facility"),
+            ("Stanton4_Dunboro", "Dunboro", "Stanton", "Outpost"),
+            ("Stanton1_PickersField", "Picker's Field", "Stanton", "Outpost"),
+            ("Stanton1_Rappel", "Rappel", "Stanton", "Outpost"),
+            ("Stanton1_Zephyr", "Zephyr", "Stanton", "Outpost"),
+            ("Stanton4_AstorsClearing", "Astor's Clearing", "Stanton", "Outpost"),
+            ("Stanton2c_RayariHydro_DeakinsResearch", "Deakins Research Outpost", "Stanton", "Facility"),
+            ("Stanton2a_RayariHydro_HickesResearch", "Hickes Research Outpost", "Stanton", "Facility"),
+            ("Stanton4_RayariHydro_Deltana", "Rayari Deltana Research Outpost", "Stanton", "Facility"),
+            ("Stanton4a_RayariHydro_Kaltag", "Rayari Kaltag Research Outpost", "Stanton", "Facility"),
+            ("Stanton4a_RayariHydro_Anvik", "Rayari Anvik Research Outpost", "Stanton", "Facility"),
+            ("Stanton4b_RayariHydro_Cantwell", "Rayari Cantwell Research Outpost", "Stanton", "Facility"),
+            ("Stanton2a_TerraMillsHydro_HydroFarm", "Terra Mills HydroFarm", "Stanton", "Outpost"),
+            ("Stanton2c_DrugLab_Jumptown", "Jumptown", "Stanton", "Outpost"),
+            ("Stanton4a_DrugLab_RavensRoost", "Raven's Roost", "Stanton", "Outpost"),
+            ("Stanton2b_Stash_NuenWasteManagement", "Nuen Waste Management", "Stanton", "Outpost"),
+            ("Stanton4_Stash_TheNecropolis", "The Necropolis", "Stanton", "Outpost"),
+            ("Stanton2b_JunkSite_BriosBreakerYard", "Brio's Breaker Yard", "Stanton", "Facility"),
+            ("Stanton3b_JunkSite_SamsonSonsSalvageCenter", "Samson & Son's Salvage Center", "Stanton", "Facility"),
+            ("Stanton2a_IndyMiner_TramMyers", "Tram & Myers Mining", "Stanton", "Outpost"),
+            ("Stanton4c_IndyFarm_BudsGrowery", "Bud's Growery", "Stanton", "Outpost")):
+        t[code] = (name, system, kind)
+    for n, base in (("1", "Dasi"), ("2", "Selo"), ("4", "Kinga")):    # the three Wikelo asteroid bases
+        t["TheCollectorAsteroid_Stanton" + n] = (f"Wikelo Emporium {base} Station", "Stanton", "Wikelo")
+    return {k.lower(): v for k, v in t.items()}
+
+
+_PLACES = _place_table()
+
+
+def _place_words(s):
+    """CamelCase tokens as words. Digits stay glued: S4DC05 is one token."""
+    s = re.sub(r"(?<=[a-z])(?<!Mc)(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])", " ", s)
+    return s.replace("micro Tech", "microTech")
+
+
+def _place_system(code):
+    if re.match(r"RR_(HUR|CRU|ARC|MIC)_", code):
+        return "Stanton"
+    if re.match(r"RR_P\d", code):
+        return "Pyro"
+    m = re.match(r"RR_JP_(Stanton|Pyro|Nyx|Terra|Magnus|Castra)", code)
+    m = m or re.search(r"(Stanton|Pyro|Nyx)", code, re.I)
+    return m.group(1).title() if m else "Unknown"
+
+
+def _place_label(code):
+    """(name, kind) built from the code alone, for places with no confirmed name."""
+    m = re.match(r"RR_(?:(HUR|CRU|ARC|MIC)|P(\d))_(?:LEO|L(\d))$", code)
+    if m:
+        where = _PLACE_PLANET[m.group(1)] if m.group(1) else "Pyro " + _ROMAN[int(m.group(2))]
+        if m.group(3):
+            return f"{where} L{m.group(3)} rest stop", "Rest stop"
+        return f"{where} orbit station", "Station"
+    m = re.match(r"RR_JP_([A-Z][a-z]+)([A-Z][a-z]+)$", code)
+    if m:
+        return f"{m.group(2)} jump point ({m.group(1)})", "Jump point"
+    m = re.match(r"TheCollectorAsteroid_(Stanton\d)$", code)
+    if m:
+        return f"Wikelo asteroid ({_PLACE_BODY.get(m.group(1), m.group(1))})", "Wikelo"
+    m = re.match(r"Outpost_OLP_Stanton\d[a-z]?_([A-Za-z]+)$", code)
+    if m:
+        return f"{m.group(1)} OLP", "Station"
+    m = re.match(r"Outpost_PAF_Stanton\d[a-z]?_([A-Za-z]+)_(\d)$", code)
+    if m:
+        return f"{m.group(1)} PAF-{_ROMAN[int(m.group(2))]}", "Outpost"
+    m = re.match(r"Stanton\d[a-z]?_HurdynMining_HDMS([A-Za-z]+)$", code)
+    if m:
+        return f"HDMS-{m.group(1)}", "Facility"
+    m = re.match(r"Stanton\d[a-z]?_ArcCorp(?:Mining)?_Area(\d+)$", code)
+    if m:
+        return f"ArcCorp Mining Area {m.group(1)}", "Facility"
+    m = re.match(r"Stanton\d[a-z]?_Shubin(?:Mining)?_(\w+)$", code)
+    if m:
+        tail = m.group(1)
+        tail = tail.replace("_", "-") if "_" in tail else re.sub(r"^([A-Za-z]+)(\d+)$", r"\1-\2", tail)
+        return f"Shubin Mining Facility {tail}", "Facility"
+    m = re.match(r"(Stanton\d[a-z]?)_ASD_Delve_Facility_(\d+)$", code)
+    if m:
+        return f"ASD Delve {m.group(2)} ({_PLACE_BODY.get(m.group(1), m.group(1))})", "Facility"
+    m = re.match(r"Stanton\d[a-z]?_DistributionCentre_(.+)$", code)
+    if m:
+        return " ".join(_place_words(p) for p in m.group(1).split("_")), "Facility"
+    m = re.match(r"Pyro\d_ASD_Monorail_(.+)$", code)
+    if m:
+        return " ".join(_place_words(p) for p in m.group(1).split("_")), "Facility"
+    m = re.match(r"Nyx_TSG_QVExtractionStation_(\d+)$", code)
+    if m:
+        return f"QV Extraction Station {m.group(1)}", "Station"
+    m = re.match(r"AsteroidClusterBase_Nyx_Social_Keeger_(\d+)$", code)
+    if m:
+        return f"Keeger Belt {m.group(1)}", "Station"
+    m = re.match(r"(?i)pyro(\d[a-z]?)_Outpost_col_(?:xs|s|m)_(.+)$", code)
+    if m:
+        return f"Pyro {m.group(1)} outpost {m.group(2).replace('_', ' ')}", "Outpost"
+    m = re.match(r"(?:Stanton\d[a-z]?|Pyro\d[a-z]?|Nyx|AsteroidClusterBase_Pyro|AsteroidClusterBase_Nyx)_(.+)$", code)
+    rest = m.group(1) if m else code
+    kind = "Other"
+    if re.match(r"(Stash|EMShelter|IndyMiner|IndyFarm|DrugLab)_", rest):
+        kind = "Outpost"
+    elif rest.startswith(("RayariHydro_", "JunkSite_")):
+        kind = "Facility"
+    return " ".join(_place_words(p) for p in rest.split("_")), kind
+
+
+def place_name(code):
+    """(name, system, kind) for a location code. Names are confirmed against the wiki or
+    built from the code. Kind is City, Station, Rest stop, Jump point, Outpost, Facility,
+    Wikelo or Other."""
+    hit = _PLACES.get(code.lower())
+    if hit:
+        return hit
+    name, kind = _place_label(code)
+    return name, _place_system(code), kind
+
+
+# ---- out of air: [STAMINA] suffocation / depressurization notices ----
+# The game writes a start and a stop notice per kind, followed by a detail block of
+# [STAMINA] lines (no [Notice] tag) that says whether a helmet was on. On real logs the two
+# kinds start within a second of each other 97% of the time, so the pairs are merged into
+# one out-of-air episode per overlapping stretch.
+AIR_RE = re.compile(r"\[STAMINA\] Player (started|stopped) (suffocating|depressurization)> Player\[([^\]]+)\]")
+AIR_MIN = 2.0              # shorter episodes are airlock and room-transition blips
+
+
+def _stamp_dt(line):
+    """The full-precision stamp of a log line (UTC, milliseconds), or None."""
+    try:
+        return datetime.strptime(line[1:24], "%Y-%m-%dT%H:%M:%S.%f")
+    except ValueError:
+        return None
+
+
+def air_episodes(spans, me):
+    """Merge the (player, start, end, helmet off?) spans of `me` into out-of-air episodes.
+    Returns {"eps": [secs, ...], "nohelm": n}, or None when no episode reaches AIR_MIN."""
+    mine = sorted((s, e, nh) for a, s, e, nh in spans if not me or a.lower() == me)
+    merged = []
+    for s, e, nh in mine:
+        if merged and s <= merged[-1][1]:
+            merged[-1][1] = max(merged[-1][1], e)
+            merged[-1][2] = merged[-1][2] or nh
+        else:
+            merged.append([s, e, nh])
+    eps = [(e - s).total_seconds() for s, e, _nh in merged if (e - s).total_seconds() >= AIR_MIN]
+    if not eps:
+        return None
+    return {"eps": [round(x, 1) for x in eps],
+            "nohelm": sum(1 for s, e, nh in merged if nh and (e - s).total_seconds() >= AIR_MIN)}
+
+
 def scan_log(path):
     """Extract one session's stats from a single Game.log file."""
     try:
@@ -2876,6 +3151,10 @@ def scan_log(path):
     repools = 0                        # AmmoRepool requests (topping a magazine up from a box)
     injuries = Counter()               # "Severity|Part|Tier" -> notices
     medbed = []                        # (actor, in a ship?, [parts]) per surgery
+    places = []                        # (player, location code) per inventory request
+    air_open = {}                      # (kind, player) -> [start, helmet off?] while a notice is open
+    air_blk = None                     # the open record whose [STAMINA] detail block is being read
+    air_spans = []                     # (player, start, end, helmet off?) per closed pair
     crew_jumps = Counter()             # pilot -> jumps under their hands
     party_open = None                  # when the current party invite was accepted
     party_acc = 0                      # invites accepted
@@ -2949,6 +3228,7 @@ def scan_log(path):
         pass
     ctx = CrashContext() if crash_tail else None   # phase / place / ship / errors
     ship_time = ShipTime()             # time aboard each ship and in its pilot seat
+    load_t = LoadScreens()             # loading screens, launch to login, time on the menu
     boots = []                         # dropped back to the main menu, mid-session
     boot_pending = None                # a drop awaiting its front-end confirmation
     softs = []                         # lost the player entity ("soft crash"), by episode
@@ -2980,6 +3260,24 @@ def scan_log(path):
                 if ctx is not None and not saw_crash:
                     ctx.feed(line, p)
                 ship_time.feed(line, p)
+                if "Loading screen for " in line or (load_t.login_at is None and "<LoginCompleted>" in line):
+                    load_t.feed(line, p)
+                if air_blk is not None:         # detail lines carry the stamp, then [STAMINA]
+                    if line[27:36] == "[STAMINA]":
+                        if "Not Wearing Helmet" in line:
+                            air_blk[1] = True
+                    else:
+                        air_blk = None
+                if "[STAMINA] Player " in line:
+                    m = AIR_RE.search(line)
+                    at = _stamp_dt(line) if m else None
+                    if at:
+                        key = (m.group(2), m.group(3))
+                        if m.group(1) == "started":
+                            air_open[key] = air_blk = [at, False]
+                        elif key in air_open:
+                            rec = air_open.pop(key)
+                            air_spans.append((m.group(3), rec[0], at, rec[1]))
                 # --- startup rig banner: cheap, and switched off once we're past it ---
                 if _in_hdr:
                     if "Host CPU:" in line:
@@ -3201,6 +3499,10 @@ def scan_log(path):
                     if mb:
                         parts = [k for k, v in re.findall(r"(\w+): (true|false)", mb.group(4)) if v == "true"]
                         medbed.append((mb.group(1), mb.group(3) != "none", parts))
+                elif "<RequestLocationInventory>" in line:
+                    m = PLACE_RE.search(line)
+                    if m and not m.group(2).startswith("INVALID"):
+                        places.append((m.group(1), m.group(2)))
                 elif "<Join PU>" in line:
                     m = JOIN_PU_RE.search(line)
                     if m:
@@ -3381,6 +3683,7 @@ def scan_log(path):
     if handle is None:                 # no normal login line — use the fallback
         handle = handle_fb
     ship_t = ship_time.result(parse_dt(last), handle)
+    load_res = load_t.result(parse_dt(first), parse_dt(last))
 
     # Did the game render on the best card it could see? Storing just the verdict
     # (rather than the whole adapter list, on every session, forever) keeps the
@@ -3486,6 +3789,8 @@ def scan_log(path):
     _me = (handle or handle_fb or "").lower()
     medbed_n = sum(1 for a, _ship, _p in medbed if not _me or a.lower() == _me)
     medbed_ship = sum(1 for a, ship, _p in medbed if ship and (not _me or a.lower() == _me))
+    places_seen = sorted({c for a, c in places if not _me or a.lower() == _me})
+    air = air_episodes(air_spans, _me)
     medbed_parts = Counter()
     for a, _ship, parts in medbed:
         if not _me or a.lower() == _me:
@@ -3513,6 +3818,7 @@ def scan_log(path):
     return {
         "patch": patch, "build": build, "start": dt0, "dur": dur,
         "ships": ships, "ship_events": ship_events, "missions": missions, "weapons": weapons,
+        **load_res,
         "aboard": ship_t["aboard"], "aboard_secs": ship_t["aboard_secs"],
         "crew_secs": ship_t["crew_secs"], "seat": ship_t["seat"],
         "reloads": reloads, "repools": repools, "carried": carried,
@@ -3525,6 +3831,7 @@ def scan_log(path):
         "contracts_failed": dict(contracts_failed),
         "injuries": dict(injuries), "medbed_n": medbed_n, "medbed_ship": medbed_ship,
         "medbed_parts": dict(medbed_parts), "crew_jumps": dict(crew_jumps),
+        "places": places_seen, "air": air,
         "party_acc": party_acc, "party_secs": round(party_secs), "crimestat": crimestat,
         "haul_scu": haul_scu, "haul_runs": haul_runs, "haul_lost": haul_lost, "haul_max": haul_max,
         "haul_com": dict(haul_com), "haul_dest": dict(haul_dest),
@@ -3624,6 +3931,15 @@ def blank_patch():
         "region_last": None, "region_last_at": None,
         # gear lost on death: items per death, and what they were
         "gl_sizes": [], "gl_cls": Counter(),
+        # loading screens: [dest, secs] per screen, hung ones counted apart, the longest
+        # PU load as [secs, date, dest], launch-to-login secs per session
+        "loads": [], "loads_hung": 0, "load_slowest": None, "login_secs": [],
+        # where the hours went: seconds per bucket, "old" holds sessions with no load data
+        "split": Counter(),
+        # places visited: name -> [system, kind, sessions, first local date]
+        "places": {},
+        # out of air: episode seconds, those without a helmet, sessions with one, longest
+        "air_eps": [], "air_nohelm": 0, "air_sessions": 0, "air_longest": None,
     }
 
 
@@ -3781,6 +4097,47 @@ def fold(agg, s):
     if _gl:
         agg["gl_sizes"].extend(_gl.get("sizes") or [])
         agg["gl_cls"].update(_gl.get("cls") or {})
+    _pl = {}
+    for code in s.get("places") or []:
+        name, sysn, kind = place_name(code)
+        _pl.setdefault(name, (sysn, kind))      # two codes can share a name
+    for name, (sysn, kind) in _pl.items():
+        row = agg["places"].setdefault(name, [sysn, kind, 0, _d])
+        row[2] += 1
+        if _d and (not row[3] or _d < row[3]):
+            row[3] = _d
+    _air = s.get("air")
+    if _air:
+        agg["air_eps"].extend(_air["eps"])
+        agg["air_nohelm"] += _air["nohelm"]
+        agg["air_sessions"] += 1
+        _top = max(_air["eps"])
+        if agg["air_longest"] is None or _top > agg["air_longest"][0]:
+            agg["air_longest"] = [_top, _d]
+    _ld = s.get("loads") or []
+    agg["loads"].extend(_ld)
+    agg["loads_hung"] += s.get("loads_hung", 0)
+    for dest, secs in _ld:
+        slow = agg["load_slowest"]
+        if dest in PU_DESTS and (slow is None or secs > slow[0]):
+            agg["load_slowest"] = [secs, _d, dest]
+    if s.get("login_s") is not None:
+        agg["login_secs"].append(s["login_s"])
+    # Sessions archived before loading screens were read have no "loads" key at all, and
+    # their hours can't be split. They go in one bucket of their own.
+    if "loads" not in s:
+        agg["split"]["old"] += max(0, s["dur"])
+    elif s["dur"] > 0:
+        head = (s.get("startup_s") or 0) + (s.get("load_s") or 0) + (s.get("menu_s") or 0)
+        agg["split"]["startup"] += s.get("startup_s") or 0
+        agg["split"]["loading"] += s.get("load_s") or 0
+        agg["split"]["menu"] += s.get("menu_s") or 0
+        if has_crew_channel(s.get("patch"), s.get("build")):
+            aboard = s.get("aboard_secs") or 0
+            agg["split"]["aboard"] += aboard
+            agg["split"]["foot"] += max(0, s["dur"] - head - aboard)
+        else:
+            agg["split"]["unsplit"] += max(0, s["dur"] - head)
     for sys_ in s["systems"]:
         agg["systems"][sys_] += 1
     dt = s["start"]
@@ -4046,6 +4403,70 @@ def _server_summary(agg):
         "regions": [[k, n, sess[k]] for k, n in joins.most_common()],
         "last": region_label(agg["region_last"]) if agg["region_last"] else None,
     }
+
+
+def _median(vals):
+    v = sorted(vals)
+    n = len(v)
+    return v[n // 2] if n % 2 else (v[n // 2 - 1] + v[n // 2]) / 2
+
+
+def _loading_summary(agg):
+    """Loading-screen times: the PU loads (Stanton, Pyro, Nyx) as the headline, every
+    destination for the split, plus launch to login. None when no screen was logged."""
+    loads = agg["loads"]
+    if not loads:
+        return None
+    pu = sorted(secs for dest, secs in loads if dest in PU_DESTS)
+    by = defaultdict(list)
+    for dest, secs in loads:
+        by[dest].append(secs)
+    by_dest = [[d, len(by[d]), round(_median(by[d]), 1)]
+               for d in (*PU_DESTS, "Arena Commander") if d in by]
+    by_dest.sort(key=lambda r: -r[1])
+    slow = agg["load_slowest"]
+    return {
+        "n": len(pu),
+        "median": round(_median(pu), 1) if pu else None,
+        "p90": round(pu[math.ceil(0.9 * len(pu)) - 1], 1) if pu else None,
+        "slowest": [round(slow[0], 1), slow[1], slow[2]] if slow else None,
+        "total_s": round(sum(secs for _d, secs in loads)),
+        "by_dest": by_dest,
+        "login_med": round(_median(agg["login_secs"]), 1) if agg["login_secs"] else None,
+        "login_n": len(agg["login_secs"]),
+        "hung": agg["loads_hung"],
+    }
+
+
+def _places_summary(agg):
+    """Distinct places, most visited first. None when no inventory request was logged."""
+    rows = [[n, sy, k, c, d] for n, (sy, k, c, d) in agg["places"].items()]
+    if not rows:
+        return None
+    rows.sort(key=lambda r: (-r[3], r[0]))
+    kinds = Counter(r[2] for r in rows)
+    return {"n": len(rows), "rows": rows, "home": rows[0][0],
+            "by_kind": [[k, n] for k, n in sorted(kinds.items(), key=lambda kv: (-kv[1], kv[0]))]}
+
+
+def _air_summary(agg):
+    """Out-of-air episodes, None when there are none in this scope."""
+    eps = agg["air_eps"]
+    if not eps:
+        return None
+    return {"n": len(eps), "secs": round(sum(eps)), "median": round(_median(eps), 1),
+            "longest": agg["air_longest"],
+            "nohelm": agg["air_nohelm"], "sessions": agg["air_sessions"]}
+
+
+def _hours_split(agg):
+    """Seconds per bucket: where the logged hours went. None for an empty scope."""
+    if not agg["sessions"]:
+        return None
+    out = {k: round(agg["split"].get(k, 0)) for k in
+           ("startup", "loading", "menu", "aboard", "foot", "unsplit", "old")}
+    out["total"] = sum(out.values())
+    return out
 
 
 def _gear_category(cls):
@@ -4325,6 +4746,10 @@ def finalize(agg):
         "boots": boot_sum,
         "soft": soft_sum,
         "servers": _server_summary(agg),
+        "loading": _loading_summary(agg),
+        "hours_split": _hours_split(agg),
+        "places": _places_summary(agg),
+        "air": _air_summary(agg),
         "gear_lost": _gear_lost_summary(agg),
         "gun_meta": gun_meta,
         "legacy": legacy,
@@ -7391,7 +7816,7 @@ function hbars(el, items, opts={}){
     const pct=Math.max(2, 100*d.value/max);
     const nm = d.href ? link(d.href, esc(d.label), 'lk') : esc(d.label);
     const sub = d.subHtml ? `<div class="bsub">${d.subHtml}</div>` : (d.sub ? `<div class="bsub">${esc(d.sub)}</div>` : '');
-    return `<div class="bar-row ${d.tool?'tool':''}">`+
+    return `<div class="bar-row ${d.tool?'tool':''}"${d.title?` title="${esc(d.title)}"`:''}>`+
       `<div class="bar-head"><div class="nm"><span class="rk">${i+1}</span>${nm}</div>`+
       `<div class="vv">${d.disp!==undefined?d.disp:d.value}</div></div>`+sub+
       `<div class="bar-track"><div class="bar-fill" style="width:${pct}%"></div></div></div>`;
@@ -7560,6 +7985,22 @@ function secOverview(v){
   const rb=$('#patchReset'); if(rb) rb.onclick=()=>{ current='all'; renderPatches(); render(); };
 }
 
+// Places visited: the game asks for your stored items when you land or dock somewhere,
+// and again each time an inventory or shop screen opens there.
+function placesHTML(v){
+  const p=v.places;
+  if(!p) return '';
+  const k=Object.fromEntries(p.by_kind);
+  const out=(k.Outpost||0)+(k.Facility||0), st=(k.Station||0)+(k['Rest stop']||0);
+  return kpiRow([
+      [icon('planet'), fmt(p.n), 'Places visited', 'distinct places'],
+      [icon('hall'), esc(p.home), 'Home base', `${fmt(p.rows[0][3])} ${p.rows[0][3]===1?'session':'sessions'}`],
+      [icon('cargo'), fmt(out), 'Outposts & facilities', `${fmt(k.Outpost||0)} outposts · ${fmt(k.Facility||0)} facilities`],
+      [icon('space'), fmt(st), 'Stations & rest stops', `${fmt(k.Station||0)} stations · ${fmt(k['Rest stop']||0)} rest stops`],
+    ])+
+    barsCard('Most visited places','sessions · top 15','placeBars')+
+    noteFold(`Logged when you land or dock, and when an inventory or shop screen opens. Flybys don’t show.`);
+}
 function secFlight(v){
   // per-session/per-hour rates only mean something where jumps were actually logged
   const jps = (v.qt_known!==false && v.sessions) ? (v.qt/v.sessions).toFixed(1) : null;
@@ -7592,7 +8033,7 @@ function secFlight(v){
         `Systems come from location names in the log. Fuel and distance aren't logged.`,
         `Stanton, Pyro and Nyx are the only live systems; a session counts for one if any location there shows up. Refuelling is a server-side transaction and the client only logs an error with no amount, so fuel used and refuel spend can't be shown. Fuel pods bought at a shop count under Economy — that's a purchase, not a refuel.`)
     )+
-    group(3,'planet','Where you\u2019ve been','Read from the HUD notices the game shows you — jurisdictions, armistice zones, hangar requests',
+    group(3,'planet','Where you\u2019ve been','Jurisdictions, armistice zones and hangar requests from the HUD, plus the places you landed',
       (v.hud_known ? kpiRow([
         [icon('hall'), fmt(v.hangars||0), 'Hangars requested', 'ASOP hangar calls completed'],
         [icon('planet'), fmt(v.lz_visits||0), 'Landing-zone visits', 'armistice-zone stays, 10 min apart or more'],
@@ -7607,6 +8048,7 @@ function secFlight(v){
       ])+`<div class="grid2">`+barsCard('Jurisdictions entered','sessions · total entries','jurisBars')+
       barsCard('Pilots you flew with','sessions · jumps under their hands','crewBars')+`</div>`
       : `<div class="card"><div class="empty">The HUD notices these come from are only in the log from patch 4.5 onward.</div></div>`)+
+      placesHTML(v)+
       noteFold(
         `From the HUD notices the game writes to the log, 4.5 onward.`,
         `A jurisdiction is who owns the space: UEE for open Stanton space, the four corporations for their planets, Ungoverned, Rough &amp; Ready and People\u2019s Alliance for Pyro, Klescher for prison. Armistice-zone notices fire at every hangar door, so entries within ten minutes count as one visit. The calibration notice names the pilot, so a jump someone else started is a crew jump. Party time runs from accepting an invite to leaving the group; a party you host leaves no trace.`))
@@ -7623,10 +8065,23 @@ function secFlight(v){
   hbars($('#roleBars'), toItems(v.ship_role,'#5bd1e6'));
   hbars($('#sysBars'), toItems(v.systems,'#b98bff'));
   const jb=$('#jurisBars'); if(jb) hbars(jb, (v.juris||[]).map(([k,s,n])=>({label:k, value:s, disp:`${fmt(s)} <span class="vv-u">sess</span> · ${fmt(n)} entries`})));
+  const pb=$('#placeBars'); if(pb) hbars(pb, ((v.places||{}).rows||[]).slice(0,15).map(([nm,sy,kd,n,first])=>({label:nm, value:n,
+    disp:`${fmt(n)} <span class="vv-u">sess</span>`, title:`${sy} · ${kd.toLowerCase()}${first?' · first visit '+ddmm(first):''}`})));
   const cw=$('#crewBars'); if(cw){ const rows=(v.crew_pilots||[]).map(([k,s,n])=>({label:k, value:s, disp:`${fmt(s)} <span class="vv-u">sess</span> · ${fmt(n)} jumps`, color:'#b98bff'}));
     if(rows.length) hbars(cw, rows); else cw.innerHTML='<div class="empty">Every jump here was your own.</div>'; }
 }
 
+// Out of air: suffocation and depressurization notices, merged into one episode per stretch.
+function airHTML(v){
+  const a=v.air;
+  if(!a) return '';
+  return `<div style="margin-top:16px">`+kpiRow([
+      [icon('warning'), fmt(a.n), 'Out of air episodes', `in ${fmt(a.sessions)} ${a.sessions===1?'session':'sessions'}`],
+      [icon('time'), loadSecs(a.secs), 'Time without air', `median ${loadSecs(a.median)}`],
+      [icon('pulse'), loadSecs(a.longest[0]), 'Longest', a.longest[1]?ddmm(a.longest[1]):'—'],
+      [icon('deaths'), fmt(a.nohelm), 'Helmet off', 'no helmet'],
+    ])+noteFold(`Episodes under 2 s are left out.`)+`</div>`;
+}
 function secCombat(v){
   const dc=v.death_causes;
   const guns=v.weapons_top.filter(w=>!w[2]), tools=v.weapons_top.filter(w=>w[2]);
@@ -7670,7 +8125,8 @@ function secCombat(v){
       ])+`<div class="grid2">`+
       barsCard('Where it hurt','injury warnings by body part','injBars')+
       barsCard('What the bed fixed','body parts treated','medBars')+`</div>`
-      : `<div class="card"><div class="empty">No injuries or treatments in this scope. Injury warnings are in the log from 4.4; med-bed surgeries from every patch.</div></div>`)
+      : `<div class="card"><div class="empty">No injuries or treatments in this scope. Injury warnings are in the log from 4.4; med-bed surgeries from every patch.</div></div>`)+
+      airHTML(v)
     )+
     group(5,'cargo','Looting &amp; inventory','What you hauled — client-side events, so this spans every patch',
       kpiRow([
@@ -8125,6 +8581,23 @@ function secMissions(v){
 }
 
 
+// Where the logged hours went. Buckets come from finalize() as seconds; zero ones drop out.
+const HOURS_PARTS=[['startup','Starting up','#8b9bb4'],['loading','Loading screens','#ff9147'],
+  ['menu','Main menu','#b98bff'],['aboard','Aboard a ship','#42d0e6'],['foot','On foot','#6fbf7f'],
+  ['unsplit','In game (before Dec 2025)','#f4a92a'],['old','Not split (log deleted)','#5f6b7d']];
+function hoursCard(v){
+  const h=v.hours_split;
+  if(!h || !h.total) return '';
+  return `<div class="card" style="margin-top:16px"><h3>Where your hours go <span class="u">— hours by activity</span></h3>`+
+    `<div id="hoursChart"></div>`+
+    (h.unsplit>0 ? `<div class="bsub">Aboard time is logged from Dec 2025.</div>` : '')+`</div>`;
+}
+function hoursChart(v){
+  const el=$('#hoursChart'), h=v.hours_split;
+  if(!el || !h) return;
+  splitbar(el, HOURS_PARTS.map(([k,label,color])=>({label, value:Math.round(h[k]/360)/10, color})),
+    {big:fmt(Math.round(h.total/3600)), small:'hours logged'});
+}
 function secActivity(v){
   const K=kpiRow([
     [icon('calendar'), v.active_days, 'Active days', `days you logged in`],
@@ -8134,6 +8607,7 @@ function secActivity(v){
   ]);
   $('#content').innerHTML=metaLine(v)+K+
     cardHTML('Playtime by month','hours per calendar month','monthChart')+
+    hoursCard(v)+
     `<div style="margin-top:16px">`+cardHTML('When you play','sessions started · weekday × hour','heatChart')+`</div>`+
     `<div class="grid3" style="margin-top:16px">`+
     cardHTML('By hour','play start time','hourChart')+
@@ -8143,6 +8617,7 @@ function secActivity(v){
   const mitems=ms.map(m=>{const [y,mm]=m.split('-');return {label:MON[+mm-1]+" '"+y.slice(2), value:+(v.months[m]/3600).toFixed(1), disp:(v.months[m]/3600).toFixed(0)+' h', full:m, color:'#3fd0e6'};});
   if(mitems.length) vbars($('#monthChart'), mitems, {h:230, w:Math.max(560,mitems.length*54), rot:true, fmtY:x=>x+'h'});
   else $('#monthChart').innerHTML='<div class="empty">No month data.</div>';
+  hoursChart(v);
   heatmap($('#heatChart'), v.weekhour);
   vbars($('#hourChart'), v.by_hour.map((c,i)=>({label:(i%3===0?String(i):''), value:c, full:i+':00', disp:c+' sessions', color:'#b98bff'})), {h:210, maxbw:16});
   vbars($('#dowChart'), v.by_dow.map((c,i)=>({label:DOW[i], value:c, full:DOW[i], disp:c+' sessions', color:'#f4a92a'})), {h:210});
@@ -8894,6 +9369,29 @@ function serversHTML(v){
       : '<div class="card"><div class="empty">Only one patch in this scope.</div></div>')+
     `</div>`;
 }
+// Loading screens: the game logs how long each one stayed up. PU = Stanton, Pyro, Nyx.
+const loadSecs=x=>x===null||x===undefined ? '—'
+  : x>=3600 ? Math.floor(x/3600)+'h '+String(Math.floor(x%3600/60)).padStart(2,'0')+'m'
+  : (x>=60 ? Math.floor(x/60)+'m '+String(Math.round(x%60)).padStart(2,'0')+'s' : Math.round(x)+'s');
+function loadingHTML(v){
+  const l=v.loading;
+  if(!l) return `<div class="card"><div class="empty">No loading screens in this scope.</div></div>`;
+  const sl=l.slowest;
+  return kpiRow([
+      [icon('time'), loadSecs(l.median), 'Median PU load', l.n ? `p90 ${loadSecs(l.p90)} · ${fmt(l.n)} loads` : 'no PU loads here'],
+      [icon('warning'), sl?loadSecs(sl[0]):'—', 'Slowest PU load', sl?`${sl[1]?ddmm(sl[1])+' · ':''}${esc(sl[2])}`:'no PU loads here'],
+      [icon('pulse'), (l.total_s/3600).toFixed(1)+'h', 'On loading screens', 'every destination, menu included'],
+      [icon('system'), loadSecs(l.login_med), 'Launch to login', l.login_n ? `median of ${fmt(l.login_n)} launches` : 'no login logged'],
+    ])+
+    callout(icon('time'),
+      `The game logs how long each loading screen stayed up. Hung screens over 15 min are left out`+
+      (l.hung ? `, ${fmt(l.hung)} here` : '')+`.`)+
+    `<div class="grid2">`+
+    barsCard('Median load by destination','seconds','loadByDest')+
+    ((A().order||[]).length>1 ? barsCard('Median PU load by patch','seconds','loadByPatch')
+      : '<div class="card"><div class="empty">Only one patch in this scope.</div></div>')+
+    `</div>`;
+}
 // One renderer, two tabs: `STAB` picks which half of System & Stability to draw.
 function secStability(v){ return secSystem(v, true); }
 function secSystem(v, STAB){
@@ -9036,7 +9534,9 @@ function secSystem(v, STAB){
       `<div style="margin-top:16px">`+settingsAdvice(v)+`</div>`)+
     group(3,'pulse','Performance','Frame rate the game recorded for itself',
       fpsHTML(v) || `<div class="card"><div class="empty">No frame-rate statistics in this scope.</div></div>`)+
-    group(4,'system','Hardware score','Star Citizen’s own benchmark — comparable between machines',
+    group(4,'time','Loading screens','How long each screen stayed up, and the launch before it',
+      loadingHTML(v))+
+    group(5,'system','Hardware score','Star Citizen’s own benchmark — comparable between machines',
       benchKpis+benchNote+
       (pi&&hasPatchTrend?`<div style="margin-top:16px">`+
         barsCard('Score per patch','differences this small are noise','gpuByPatch')+`</div>`:'')+
@@ -9134,6 +9634,21 @@ function secSystem(v, STAB){
       else vbars(hb, series.map(s=>({...s, full:`${s.full} — ${s.disp} of ${fmt(s.n)} sessions`,
           color:s.value>=40?'#ff9147':'var(--cyan)'})),
         {h:230, w:Math.max(460, series.length*70), maxbw:48, fmtY:x=>Math.round(x)+'%'});
+    }
+  }
+  if(!STAB && v.loading){
+    const bd=$('#loadByDest');
+    if(bd) hbars(bd, v.loading.by_dest.map(([k,n,med])=>({label:k, value:med, disp:loadSecs(med),
+      title:`${fmt(n)} load${n===1?'':'s'}`})));
+    const lp=$('#loadByPatch');
+    if(lp){
+      const series=patchSeries(p=>{
+        const q=p.loading; if(!q || q.n<MIN_RATE) return null;
+        return {value:q.median, disp:loadSecs(q.median), n:q.n};
+      });
+      if(!series.length) lp.innerHTML='<div class="empty">Not enough loads per patch yet.</div>';
+      else vbars(lp, series.map(s=>({...s, full:`${s.full} — ${fmt(s.n)} loads`, color:'var(--cyan)'})),
+        {h:230, w:Math.max(460, series.length*70), maxbw:48, fmtY:x=>Math.round(x)+'s'});
     }
   }
   const sx=$('#shareTxt');
