@@ -5,7 +5,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and CSR
 uses [Semantic Versioning](https://semver.org/) (MAJOR.MINOR.PATCH).
 
 
-## [Unreleased]
+## [1.8.0] — 2026-10-30
 
 ### Added
 - **Loading screens** (Your Machine). The game logs how long each loading screen stayed

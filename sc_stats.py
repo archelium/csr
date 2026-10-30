@@ -45,7 +45,7 @@ import sc_names
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
-CSR_VERSION = "1.7.0"
+CSR_VERSION = "1.8.0"
 CSR_CONTACT = "support@archelium.com"      # publisher/contact (archelium.com)
 # Bump whenever scan_log() learns to extract something new or fixes an extraction bug.
 # A quick refresh reuses archived sessions only when they were parsed by THIS version,
