@@ -43,16 +43,19 @@ servers you joined: region, distinct servers, and hops between them.
 
 ### Your Machine
 
-The rig the game saw, your graphics settings in the menu's own wording, and a
-configuration check that flags what is measurably wrong.
+The rig the game saw, your graphics settings in the menu's own wording, a
+configuration check that flags what is measurably wrong, and how long your loading
+screens take, by destination and by patch.
 
-![Your Machine — hardware, graphics settings and configuration check](docs/img/machine.png)
+![Your Machine — hardware, graphics settings, configuration check and loading screens](docs/img/machine.png)
 
 ### Flight &amp; Travel
 
-Ships flown, time aboard and in the pilot seat, hull-size mix, roles, and quantum travel.
+Ships flown, time aboard and in the pilot seat, hull-size mix, roles, quantum travel,
+and the places you've been: stations, cities, rest stops and outposts, most visited
+first.
 
-![Flight and Travel — ships, hulls and quantum travel](docs/img/flight.png)
+![Flight and Travel — ships, hulls, quantum travel and places visited](docs/img/flight.png)
 
 </details>
 
@@ -105,12 +108,12 @@ CSR is portable, so updating is just **replace the exe**:
 keeps sessions Star Citizen has since deleted from your log folder. If you want a
 belt-and-braces backup first, open CSR and use **💾 Backup & transfer → Export**.
 
-What happens on your first run of v1.7.0, depending on where you're coming from:
+What happens on your first run of v1.8.0, depending on where you're coming from:
 
 | Coming from | What to expect |
 |---|---|
 | **v1.0.0** | v1.0.0 kept no archive, so your history is rebuilt from whatever logs you still have. If your saved folder was `…\StarCitizen\LIVE`, CSR now finds `PTU` and `TECH-PREVIEW` beside it on its own — **no need to re-pick a folder** — and a **Channel** dropdown appears if it finds any. |
-| **v1.1.0 – v1.6.0** | Your archive carries over untouched. |
+| **v1.1.0 – v1.7.0** | Your archive carries over untouched. |
 | **any** | The first scan re-reads **every** log (a minute or so). This is deliberate: each release fixes parsing bugs or extracts new data, so nothing older is trusted. It happens once — after that CSR starts, and refreshes, in about a second. |
 
 Coming from **v1.2.0** specifically, the first run also *moves* some existing numbers,
@@ -154,12 +157,13 @@ Patch* to filter to that patch (and *↩ View career* to reset).
 
 - **Overview** — RSI profile, snapshot KPIs, click-to-filter playtime-by-patch,
   signature top-3 ships (by time aboard) & guns with artwork
-- **Flight & Travel** — where you've been (jurisdictions, landing-zone visits, hangars requested, jumps as crew and the pilots you flew under, time in a party, CrimeStat rises — from the HUD notices, 4.5+), *ships & hulls* (distinct ships, boardings, take-offs, time aboard ships, fleet
+- **Flight & Travel** — where you've been (jurisdictions, landing-zone visits, hangars requested, jumps as crew and the pilots you flew under, time in a party, CrimeStat rises — from the HUD notices, 4.5+), *places visited* (every station, city, rest stop and outpost you landed or docked at, your home base, the 15 you visit most), *ships & hulls* (distinct ships, boardings, take-offs, time aboard ships, fleet
   size, most-flown by time aboard with seat time and first/last flown dates, hull-size mix, roles) and
   *travel & navigation* (quantum jumps, jumps per session/hour, systems visited)
 - **Combat** — *ship combat* (how you lost ships), *FPS combat* (loadout ranked by
   how often each weapon was drawn, plus reloads and carry), *injuries & treatment*
-  (what hurt you, med-bed surgeries, hospital vs ship medbay), *gear lost on death*
+  (what hurt you, med-bed surgeries, hospital vs ship medbay, time out of air and how
+  often with no helmet on), *gear lost on death*
   (items and guns lost, what you lose most often), and *looting & inventory*
   (containers looted, items transferred, corpse loots)
 - **Legacy Combat** — real PvP/PvE kills & K/D from patches 4.1–4.3 (PU vs Arena
@@ -167,12 +171,14 @@ Patch* to filter to that patch (and *↩ View career* to reset).
 - **Missions** — outcomes, completion rate, mission types, contracts by name (4.5+), and cargo hauling: SCU delivered by commodity and destination
 - **Economy** — **real aUEC spent**, top items bought, what you buy, cargo & commodities
 - **Blueprints** — every crafting blueprint the game has handed you (4.7+), searchable, plus what you're still missing against the full ~1,600-blueprint catalogue; armour as sets (which one is a piece from complete), ship weapons as S1–S6 ladders, components as a type × size grid; and a **planner**: which missions drop a blueprint, what faction standing they need, and the reputation floor your completed contracts put you at
-- **Activity** — playtime by month, weekday×hour heatmap, session-length mix, streaks
+- **Activity** — playtime by month, where your hours go (starting up, loading screens,
+  main menu, aboard a ship, on foot), weekday×hour heatmap, session-length mix, streaks
 - **Your Machine** — the rig you played on (CPU, GPU + VRAM, memory, driver, renderer,
   Windows build) and when it changed; a **configuration check** that flags measurable
   problems (most usefully: *Star Citizen is rendering on the wrong graphics card*);
-  **frame rate** per session; the game's own hardware benchmark; and a **shareable rig
-  card**
+  **frame rate** per session; **loading screens** (median PU load, the slowest, total
+  time spent on them, launch to login, by destination and by patch); the game's own
+  hardware benchmark; and a **shareable rig card**
 - **Stability** — everything that goes wrong, with a **live dot in the sidebar** that
   pulses while CSR is tailing your logs:
   - **Crash analysis** naming the fault in the game's own words, split into faults you
