@@ -3172,13 +3172,13 @@ def ship_kill_events(events, me, me_id):
         if not (own or by_me):
             continue
         seen = True
-        reasons[reason] += 1
         if own:
             if to >= 2:
                 lost.append({"cls": cls, "reason": reason, "killer": killer})
         else:
             if to >= 2:
                 kills[cls] += 1
+                reasons[reason] += 1
                 if owner:
                     players += 1
             elif to == 1:
@@ -3216,6 +3216,7 @@ def scan_log(path):
     air_spans = []                     # (player, start, end, helmet off?) per closed pair
     vkills = []                        # <Vehicle Destroyed> events (4.10.3+), see ship_kill_events
     me_id = None                       # your player id, from a line that pairs it with your handle
+    me_h = me_q = me_p = me_re = None  # the handle me_id is searched for, and its line probes
     crew_jumps = Counter()             # pilot -> jumps under their hands
     party_open = None                  # when the current party invite was accepted
     party_acc = 0                      # invites accepted
@@ -3330,15 +3331,14 @@ def scan_log(path):
                         vkills.append((vid, vcls, owner if owner != "0" else "", why,
                                        int(frm), int(to), kname, kid if kid != "0" else ""))
                 if me_id is None and (handle or handle_fb):
-                    _h = handle or handle_fb
-                    if "'" + _h + "' [" in line:
-                        m = re.search(r"'" + re.escape(_h) + r"' \[(\d+)\]", line)
-                    elif "Player " + _h + "[" in line:
-                        m = re.search(r"Player " + re.escape(_h) + r"\[(\d+)\]", line)
-                    else:
-                        m = None
-                    if m and m.group(1) != "0":
-                        me_id = m.group(1)
+                    if (handle or handle_fb) != me_h:
+                        me_h = handle or handle_fb
+                        me_q, me_p = "'" + me_h + "' [", "Player " + me_h + "["
+                        me_re = re.compile(r"(?:'%s' \[|Player %s\[)(\d+)\]" % (re.escape(me_h), re.escape(me_h)))
+                    if me_q in line or me_p in line:
+                        m = me_re.search(line)
+                        if m and m.group(1) != "0":
+                            me_id = m.group(1)
                 if air_blk is not None:         # detail lines carry the stamp, then [STAMINA]
                     if line[27:36] == "[STAMINA]":
                         if "Not Wearing Helmet" in line:
@@ -8236,7 +8236,7 @@ function airHTML(v){
 function shipKillsHTML(v){
   const k=v.ship_kills;
   if(!k) return '';
-  const lost=(k.lost||[]).map(r=>`<div class="row"><span>${esc(r.ship)}</span> <span class="vv-u">${esc(r.reason)}${r.killer?' · '+esc(r.killer):''}</span></div>`).join('');
+  const lost=(k.lost||[]).map(r=>`<div class="row"><span>${esc(r.ship)}</span> <span class="vv-u">${esc(r.reason.replace(/([a-z])([A-Z])/g,'$1 $2').toLowerCase())}${r.killer?' · '+esc(r.killer):''}</span></div>`).join('');
   return `<div style="margin-top:16px">`+kpiRow([
       [icon('kills'), fmt(k.kills), 'Ships destroyed', `in ${fmt(k.sessions)} ${k.sessions===1?'session':'sessions'}`],
       [icon('damage'), fmt(k.crippled), 'Crippled', `not destroyed`],
@@ -8246,7 +8246,7 @@ function shipKillsHTML(v){
     ])+
     barsCard('Ships you destroyed','top 10 by name','shipKillBars')+
     (lost ? `<div class="card" style="margin-top:16px"><h3>Ships you lost <span class="u">— ship, reason, killer</span></h3>${lost}</div>` : '')+
-    noteFold(`Logged from 4.10.3.`)+`</div>`;
+    `</div>`;
 }
 function secCombat(v){
   const dc=v.death_causes;
@@ -8254,7 +8254,7 @@ function secCombat(v){
   const lb=v.loot_boxes||{};
   const lootSub=['Small','Medium','Large','Other'].filter(k=>lb[k]).map(k=>fmt(lb[k])+' '+k[0]).join(' · ')||'crates & lockers';
   const info = callout(icon('satellite'),
-    `Current-patch combat (${scopeLabel()}). The 2026 builds log your ship deaths. Ship kills are logged from 4.10.3, no K/D or damage. `+
+    `Current-patch combat (${scopeLabel()}). The 2026 builds log your ship deaths. Ship kills are logged from 4.10.3. No K/D or damage. `+
     `On-foot deaths only show up as the gear you lost. `+
     `Loadout is ranked by how often you drew each weapon. Your old kills are under `+
     `<a class="clink" onclick="gotoSec('legacy')">Legacy Combat</a> →.`);

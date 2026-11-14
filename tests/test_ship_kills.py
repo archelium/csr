@@ -53,6 +53,11 @@ class ScanLogTests(unittest.TestCase):
         self.assertEqual((sk["crippled"], sk["player_ships"], sk["lost"]), ({}, 0, []))
         self.assertEqual(sk["by_reason"], {"Combat": 1})
 
+    def test_by_reason_counts_kills_only(self):
+        text = (vd("10:10:00.000", "1", GLAD, 0, 1)
+                + vd("10:11:00.000", "2", "MISC_Fury", 0, 2, killer="foe", kid="42", owner=MY_ID, reason="Collision"))
+        self.assertEqual(scan(text)["ship_kills"]["by_reason"], {})
+
     def test_collision_and_self_destruct_kills_by_you_count(self):
         text = (vd("10:10:00.000", "1", GLAD, 0, 2, reason="Collision")
                 + vd("10:11:00.000", "2", GLAD, 0, 2, reason="SelfDestruct"))
@@ -88,7 +93,7 @@ class ScanLogTests(unittest.TestCase):
 
 class SummaryTests(unittest.TestCase):
     def test_suffixes_resolve_to_the_base_hull(self):
-        sc_stats.SHIPS.load()
+        sc_stats.SHIPS.load(allow_fetch=False)
         for cls, name in (("AEGS_Gladius_PU_AI_CRIM", "Gladius"),
                           ("AEGS_Gladius_PU_AI_CRIM_IK", "Gladius"),
                           ("AEGS_Gladius_AI_Super_CRIM", "Gladius"),
@@ -96,6 +101,39 @@ class SummaryTests(unittest.TestCase):
                           ("MISC_Freelancer_MIS_PU_AI_CRIM", "Freelancer MIS"),
                           ("MISC_Freelancer_MIS_AI_Super_Crim", "Freelancer MIS"),
                           ("AEGS_Sabre_Firebird_PU_AI_CRIM", "Sabre Firebird")):
+            self.assertEqual(sc_stats.vehicle_ship_name(cls), name, cls)
+
+    def test_real_4103_victim_classes(self):
+        sc_stats.SHIPS.load(allow_fetch=False)
+        for cls, name in (
+        ("AEGS_Gladius_AI_Super_CRIM", "Gladius"),
+        ("AEGS_Gladius_PU_AI_CRIM", "Gladius"),
+        ("AEGS_Gladius_PU_AI_CRIM_IK", "Gladius"),
+        ("AEGS_Sabre_Firebird_PU_AI_CRIM", "Sabre Firebird"),
+        ("AEGS_Vanguard_Harbinger_PU_AI_CRIM", "Vanguard Harbinger"),
+        ("ANVL_Arrow", "Arrow"),
+        ("CRUS_Intrepid", "Intrepid"),
+        ("CRUS_Spirit_C1", "C1 Spirit"),
+        ("CRUS_Starlifter_C2", "C2 Hercules"),
+        ("DRAK_Corsair", "Corsair"),
+        ("DRAK_Herald", "Herald"),
+        ("GLSN_Basher", "Basher"),
+        ("GLSN_Shiv", "Shiv"),
+        ("GRIN_MTC", "MTC"),
+        ("MISC_Freelancer_MIS_AI_Super_Crim", "Freelancer MIS"),
+        ("MISC_Freelancer_MIS_PU_AI_CRIM", "Freelancer MIS"),
+        ("MISC_Fury", "Fury"),
+        ("MRAI_Guardian_MX", "Guardian MX"),
+        ("MRAI_Guardian_MX_Collector_Military", "Guardian MX"),
+        ("MRAI_Pulse", "Pulse"),
+        ("ORIG_m80", "M80"),
+        ("RSI_Aurora_Mk2", "Aurora Mk II"),
+        ("RSI_Constellation_Mk5_Centaurus", "Constellation Mk V Centaurus"),
+        ("RSI_Galaxy", "Galaxy"),
+        ("RSI_Perseus", "Perseus"),
+        ("RSI_Skylark", "Skylark"),
+        ("RSI_Zeus_ES", "Zeus Mk II ES"),
+        ):
             self.assertEqual(sc_stats.vehicle_ship_name(cls), name, cls)
 
     def test_old_session_folds_cleanly(self):
@@ -126,7 +164,7 @@ class SummaryTests(unittest.TestCase):
         self.assertTrue(sc_stats.logs_vehicle_kills(None, None))
 
     def test_lost_carries_names(self):
-        sc_stats.SHIPS.load()
+        sc_stats.SHIPS.load(allow_fetch=False)
         s = scan(vd("10:10:00.000", "1", "MISC_Fury", 0, 2, killer="foe", kid="42", owner=MY_ID, reason="Combat"))
         sm = summary(s)
         self.assertEqual(sm["lost"], [{"ship": "Fury", "reason": "Combat", "killer": "foe"}])
