@@ -5284,6 +5284,39 @@ def _reuse_map(sessions):
     return out
 
 
+SCAN_POOL_MIN = 24     # fewer logs to read than this parse in-process: a pool takes ~1 s to start
+
+
+def _scan_workers():
+    """Half the logical CPUs, 2 to 8. Leaves room for the game if it's running."""
+    return max(2, min(8, (os.cpu_count() or 2) // 2))
+
+
+def _parse_logs(paths, on_done):
+    """scan_log over every path → {path: session}, calling on_done(n) as each one
+    finishes. A full re-read (every log, after a parser bump) runs in worker
+    processes. scan_log touches no shared state, so each log parses on its own. Any
+    pool failure (a frozen exe that can't spawn, a blocked process) falls back to
+    one process."""
+    out = {}
+    if len(paths) >= SCAN_POOL_MIN:
+        import concurrent.futures as cf
+        import pickle
+        try:
+            with cf.ProcessPoolExecutor(max_workers=_scan_workers()) as ex:
+                futs = {ex.submit(scan_log, p): p for p in paths}
+                for f in cf.as_completed(futs):
+                    out[futs[f]] = f.result()
+                    on_done(len(out))
+            return out
+        except (cf.process.BrokenProcessPool, OSError, RuntimeError, pickle.PicklingError):
+            out = {}
+    for p in paths:
+        out[p] = scan_log(p)
+        on_done(len(out))
+    return out
+
+
 def scan_channels(channels, reuse=None):
     """Scan the log files, dedup by fingerprint, and stamp each session with its
     FINAL channel (content `Executable:` path, folder as fallback, HOTFIX folded
@@ -5291,15 +5324,18 @@ def scan_channels(channels, reuse=None):
 
     `reuse` (quick refresh) maps an unchanged log file to its already-parsed session,
     so only new or modified logs — including the live Game.log, which grows every
-    session — are actually read."""
+    session — are actually read. The rest parse first (in parallel when there are
+    many), then every session is folded in file order, so dedup and channel stamping
+    don't depend on which worker finished first."""
     reuse = reuse or {}
     seen = set()
     reused = 0
     out = []
     total_files = sum(len(f) + (1 if l else 0) for _, f, l in channels)
     dropped = 0
-    i = 0
     cstep("decrypting & parsing flight telemetry")
+    jobs = []                          # (folder label, path, reused session or None), in file order
+    first = {}                         # file key → the first path seen with it
     for folder_label, files, live in channels:
         # current graphics settings for this channel (local installs only)
         cdir = _channel_dir(files, live)
@@ -5318,31 +5354,45 @@ def scan_channels(channels, reuse=None):
                     s_["_csr_" + k] = v["when"]
                 _SETTINGS_CACHE[lbl] = s_
         for path in list(files) + ([live] if live else []):
-            i += 1
             s = None
-            if reuse:
-                try:
-                    st = os.stat(path)
-                    s = reuse.get(_file_key(os.path.basename(path),
-                                            int(st.st_mtime), st.st_size))
-                except OSError:
-                    s = None
+            try:
+                st = os.stat(path)
+                key = _file_key(os.path.basename(path), int(st.st_mtime), st.st_size)
+            except OSError:
+                key = None
+            if reuse and key:
+                s = reuse.get(key)
                 if s is not None:
                     reused += 1
-            if s is None:
-                s = scan_log(path)
-            fp = s.get("fp")
-            if fp in seen:                 # duplicate within this scan (folder copies)
-                dropped += 1
-                cprogress(i, total_files)
+            # the same log copied into another channel folder: parse it once, the
+            # fingerprint dedup below drops the copy exactly as before
+            if s is None and key in first:
+                jobs.append((folder_label, first[key], None))
                 continue
-            seen.add(fp)
-            chan = s.get("channel") or folder_label   # content wins; folder is the fallback
-            s["channel"] = CHANNEL_ALIAS.get(chan, chan)   # store the FINAL channel
-            out.append(s)
-            cprogress(i, total_files)
-            if i % 15 == 0:            # feed the browser terminal's bar (parse = 8..85%)
-                set_progress(0.08 + 0.77 * i / total_files, "parsing flight telemetry", i, total_files)
+            if key:
+                first[key] = path
+            jobs.append((folder_label, path, s))
+
+    def _progress(n):
+        i = reused + n
+        cprogress(i, total_files)
+        if i % 15 == 0:                # feed the browser terminal's bar (parse = 8..85%)
+            set_progress(0.08 + 0.77 * i / total_files, "parsing flight telemetry", i, total_files)
+
+    todo = list(dict.fromkeys(p for _, p, s in jobs if s is None))
+    copies = sum(1 for _, _, s in jobs if s is None) - len(todo)
+    parsed = _parse_logs(todo, lambda n: _progress(n + copies * n // max(1, len(todo))))
+    for folder_label, path, s in jobs:
+        if s is None:
+            s = parsed[path]
+        fp = s.get("fp")
+        if fp in seen:                 # duplicate within this scan (folder copies)
+            dropped += 1
+            continue
+        seen.add(fp)
+        chan = s.get("channel") or folder_label   # content wins; folder is the fallback
+        s["channel"] = CHANNEL_ALIAS.get(chan, chan)   # store the FINAL channel
+        out.append(s)
     cprogress(total_files, total_files)    # ensure the bar closes at 100%
     set_progress(0.85, "parsing flight telemetry", total_files, total_files)
     if reused:
@@ -11467,4 +11517,6 @@ def main():
 
 
 if __name__ == "__main__":
+    import multiprocessing
+    multiprocessing.freeze_support()    # scan workers in the frozen exe start here, not in main()
     main()
