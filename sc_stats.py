@@ -546,10 +546,20 @@ def _channel_label(folder_name):
     return up or "LIVE"
 
 
+def _is_cachegen_log(path):
+    """True for the launcher's shader-cache runs (`PSOCacheGen Build(...) ….log`).
+    They sit in logbackups next to the game logs but are not play sessions."""
+    return os.path.basename(path or "").lower().startswith("psocachegen")
+
+
+def _game_logs(paths):
+    return [p for p in paths if not _is_cachegen_log(p)]
+
+
 def _channel_files(folder):
     """(files, live) for one channel folder (…/LIVE): its logbackups + Game.log."""
     lb = os.path.join(folder, "logbackups")
-    files = glob.glob(os.path.join(lb, "*.log")) if os.path.isdir(lb) else []
+    files = _game_logs(glob.glob(os.path.join(lb, "*.log"))) if os.path.isdir(lb) else []
     live = os.path.join(folder, "Game.log")
     return files, (live if os.path.isfile(live) else None)
 
@@ -621,7 +631,7 @@ def find_logs_recursive(root, cap=20000):
     for dirpath, dirnames, filenames in os.walk(root):
         dirnames[:] = [d for d in dirnames if not d.startswith(".")]
         for fn in filenames:
-            if fn.lower().endswith(".log"):
+            if fn.lower().endswith(".log") and not _is_cachegen_log(fn):
                 out.append(os.path.join(dirpath, fn))
                 if len(out) >= cap:
                     return out
@@ -643,7 +653,7 @@ def resolve_channels(configured=None, explicit_logs=None, strict=False):
     of zero, which looks like the copied folder was empty."""
     if explicit_logs and os.path.isdir(explicit_logs):
         live = os.path.join(os.path.dirname(os.path.normpath(explicit_logs)), "Game.log")
-        return [("LIVE", glob.glob(os.path.join(explicit_logs, "*.log")),
+        return [("LIVE", _game_logs(glob.glob(os.path.join(explicit_logs, "*.log"))),
                  live if os.path.isfile(live) else None)]
 
     roots = []
@@ -5155,10 +5165,16 @@ def _deser_session(d):
     return d
 
 
+def _from_cachegen(s):
+    """Session archived from a PSOCacheGen log (written before those were skipped)."""
+    return _is_cachegen_log(str(s.get("_src") or ""))
+
+
 def load_archive():
     try:
         raw = json.load(open(archive_path(), encoding="utf-8"))
-        return [_deser_session(s) for s in raw.get("sessions", [])]
+        return [_deser_session(s) for s in raw.get("sessions", [])
+                if not _from_cachegen(s)]
     except Exception:
         return []
 
@@ -5201,6 +5217,8 @@ def merge_sessions(*groups):
     best, order = {}, []
     for g in groups:
         for s in g:
+            if _from_cachegen(s):
+                continue
             k = _session_id(s)
             if k not in best:
                 best[k] = s
