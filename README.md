@@ -7,7 +7,7 @@ broken down by patch and by account.
 
 Pure Python **standard library** (no pip installs to run from source).
 
-**Patch coverage — tested on 4.1 → 4.10** (October 2026). CSR reads the version out of each
+**Patch coverage — tested on 4.1 → 4.10.3** (November 2026). CSR reads the version out of each
 log rather than working from a fixed list, so **older patches will often work too**, and
 newer ones should. Neither is tested: Star Citizen changes its log format between
 builds, so expect gaps or misparsed figures outside that range — and please
@@ -36,10 +36,12 @@ bugs. Each crash row says what you were doing, where, and how long you'd been in
 Repeats of the same bug fold into one *crash loop* row. Also **returns to the main
 menu mid-session** — the "it booted me for no reason" moment, which Star Citizen records
 as *you* asking to disconnect, and which nothing else counts. Since the 2026 builds a
-deliberate *Exit to menu* leaves the same trace, so CSR counts both and says so. And the
-servers you joined: region, distinct servers, and hops between them.
+deliberate *Exit to menu* leaves the same trace, so CSR counts both and says so. Then the
+servers you joined: region, distinct servers, and hops between them. And your **home
+inventory**: how full it is against its 5,000 SCU cap, sorts that fail, and inventory
+requests that grow past what the game will send.
 
-![Stability — crash analysis and returns to the main menu](docs/img/stability.png)
+![Stability — crash analysis, returns to the main menu and the home inventory check](docs/img/stability.png)
 
 ### Your Machine
 
@@ -108,12 +110,12 @@ CSR is portable, so updating is just **replace the exe**:
 keeps sessions Star Citizen has since deleted from your log folder. If you want a
 belt-and-braces backup first, open CSR and use **💾 Backup & transfer → Export**.
 
-What happens on your first run of v1.8.0, depending on where you're coming from:
+What happens on your first run of v1.9.0, depending on where you're coming from:
 
 | Coming from | What to expect |
 |---|---|
 | **v1.0.0** | v1.0.0 kept no archive, so your history is rebuilt from whatever logs you still have. If your saved folder was `…\StarCitizen\LIVE`, CSR now finds `PTU` and `TECH-PREVIEW` beside it on its own — **no need to re-pick a folder** — and a **Channel** dropdown appears if it finds any. |
-| **v1.1.0 – v1.7.0** | Your archive carries over untouched. |
+| **v1.1.0 – v1.8.0** | Your archive carries over untouched. |
 | **any** | The first scan re-reads **every** log (a minute or so). This is deliberate: each release fixes parsing bugs or extracts new data, so nothing older is trusted. It happens once — after that CSR starts, and refreshes, in about a second. |
 
 Coming from **v1.2.0** specifically, the first run also *moves* some existing numbers,
@@ -160,7 +162,9 @@ Patch* to filter to that patch (and *↩ View career* to reset).
 - **Flight & Travel** — where you've been (jurisdictions, landing-zone visits, hangars requested, jumps as crew and the pilots you flew under, time in a party, CrimeStat rises — from the HUD notices, 4.5+), *places visited* (every station, city, rest stop and outpost you landed or docked at, your home base, the 15 you visit most), *ships & hulls* (distinct ships, boardings, take-offs, time aboard ships, fleet
   size, most-flown by time aboard with seat time and first/last flown dates, hull-size mix, roles) and
   *travel & navigation* (quantum jumps, jumps per session/hour, systems visited)
-- **Combat** — *ship combat* (how you lost ships), *FPS combat* (loadout ranked by
+- **Combat** — *ship combat* (how you lost ships, and from 4.10.3 the ships you destroyed:
+  kills, crippled, other players' ships, kills per 10 hours, the ships you destroyed most,
+  and who destroyed yours), *FPS combat* (loadout ranked by
   how often each weapon was drawn, plus reloads and carry), *injuries & treatment*
   (what hurt you, med-bed surgeries, hospital vs ship medbay, time out of air and how
   often with no helmet on), *gear lost on death*
@@ -197,6 +201,9 @@ Patch* to filter to that patch (and *↩ View career* to reset).
   - How your sessions **ended**, per patch
   - **Servers** — your main region, joins by region, distinct servers joined, and server
     hops (a different server in the same session) per patch
+  - **Home inventory** — how full your home inventory is (used SCU against its cap, by
+    month), failed sorts, the largest inventory request against the 1 MB the game will
+    send, operations dropped over that limit, and reward items announced
 - **Live crash alerts** — while CSR is running it watches your log and pops an alert on
   the dashboard within seconds of a crash, a lost player or a genuine disconnect, saying what broke and
   whether it was your PC or CIG's servers. Routine disconnect chatter is filtered out.
@@ -236,9 +243,10 @@ Gallant**); ship names/art come from the official **RSI Ship Matrix**, item name
 from the **SC-Wiki** item data. Artwork and fonts are embedded, so the page is a
 single self-contained file. Internet is used only on the run that builds the page.
 
-**What CSR can't show** — kills, K/D, accuracy, damage, and your aUEC *balance /
+**What CSR can't show** — on-foot kills, K/D, accuracy, damage, and your aUEC *balance /
 earnings*: Star Citizen stopped writing those to the client log in the 2026 builds
-(combat + wallet went server-side). aUEC **spend** *is* logged (per shop purchase),
+(combat + wallet went server-side). Ship kills came back in 4.10.3 and are counted from
+there. aUEC **spend** *is* logged (per shop purchase),
 so the Economy tab is real. "Favorite guns" is by **times drawn into your hand**,
 not shots fired. Frame rate **is** recorded, but as a **whole-session average**
 written when a level unloads — not a live counter, so a session that ran at 90 FPS in
