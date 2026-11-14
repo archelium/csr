@@ -12,12 +12,14 @@ What it CAN report (things SC writes to the client log):
   * Ships flown  (from vehicle control-token events)  + your most-flown
   * Time aboard each ship (crew channel, 4.5.167+) and in its pilot seat
   * Missions — completed / failed / abandoned, completion rate
-  * Deaths (ship-destruction deaths — the only kind SC logs in 2026 builds)
+  * Deaths (ship-destruction deaths, plus the gear you lost on foot)
+  * Ship kills and ships lost (<Vehicle Destroyed>, 4.10.3 onward)
   * Quantum-travel activity, hour-of-day / day-of-week play patterns
   * Most-drawn weapons & tools + reloads & carry (loadout preference)
 
 What it CANNOT (SC no longer writes these to the client log):
-  * Kills, K/D, accuracy, shots fired, damage — all server-side now.
+  * K/D, accuracy, shots fired, damage — all server-side now. Ship kills are the
+    one exception, from 4.10.3.
 
 Usage:
     python sc_stats.py                 # auto-detect logs, write CSR.html
@@ -50,7 +52,7 @@ CSR_CONTACT = "support@archelium.com"      # publisher/contact (archelium.com)
 # Bump whenever scan_log() learns to extract something new or fixes an extraction bug.
 # A quick refresh reuses archived sessions only when they were parsed by THIS version,
 # so improved parsing always re-reads old logs instead of silently keeping stale numbers.
-PARSER_VERSION = 24
+PARSER_VERSION = 25
 
 
 # --------------------------------------------------------------------------- #
@@ -546,10 +548,20 @@ def _channel_label(folder_name):
     return up or "LIVE"
 
 
+def _is_cachegen_log(path):
+    """True for the launcher's shader-cache runs (`PSOCacheGen Build(...) ….log`).
+    They sit in logbackups next to the game logs but are not play sessions."""
+    return os.path.basename(path or "").lower().startswith("psocachegen")
+
+
+def _game_logs(paths):
+    return [p for p in paths if not _is_cachegen_log(p)]
+
+
 def _channel_files(folder):
     """(files, live) for one channel folder (…/LIVE): its logbackups + Game.log."""
     lb = os.path.join(folder, "logbackups")
-    files = glob.glob(os.path.join(lb, "*.log")) if os.path.isdir(lb) else []
+    files = _game_logs(glob.glob(os.path.join(lb, "*.log"))) if os.path.isdir(lb) else []
     live = os.path.join(folder, "Game.log")
     return files, (live if os.path.isfile(live) else None)
 
@@ -621,7 +633,7 @@ def find_logs_recursive(root, cap=20000):
     for dirpath, dirnames, filenames in os.walk(root):
         dirnames[:] = [d for d in dirnames if not d.startswith(".")]
         for fn in filenames:
-            if fn.lower().endswith(".log"):
+            if fn.lower().endswith(".log") and not _is_cachegen_log(fn):
                 out.append(os.path.join(dirpath, fn))
                 if len(out) >= cap:
                     return out
@@ -643,7 +655,7 @@ def resolve_channels(configured=None, explicit_logs=None, strict=False):
     of zero, which looks like the copied folder was empty."""
     if explicit_logs and os.path.isdir(explicit_logs):
         live = os.path.join(os.path.dirname(os.path.normpath(explicit_logs)), "Game.log")
-        return [("LIVE", glob.glob(os.path.join(explicit_logs, "*.log")),
+        return [("LIVE", _game_logs(glob.glob(os.path.join(explicit_logs, "*.log"))),
                  live if os.path.isfile(live) else None)]
 
     roots = []
@@ -1407,6 +1419,11 @@ VDESTROY_RE = re.compile(
     r"<Vehicle Destruction> CVehicle::OnAdvanceDestroyLevel: Vehicle '([^']+)' \[\d+\] "
     r"in zone '([^']*)'.*?driven by '([^']*)' \[\d+\] "
     r"advanced from destroy level (\d+) to (\d+) caused by '([^']*)'")
+# 4.10.3+: one line per vehicle damage-state change, with the killer and the owner's id.
+VKILL_RE = re.compile(
+    r"<Vehicle Destroyed> Vehicle '[^']+' \[(\d+)\] class '([^']+)' "
+    r"\(owner player \[(\d+)\], driver \[\d+\]\) destroyed: reason \[(\w+)\] "
+    r"level \[(\d+)\] -> \[(\d+)\] .*?killer '([^']*)' \[(\d+)\]")
 GAMERULES_RE = re.compile(r'gamerules="([^"]+)"')
 # shop purchases: item buys carry a price + item class + quantity; commodity buys
 # carry a price only (the good is a resourceGUID we don't name).  client_price is
@@ -1759,6 +1776,18 @@ def has_crew_channel(patch, build):
     if p == (0,):
         return True
     return p > (4, 5) or (p == (4, 5) and _ver_tuple(build)[:3] >= (4, 5, 167))
+
+
+def logs_vehicle_kills(patch, build):
+    """Does this build log <Vehicle Destroyed>? From 4.10.200 on. An empty patch counts
+    as yes, like has_crew_channel. On 4.10 and on a named Tech-Preview branch the build
+    decides."""
+    if not patch:
+        return True
+    p = _ver_tuple(patch)
+    if p == (0,):
+        return _ver_tuple(build)[:3] >= (4, 10, 200)
+    return p > (4, 10) or (p == (4, 10) and _ver_tuple(build)[:3] >= (4, 10, 200))
 
 
 SHIP_HOSTS = {"caterpillar", "ironclad"}    # ships a Drake Command Module plugs into
@@ -2928,6 +2957,13 @@ def _lz_visits(stamps):
 # The game asks for your stored items when you land or dock somewhere, and again whenever
 # an inventory or shop screen opens there. Flying past a place doesn't log it.
 PLACE_RE = re.compile(r"<RequestLocationInventory> Player\[([^\]]+)\] requested inventory for Location\[([^\]]+)\]")
+# Home inventory check. Capacity is in micro-SCU (5,000,000,000 = 5,000 SCU).
+INV_READ_RE = re.compile(r"(?:Source|Target)\[(\d+):Location:(\d+)\] Capacity\[(\d+)\] UsedCapacity\[(\d+)")
+INV_SORT_RE = re.compile(r"Queued Request\[(\d+)\] Type\[Sort\].*?Source Inventory\[(\d+):Location:(\d+)\]")
+INV_DONE_RE = re.compile(r"Request\[(\d+)\] for '[^']*' \[\d+\] Type\[Sort\] Result\[(\w+)\]")
+INV_BUDGET_RE = re.compile(r'size (\d+) is greater than .*?entityName="([^"]*)"')
+REWARDS_RE = re.compile(r"You.ve Earned: (\d+) Reward")
+INV_CAP_BYTES = 1000000            # a remote method over this is not replicated at all
 _PLACE_BODY = {  # the planet or moon number in a location code
     "Stanton1": "Hurston", "Stanton1a": "Arial", "Stanton1b": "Aberdeen", "Stanton1c": "Magda",
     "Stanton1d": "Ita", "Stanton2": "Crusader", "Stanton2a": "Cellin", "Stanton2b": "Daymar",
@@ -3130,6 +3166,59 @@ def air_episodes(spans, me):
             "nohelm": sum(1 for s, e, nh in merged if nh and (e - s).total_seconds() >= AIR_MIN)}
 
 
+def inventory_check(reads, votes, sorts, budget, rewards, me, me_id):
+    """Fold one session's inventory lines into the `inv` dict, None when there are none.
+    reads: (player id, location id) -> [max used, capacity], micro-SCU.
+    votes: location id -> Counter of the Location[...] codes requested just before a reading.
+    sorts: (player id, location id) -> [ok, failed]. budget: (size, hard, entity name) rows."""
+    mine = lambda pid: not me_id or pid == me_id
+    locs = {}
+    for (pid, loc), (used, cap) in reads.items():
+        if mine(pid):
+            code = votes[loc].most_common(1)[0][0] if votes.get(loc) else ""
+            locs[loc] = [used, cap, code]
+    srt = {loc: list(r) for (pid, loc), r in sorts.items() if mine(pid)}
+    bud = [[size, hard] for size, hard, who in budget if not me or who.lower() == me]
+    if not (locs or srt or bud or rewards):
+        return None
+    return {"locs": locs, "sorts": srt, "budget": bud, "rewards": rewards}
+
+
+def ship_kill_events(events, me, me_id):
+    """Fold the <Vehicle Destroyed> events of one session into the `ship_kills` dict.
+    events: (vehicle id, class, owner id, reason, from, to, killer, killer id) in log order.
+    One event per vehicle, the line with its highest level. None when none is about you."""
+    best = {}
+    for ev in events:
+        if ev[0] not in best or ev[5] >= best[ev[0]][5]:
+            best[ev[0]] = ev
+
+    def mine(name, pid):
+        return bool(pid and pid == me_id) or bool(me and name.lower() == me)
+    kills, crip, reasons, lost, players, seen = Counter(), Counter(), Counter(), [], 0, False
+    for _vid, cls, owner, reason, _frm, to, killer, kid in best.values():
+        own = bool(me_id) and owner == me_id
+        by_me = mine(killer, kid)
+        if not (own or by_me):
+            continue
+        seen = True
+        if own:
+            if to >= 2:
+                lost.append({"cls": cls, "reason": reason, "killer": killer})
+        else:
+            if to >= 2:
+                kills[cls] += 1
+                reasons[reason] += 1
+                if owner:
+                    players += 1
+            elif to == 1:
+                crip[cls] += 1
+    if not seen:
+        return None
+    return {"kills": dict(kills), "crippled": dict(crip), "by_reason": dict(reasons),
+            "player_ships": players, "lost": lost}
+
+
 def scan_log(path):
     """Extract one session's stats from a single Game.log file."""
     try:
@@ -3155,6 +3244,16 @@ def scan_log(path):
     air_open = {}                      # (kind, player) -> [start, helmet off?] while a notice is open
     air_blk = None                     # the open record whose [STAMINA] detail block is being read
     air_spans = []                     # (player, start, end, helmet off?) per closed pair
+    vkills = []                        # <Vehicle Destroyed> events (4.10.3+), see ship_kill_events
+    inv_reads = {}                     # (player id, location id) -> [max used, capacity]
+    inv_votes = defaultdict(Counter)   # location id -> Location[...] codes requested before a reading
+    inv_code = None                    # the last Location[...] an inventory was requested for
+    inv_sorts = {}                     # (player id, location id) -> [sorts ok, sorts failed]
+    inv_queued = {}                    # request number -> (player id, location id) of a queued Sort
+    inv_budget = []                    # (size, hard?, entity name) of inventory operations over budget
+    inv_rewards = 0                    # reward items announced
+    me_id = None                       # your player id, from a line that pairs it with your handle
+    me_h = me_q = me_p = me_re = None  # the handle me_id is searched for, and its line probes
     crew_jumps = Counter()             # pilot -> jumps under their hands
     party_open = None                  # when the current party invite was accepted
     party_acc = 0                      # invites accepted
@@ -3262,6 +3361,21 @@ def scan_log(path):
                 ship_time.feed(line, p)
                 if "Loading screen for " in line or (load_t.login_at is None and "<LoginCompleted>" in line):
                     load_t.feed(line, p)
+                if "<Vehicle Destroyed>" in line:
+                    m = VKILL_RE.search(line)
+                    if m:
+                        vid, vcls, owner, why, frm, to, kname, kid = m.groups()
+                        vkills.append((vid, vcls, owner if owner != "0" else "", why,
+                                       int(frm), int(to), kname, kid if kid != "0" else ""))
+                if me_id is None and (handle or handle_fb):
+                    if (handle or handle_fb) != me_h:
+                        me_h = handle or handle_fb
+                        me_q, me_p = "'" + me_h + "' [", "Player " + me_h + "["
+                        me_re = re.compile(r"(?:'%s' \[|Player %s\[)(\d+)\]" % (re.escape(me_h), re.escape(me_h)))
+                    if me_q in line or me_p in line:
+                        m = me_re.search(line)
+                        if m and m.group(1) != "0":
+                            me_id = m.group(1)
                 if air_blk is not None:         # detail lines carry the stamp, then [STAMINA]
                     if line[27:36] == "[STAMINA]":
                         if "Not Wearing Helmet" in line:
@@ -3458,6 +3572,10 @@ def scan_log(path):
                 elif QT_RE in line:
                     qt_targets += 1
                 elif 'Added notification "' in line:
+                    if "Earned: " in line:       # the text runs over several lines, no closing quote
+                        m = REWARDS_RE.search(line)
+                        if m:
+                            inv_rewards += int(m.group(1))
                     nm = NOTIF_RE.search(line)
                     if nm:
                         hud_n += 1
@@ -3503,6 +3621,35 @@ def scan_log(path):
                     m = PLACE_RE.search(line)
                     if m and not m.group(2).startswith("INVALID"):
                         places.append((m.group(1), m.group(2)))
+                        inv_code = m.group(2)
+                elif "<OnDragInventoryItemModifyTarget>" in line:
+                    for m in INV_READ_RE.finditer(line):
+                        key, used, cap = (m.group(1), m.group(2)), int(m.group(4)), int(m.group(3))
+                        row = inv_reads.get(key)
+                        if row is None:
+                            inv_reads[key] = [used, cap]
+                        elif used > row[0]:
+                            row[0], row[1] = used, cap
+                        if inv_code:
+                            inv_votes[m.group(2)][inv_code] += 1
+                elif "Type[Sort]" in line:
+                    if "Result[" in line:
+                        m = INV_DONE_RE.search(line)
+                        key = inv_queued.pop(m.group(1), None) if m else None
+                        if key:
+                            tally = inv_sorts.setdefault(key, [0, 0])
+                            if m.group(2) == "Failed":
+                                tally[1] += 1
+                            elif m.group(2) == "Succeed":
+                                tally[0] += 1
+                    elif "Queued Request[" in line and ":Location:" in line:
+                        m = INV_SORT_RE.search(line)
+                        if m:
+                            inv_queued[m.group(1)] = (m.group(2), m.group(3))
+                elif "Over Budget" in line and "InventoryManagementOperation" in line:
+                    m = INV_BUDGET_RE.search(line)
+                    if m:
+                        inv_budget.append((int(m.group(1)), "(Soft Limit)" not in line, m.group(2)))
                 elif "<Join PU>" in line:
                     m = JOIN_PU_RE.search(line)
                     if m:
@@ -3791,6 +3938,8 @@ def scan_log(path):
     medbed_ship = sum(1 for a, ship, _p in medbed if ship and (not _me or a.lower() == _me))
     places_seen = sorted({c for a, c in places if not _me or a.lower() == _me})
     air = air_episodes(air_spans, _me)
+    ship_kills = ship_kill_events(vkills, _me, me_id)
+    inv = inventory_check(inv_reads, inv_votes, inv_sorts, inv_budget, inv_rewards, _me, me_id)
     medbed_parts = Counter()
     for a, _ship, parts in medbed:
         if not _me or a.lower() == _me:
@@ -3831,7 +3980,7 @@ def scan_log(path):
         "contracts_failed": dict(contracts_failed),
         "injuries": dict(injuries), "medbed_n": medbed_n, "medbed_ship": medbed_ship,
         "medbed_parts": dict(medbed_parts), "crew_jumps": dict(crew_jumps),
-        "places": places_seen, "air": air,
+        "places": places_seen, "air": air, "ship_kills": ship_kills, "inv": inv,
         "party_acc": party_acc, "party_secs": round(party_secs), "crimestat": crimestat,
         "haul_scu": haul_scu, "haul_runs": haul_runs, "haul_lost": haul_lost, "haul_max": haul_max,
         "haul_com": dict(haul_com), "haul_dest": dict(haul_dest),
@@ -3940,6 +4089,12 @@ def blank_patch():
         "places": {},
         # out of air: episode seconds, those without a helmet, sessions with one, longest
         "air_eps": [], "air_nohelm": 0, "air_sessions": 0, "air_longest": None,
+        # ship kills (4.10.3+): victim class -> n for kills and crippled, reasons, player-owned
+        # kills, losses, and the seconds played on builds that log the line (the per-hour base)
+        "sk_kills": Counter(), "sk_crip": Counter(), "sk_reason": Counter(), "sk_players": 0,
+        "sk_lost": [], "sk_sessions": 0, "sk_kill_sessions": 0, "vd_secs": 0,
+        # home inventory: [local date, start, inv dict] per session that logged anything
+        "inv": [],
     }
 
 
@@ -4114,6 +4269,21 @@ def fold(agg, s):
         _top = max(_air["eps"])
         if agg["air_longest"] is None or _top > agg["air_longest"][0]:
             agg["air_longest"] = [_top, _d]
+    _inv = s.get("inv")
+    if _inv:
+        agg["inv"].append([_d, s["start"].isoformat() if s.get("start") else "", _inv])
+    if logs_vehicle_kills(s.get("patch"), s.get("build")):
+        agg["vd_secs"] += s["dur"]
+    _sk = s.get("ship_kills")
+    if _sk:
+        agg["sk_kills"].update(_sk["kills"])
+        agg["sk_crip"].update(_sk["crippled"])
+        agg["sk_reason"].update(_sk["by_reason"])
+        agg["sk_players"] += _sk["player_ships"]
+        agg["sk_lost"].extend(dict(r, date=_d) for r in _sk["lost"])
+        agg["sk_sessions"] += 1
+        if _sk["kills"]:
+            agg["sk_kill_sessions"] += 1
     _ld = s.get("loads") or []
     agg["loads"].extend(_ld)
     agg["loads_hung"] += s.get("loads_hung", 0)
@@ -4438,6 +4608,59 @@ def _loading_summary(agg):
     }
 
 
+def _inventory_summary(agg):
+    """The home inventory: the location read in the most sessions. A session's figure is
+    its maximum reading, since an inventory dips while its pages load. None when no
+    session logged an inventory line."""
+    rows = sorted(agg["inv"], key=lambda r: r[1])
+    if not rows:
+        return None
+    seen, codes, latest = Counter(), defaultdict(Counter), {}
+    for d, _st, inv in rows:
+        for loc, (used, cap, code) in inv["locs"].items():
+            if cap > 0:
+                seen[loc] += 1
+                latest[loc] = (d, used, cap)
+                if code:
+                    codes[loc][code] += 1
+
+    def label(loc):
+        return place_name(codes[loc].most_common(1)[0][0])[0] if codes.get(loc) else "Unnamed location"
+
+    home = home_loc = None
+    if seen:
+        loc = home_loc = max(seen, key=lambda k: (seen[k], latest[k][0] or "", k))
+        d, used, cap = latest[loc]
+        months = {}
+        for rd, _st, inv in rows:
+            r = inv["locs"].get(loc)
+            if rd and r and r[1] > 0:
+                ym = rd[:7]
+                months[ym] = max(months.get(ym, 0), 100 * r[0] / r[1])
+        ok = fail = 0
+        for _d, _st, inv in rows:
+            tally = inv["sorts"].get(loc)
+            if tally:
+                ok += tally[0]
+                fail += tally[1]
+        home = {"name": label(loc), "used": round(used / 1e6), "cap": round(cap / 1e6),
+                "pct": round(100 * used / cap, 1), "date": d, "sessions": seen[loc],
+                "months": [[k, round(v, 1)] for k, v in sorted(months.items())],
+                "sorts": [ok, fail]}
+    req = None
+    for d, _st, inv in reversed(rows):
+        if inv["budget"]:
+            size = max(b[0] for b in inv["budget"])
+            req = {"kb": round(size / 1000), "pct": round(100 * size / INV_CAP_BYTES, 1), "date": d}
+            break
+    hard = [d for d, _st, inv in rows for b in inv["budget"] if b[1]]
+    others = [[label(k), round(100 * u / c, 1), d] for k, (d, u, c) in latest.items()
+              if k != home_loc]
+    others.sort(key=lambda r: (-r[1], r[0]))
+    return {"home": home, "req": req, "hard": [len(hard), hard[-1] if hard else None],
+            "rewards": sum(inv["rewards"] for _d, _st, inv in rows), "others": others[:5]}
+
+
 def _places_summary(agg):
     """Distinct places, most visited first. None when no inventory request was logged."""
     rows = [[n, sy, k, c, d] for n, (sy, k, c, d) in agg["places"].items()]
@@ -4457,6 +4680,58 @@ def _air_summary(agg):
     return {"n": len(eps), "secs": round(sum(eps)), "median": round(_median(eps), 1),
             "longest": agg["air_longest"],
             "nohelm": agg["air_nohelm"], "sessions": agg["air_sessions"]}
+
+
+_AI_TOKENS = {"pu", "ai", "super", "crim", "ik"}
+
+
+def vehicle_ship_name(cls):
+    """Ship name for a <Vehicle Destroyed> class. NPC classes carry AI/crime suffixes
+    (AEGS_Gladius_PU_AI_CRIM, ..._AI_Super_CRIM). They come off first, then the model is
+    matched by its exact matrix name so Vanguard Harbinger and Sabre Firebird stay
+    themselves. Falls back to the matrix match, then to the class without its maker code."""
+    parts = cls.split("_")
+    while len(parts) > 1 and parts[-1].lower() in _AI_TOKENS:
+        parts.pop()
+    base = "_".join(parts)
+    if SHIPS.ok:
+        want = " ".join(parts[1:]).lower()
+        for n, rec in SHIPS.by_name.items():
+            if n and n.lower() == want and rec.get("name"):
+                return rec["name"]
+        nm = _ship_display_name(base)
+        if nm:
+            return nm
+    return " ".join(parts[1:] or parts)
+
+
+def _ship_kills_summary(agg):
+    """Ships you destroyed and lost (4.10.3+). {"empty": True} when builds that log the line
+    were played but none was about you, None when no such build is in scope."""
+    if not agg["sk_sessions"]:
+        return {"empty": True} if agg["vd_secs"] else None
+    top, crip = Counter(), Counter()
+    for cls, n in agg["sk_kills"].items():
+        top[vehicle_ship_name(cls)] += n
+    for cls, n in agg["sk_crip"].items():
+        crip[vehicle_ship_name(cls)] += n
+    kills = sum(top.values())
+    hours = agg["vd_secs"] / 3600
+    lost = []
+    for r in reversed(agg["sk_lost"]):
+        k = re.sub(r"_\d{6,}$", "", r["killer"])
+        if k != r["killer"]:
+            k = vehicle_ship_name(k)
+        lost.append({"ship": vehicle_ship_name(r["cls"]), "reason": r["reason"],
+                     "killer": "" if k.lower() in ("none", "") else k, "date": r.get("date")})
+    lost_n = len(lost)
+    lost.sort(key=lambda r: r["date"] or "", reverse=True)      # newest first, stable inside a day
+    return {"kills": kills, "crippled": sum(crip.values()), "player_ships": agg["sk_players"],
+            "per10h": round(kills / hours * 10, 1) if hours >= 1 else None,
+            "hours": round(hours, 1), "sessions": agg["sk_kill_sessions"],
+            "top": [[k, n] for k, n in sorted(top.items(), key=lambda kv: (-kv[1], kv[0]))[:10]],
+            "by_reason": [[k, n] for k, n in sorted(agg["sk_reason"].items(), key=lambda kv: (-kv[1], kv[0]))],
+            "lost": lost[:10], "lost_n": lost_n}
 
 
 def _hours_split(agg):
@@ -4749,7 +5024,9 @@ def finalize(agg):
         "loading": _loading_summary(agg),
         "hours_split": _hours_split(agg),
         "places": _places_summary(agg),
+        "inventory": _inventory_summary(agg),
         "air": _air_summary(agg),
+        "ship_kills": _ship_kills_summary(agg),
         "gear_lost": _gear_lost_summary(agg),
         "gun_meta": gun_meta,
         "legacy": legacy,
@@ -5155,10 +5432,16 @@ def _deser_session(d):
     return d
 
 
+def _from_cachegen(s):
+    """Session archived from a PSOCacheGen log (written before those were skipped)."""
+    return _is_cachegen_log(str(s.get("_src") or ""))
+
+
 def load_archive():
     try:
         raw = json.load(open(archive_path(), encoding="utf-8"))
-        return [_deser_session(s) for s in raw.get("sessions", [])]
+        return [_deser_session(s) for s in raw.get("sessions", [])
+                if not _from_cachegen(s)]
     except Exception:
         return []
 
@@ -5201,6 +5484,8 @@ def merge_sessions(*groups):
     best, order = {}, []
     for g in groups:
         for s in g:
+            if _from_cachegen(s):
+                continue
             k = _session_id(s)
             if k not in best:
                 best[k] = s
@@ -6079,6 +6364,8 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     margin-left:auto;text-align:right;line-height:1.25}
   .mini.na{opacity:.72}.mini.na::before{background:var(--line)}
   .mini.na .mv{color:var(--dim);font-size:16px}.mini.na .mi{color:var(--dim)}
+  .kpi.warn .v{color:var(--amber)}
+  .kpi.bad .v{color:var(--red)}
   /* a stat this patch's game build never recorded — muted so it reads "absent", not "zero" */
   .kpi.na .v{color:var(--dim);font-size:24px}
   .kpi.na::after{background:linear-gradient(90deg,var(--line),transparent)}
@@ -7846,8 +8133,8 @@ function splitbar(el, parts, center){
 }
 
 const NOTE = noteFold(
-  `Built from your client logs. Playtime, ships, missions, deaths, travel and loadout are real; kills, K/D and accuracy aren't in the log any more.`,
-  `CIG moved combat server-side in the 2026 builds. A weapon's drawn count is how often you pulled it into your hand, not shots fired. Reloads are magazine swaps read off the weapon from 4.10 (ammo-box repools are counted separately), and the repool events before that; carried comes from your stow and holster slots. Armour, attachments and props are left out of the loadout lists. Ship deaths are the only death the log names; gear lost on death comes from the list the game writes for your body, so it covers on-foot deaths too.`);
+  `Built from your client logs. Playtime, ships, missions, deaths, travel and loadout are real. K/D and accuracy aren't in the log any more. Ship kills are logged from 4.10.3.`,
+  `CIG moved combat server-side in the 2026 builds. A weapon's drawn count is how often you pulled it into your hand, not shots fired. Reloads are magazine swaps read off the weapon from 4.10 (ammo-box repools are counted separately), and the repool events before that; carried comes from your stow and holster slots. Armour, attachments and props are left out of the loadout lists. The log names ship deaths. On-foot deaths only show up as gear lost, read from the list the game writes for your body.`);
 // Patch labels. A numeric version reads "Patch 4.8"; a Tech-Preview feature branch
 // carries no version at all (Branch: scp-crafting) so it is named after the feature
 // it was previewing, and 'unknown' is the catch-all for anything else.
@@ -8082,25 +8369,45 @@ function airHTML(v){
       [icon('deaths'), fmt(a.nohelm), 'Helmet off', 'no helmet'],
     ])+noteFold(`Episodes under 2 s are left out.`)+`</div>`;
 }
+// Ship kills from <Vehicle Destroyed> lines (4.10.3 onward): your kills, crippled ships and losses.
+function shipKillsHTML(v){
+  const k=v.ship_kills;
+  if(!k) return '';
+  if(k.empty) return `<div class="card" style="margin-top:16px"><div class="empty">No ship kills in this scope.</div></div>`;
+  const rw=x=>x.replace(/([a-z])([A-Z])/g,'$1 $2').toLowerCase();
+  const lost=(k.lost||[]).map(r=>`<div class="row"><span>${esc(r.ship)}</span> <span class="sub" style="margin:0">${esc(rw(r.reason))}${r.killer?' · '+esc(r.killer):''}${r.date?' · '+ddmm(r.date):''}</span></div>`).join('');
+  const why=(k.by_reason||[]).map(([r,n])=>`${fmt(n)} ${esc(rw(r))}`).join(', ')||'none';
+  return `<div style="margin-top:16px">`+kpiRow([
+      [icon('kills'), fmt(k.kills), 'Ships destroyed', why],
+      [icon('damage'), fmt(k.crippled), 'Crippled', `not destroyed`],
+      [icon('target'), fmt(k.player_ships), 'Player ships', `owned by other players`],
+      (k.per10h!=null ? [icon('time'), fmt(k.per10h), 'Per 10 h', `over ${fmt(k.hours)} h logged`]
+                      : [icon('time'), 'N/A', 'Per 10 h', `under 1 h logged`, 'na']),
+    ])+
+    barsCard('Ships you destroyed','top 10 by name','shipKillBars')+
+    (lost ? `<div class="card" style="margin-top:16px"><h3>Ships you lost <span class="u">— latest ${fmt((k.lost||[]).length)}${k.lost_n>k.lost.length?' of '+fmt(k.lost_n):''}, newest first</span></h3>${lost}</div>` : '')+
+    `</div>`;
+}
 function secCombat(v){
   const dc=v.death_causes;
   const guns=v.weapons_top.filter(w=>!w[2]), tools=v.weapons_top.filter(w=>w[2]);
   const lb=v.loot_boxes||{};
   const lootSub=['Small','Medium','Large','Other'].filter(k=>lb[k]).map(k=>fmt(lb[k])+' '+k[0]).join(' · ')||'crates & lockers';
   const info = callout(icon('satellite'),
-    `Current-patch combat (${scopeLabel()}). The 2026 builds only log your ship deaths — no kills, K/D or damage. `+
+    `Current-patch combat (${scopeLabel()}). The 2026 builds log your ship deaths. Ship kills are logged from 4.10.3. No K/D or damage. `+
     `On-foot deaths only show up as the gear you lost. `+
     `Loadout is ranked by how often you drew each weapon. Your old kills are under `+
     `<a class="clink" onclick="gotoSec('legacy')">Legacy Combat</a> →.`);
   $('#content').innerHTML=metaLine(v)+info+
-    group(1,'ship','Ship combat','How you lost ships — all the client log records',
+    group(1,'ship','Ship combat','Ship kills and losses from the client log',
       kpiRow([
         [icon('deaths'), v.deaths, 'Ship deaths', `ships you lost`],
         [icon('kills'), dc.collision, 'By collision', `flew into something`],
         [icon('damage'), dc.other, 'Destroyed / other', `shot down, hazards…`],
       ])+
       cardHTML('How your ship was lost','ship-destruction deaths only','causeChart')+
-      `<div style="margin-top:16px">`+barsCard('Ships you died in most','deaths per ship','deathShips')+`</div>`
+      `<div style="margin-top:16px">`+barsCard('Ships you died in most','deaths per ship','deathShips')+`</div>`+
+      shipKillsHTML(v)
     )+
     group(2,'deaths','Gear lost on death','What was on your body when you died, on foot or in a ship',
       gearLostHTML(v))+
@@ -8140,6 +8447,7 @@ function secCombat(v){
   hbars($('#toolBars'), toItems(tools.map(w=>[w[0],w[1]]), null, true).map(x=>({...x,tool:true})));
   splitbar($('#causeChart'), [{label:'Collision',value:dc.collision,color:'#ff9147'},{label:'Destroyed / other',value:dc.other,color:'#ff5468'}], {big:v.deaths, small:'ship deaths'});
   hbars($('#deathShips'), toItems(v.death_ships,'#ff5468', true));
+  const skb=$('#shipKillBars'); if(skb) hbars(skb, toItems((v.ship_kills||{}).top,'#4ade80', true));
   const ib=$('#injBars'); if(ib) hbars(ib, (v.injury_parts||[]).map(([k,n])=>({label:k, value:n, disp:fmt(n), color:'#ff9147'})));
   const mb=$('#medBars'); if(mb) hbars(mb, ((v.medbed||{}).parts||[]).map(([k,n])=>({label:k, value:n, disp:fmt(n), color:'#4ade80'})));
   const gl=v.gear_lost;
@@ -9369,6 +9677,36 @@ function serversHTML(v){
       : '<div class="card"><div class="empty">Only one patch in this scope.</div></div>')+
     `</div>`;
 }
+const invCls=p=>p>=100?'bad':(p>=80?'warn':'');
+const invColor=p=>p>=100?'#ff5468':(p>=80?'#ff9147':'var(--cyan)');
+function inventoryHTML(v){
+  const i=v.inventory;
+  if(!i) return `<div class="card"><div class="empty">No inventory readings in this scope.</div></div>`;
+  const h=i.home, rq=i.req, hd=i.hard;
+  const hp = h ? Math.round(h.pct) : 0;
+  const pctTile = h ? [icon('cargo'), hp+'%', 'Home inventory full',
+      `${fmt(h.used)} of ${fmt(h.cap)} SCU · ${esc(h.name)}${h.date?' · '+ddmm(h.date):''}`, invCls(hp)]
+    : [icon('cargo'), 'N/A', 'Home inventory full', 'no capacity reading here', 'na'];
+  const sorts = h ? h.sorts : [0,0];
+  const sortTile = [icon('transfer'), fmt(sorts[1]), 'Failed sorts', `${fmt(sorts[0])} worked`,
+    sorts[1] ? 'bad' : ''];
+  const reqTile = rq ? [icon('system'), fmt(rq.kb)+' KB', 'Largest inventory request',
+      `${rq.pct}% of the 1 MB cap${rq.date?' · '+ddmm(rq.date):''}`, invCls(rq.pct)]
+    : [icon('system'), 'N/A', 'Largest inventory request', 'none over budget here', 'na'];
+  const hardTile = [icon('warning'), fmt(hd[0]), 'Operations dropped over 1 MB',
+    hd[0] ? `last ${ddmm(hd[1])}` : 'none dropped', hd[0] ? 'bad' : ''];
+  return kpiRow([pctTile, sortTile, reqTile, hardTile])+
+    callout(icon('cargo'),
+      `Over <b>100%</b> the game counts the inventory as overloaded. Sort sends the whole inventory in one request `+
+      `and fails once that request is too big. Anything over 1 MB is dropped.`+
+      (i.rewards ? ` Reward items announced in this scope: <b>${fmt(i.rewards)}</b>.` : ''))+
+    `<div class="grid2">`+
+    (h && h.months.length ? cardHTML('Home inventory by month','highest % full per month','invByMonth')
+      : '<div class="card"><div class="empty">No capacity readings in this scope.</div></div>')+
+    (i.others.length ? barsCard('Other locations','latest % full','invOthers')
+      : '<div class="card"><div class="empty">No other inventories read.</div></div>')+
+    `</div>`;
+}
 // Loading screens: the game logs how long each one stayed up. PU = Stanton, Pyro, Nyx.
 const loadSecs=x=>x===null||x===undefined ? '—'
   : x>=3600 ? Math.floor(x/3600)+'h '+String(Math.floor(x%3600/60)).padStart(2,'0')+'m'
@@ -9516,7 +9854,9 @@ function secSystem(v, STAB){
       bootsHTML(v))+
     group(5,'satellite','Servers','Which region you played on, and how often you changed server mid-session',
       serversHTML(v))+
-    group(6,'warning','Session outcomes','How your sessions ended',
+    group(6,'cargo','Home inventory','How full your home inventory is, and whether Sort still works',
+      inventoryHTML(v))+
+    group(7,'warning','Session outcomes','How your sessions ended',
       rated ? stabKpis+ctx+newcomerVerdict(v,oc,rated,thin)+stabNote+
         `<div class="grid2" style="margin-top:16px">`+
         cardHTML('How sessions ended','share of '+fmt(rated)+' sessions','outcomeChart')+
@@ -9635,6 +9975,18 @@ function secSystem(v, STAB){
           color:s.value>=40?'#ff9147':'var(--cyan)'})),
         {h:230, w:Math.max(460, series.length*70), maxbw:48, fmtY:x=>Math.round(x)+'%'});
     }
+  }
+  if(STAB && v.inventory){
+    const i=v.inventory, im=$('#invByMonth');
+    if(im && i.home){
+      const lbl=k=>{ const p=k.split('-'); return MON[+p[1]-1]+' '+p[0].slice(2); };
+      vbars(im, i.home.months.map(([k,p])=>({label:lbl(k), value:p, disp:Math.round(p)+'%',
+          full:`${lbl(k)} — up to ${Math.round(p)}% full`, color:invColor(p)})),
+        {h:230, w:Math.max(460, i.home.months.length*60), maxbw:44, fmtY:x=>Math.round(x)+'%'});
+    }
+    const io=$('#invOthers');
+    if(io) hbars(io, i.others.map(([n,p,d])=>({label:n, value:p, disp:Math.round(p)+'%', color:invColor(p),
+      title:d?ddmm(d):''})));
   }
   if(!STAB && v.loading){
     const bd=$('#loadByDest');
