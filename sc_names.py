@@ -512,6 +512,19 @@ SHIP_ALIAS_CLS = {"ANVL_Hornet_F7_Mk2_Collector": "F7C-M Super Hornet Mk II",  #
                   "ANVL_Lightning_F8C": "F8C Lightning"}   # PYAM Exec and Executive Edition too
 SHIP_ALIAS_NAME = {"f7 hornet mk wikelo": "F7C-M Super Hornet Mk II"}
 
+# Hulls flown in game that the RSI matrix does not list yet, keyed by the exact game class.
+# Used only while the loaded matrix has no ship of that name, so a later matrix wins with no
+# code change. Source: api.star-citizen.wiki /vehicles (name, maker, career, role).
+# size, url and images stay empty: the wiki gives a numeric size class and no art.
+SHIP_EXTRA = {
+    "DRAK_Marauder": {"name": "Marauder", "man": "Drake Interplanetary", "code": "DRAK",
+                      "url": "", "size": "", "type": "Combat", "focus": "Medium Fighter",
+                      "img_small": "", "img_large": ""},
+    "GAMA_Hyun": {"name": "Hyun", "man": "Gatac Manufacture", "code": "GAMA",
+                  "url": "", "size": "", "type": "Generalist", "focus": "Generalist",
+                  "img_small": "", "img_large": ""},
+}
+
 _ROMAN = {"i": "1", "ii": "2", "iii": "3", "iv": "4", "v": "5"}
 _MK_RE = re.compile(r"\bmk\.?\s*(iv|iii|ii|i|v)\b", re.I)
 
@@ -552,6 +565,7 @@ class ShipIndex:
         self.cache_path = cache or os.path.join(SCRIPT_DIR, "sc_ship_matrix.json")
         self.by_code = {}
         self.by_name = {}
+        self.extra = {}         # SHIP_EXTRA entries in use
         self._resolved = {}     # class -> record cache
         self.ok = False
         self.fetched = None
@@ -577,6 +591,13 @@ class ShipIndex:
             s["name"] = (s.get("name") or "").strip()   # RSI data has stray spaces
             self.by_code.setdefault(s["code"], []).append(s)
             self.by_name[s["name"]] = s
+        # hulls the matrix lacks; exact class only, so suffixed classes never match them
+        listed = {_norm(n) for n in self.by_name}
+        self.extra = {c: dict(r) for c, r in SHIP_EXTRA.items()
+                      if _norm(r["name"]) not in listed
+                      and _norm(r["man"] + r["name"]) not in listed}
+        for r in self.extra.values():
+            self.by_name[r["name"]] = r
         self.ok = True
         return True
 
@@ -645,6 +666,9 @@ class ShipIndex:
             self._resolved[cls] = self.by_name[alias]
             return self.by_name[alias]
         base = SHIP_VARIANT.sub("", cls)
+        if base in self.extra:
+            self._resolved[cls] = self.extra[base]
+            return self.extra[base]
         parts = base.split("_")
         code, tokens = parts[0], [p for p in parts[1:] if p]
         rec = self._best(self.by_code.get(code, []), tokens)
