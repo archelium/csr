@@ -142,7 +142,7 @@ class SummaryTests(unittest.TestCase):
         del old["ship_kills"]
         agg = sc_stats.blank_patch()
         sc_stats.fold(agg, old)
-        self.assertIsNone(sc_stats._ship_kills_summary(agg))
+        self.assertEqual(sc_stats._ship_kills_summary(agg), {"empty": True})
         sm = summary(old, s)
         self.assertEqual((sm["kills"], sm["crippled"], sm["sessions"]), (1, 1, 1))
         self.assertEqual(sm["top"], [["Gladius", 1]])
@@ -162,12 +162,31 @@ class SummaryTests(unittest.TestCase):
         self.assertFalse(sc_stats.logs_vehicle_kills("4.9", "4.9.1.1"))
         self.assertTrue(sc_stats.logs_vehicle_kills("4.11", ""))
         self.assertTrue(sc_stats.logs_vehicle_kills(None, None))
+        self.assertTrue(sc_stats.logs_vehicle_kills("", ""))
+        self.assertFalse(sc_stats.logs_vehicle_kills("scp-crafting", "1.0.172.14271"))
+        self.assertTrue(sc_stats.logs_vehicle_kills("scp-crafting", "4.10.200.58746"))
+
+    def test_lost_is_dated_newest_first_and_capped(self):
+        sc_stats.SHIPS.load(allow_fetch=False)
+        sess = []
+        for day in range(1, 13):
+            s = scan(vd("10:10:00.000", str(day), "MISC_Fury", 0, 2, killer="foe", kid="42", owner=MY_ID))
+            sess.append(dict(s, start=__import__("datetime").datetime(2026, 11, day, 10)))
+        sm = summary(*sess)
+        self.assertEqual((len(sm["lost"]), sm["lost_n"]), (10, 12))
+        self.assertEqual([r["date"] for r in sm["lost"]][:2], ["2026-11-12", "2026-11-11"])
+
+    def test_sessions_count_kills_only(self):
+        sc_stats.SHIPS.load(allow_fetch=False)
+        kill = scan(vd("10:10:00.000", "1", GLAD, 0, 2))
+        crip = scan(vd("10:10:00.000", "2", GLAD, 0, 1))
+        self.assertEqual(summary(kill, crip)["sessions"], 1)
 
     def test_lost_carries_names(self):
         sc_stats.SHIPS.load(allow_fetch=False)
         s = scan(vd("10:10:00.000", "1", "MISC_Fury", 0, 2, killer="foe", kid="42", owner=MY_ID, reason="Combat"))
         sm = summary(s)
-        self.assertEqual(sm["lost"], [{"ship": "Fury", "reason": "Combat", "killer": "foe"}])
+        self.assertEqual(sm["lost"], [{"ship": "Fury", "reason": "Combat", "killer": "foe", "date": "2026-11-13"}])
 
 
 if __name__ == "__main__":

@@ -12,12 +12,14 @@ What it CAN report (things SC writes to the client log):
   * Ships flown  (from vehicle control-token events)  + your most-flown
   * Time aboard each ship (crew channel, 4.5.167+) and in its pilot seat
   * Missions — completed / failed / abandoned, completion rate
-  * Deaths (ship-destruction deaths — the only kind SC logs in 2026 builds)
+  * Deaths (ship-destruction deaths, plus the gear you lost on foot)
+  * Ship kills and ships lost (<Vehicle Destroyed>, 4.10.3 onward)
   * Quantum-travel activity, hour-of-day / day-of-week play patterns
   * Most-drawn weapons & tools + reloads & carry (loadout preference)
 
 What it CANNOT (SC no longer writes these to the client log):
-  * Kills, K/D, accuracy, shots fired, damage — all server-side now.
+  * K/D, accuracy, shots fired, damage — all server-side now. Ship kills are the
+    one exception, from 4.10.3.
 
 Usage:
     python sc_stats.py                 # auto-detect logs, write CSR.html
@@ -1777,11 +1779,14 @@ def has_crew_channel(patch, build):
 
 
 def logs_vehicle_kills(patch, build):
-    """Does this build log <Vehicle Destroyed>? From 4.10.200 on. An unknown patch counts
-    as yes, like has_crew_channel. On 4.10 itself the build decides."""
+    """Does this build log <Vehicle Destroyed>? From 4.10.200 on. An empty patch counts
+    as yes, like has_crew_channel. On 4.10 and on a named Tech-Preview branch the build
+    decides."""
+    if not patch:
+        return True
     p = _ver_tuple(patch)
     if p == (0,):
-        return True
+        return _ver_tuple(build)[:3] >= (4, 10, 200)
     return p > (4, 10) or (p == (4, 10) and _ver_tuple(build)[:3] >= (4, 10, 200))
 
 
@@ -3246,7 +3251,7 @@ def scan_log(path):
     inv_sorts = {}                     # (player id, location id) -> [sorts ok, sorts failed]
     inv_queued = {}                    # request number -> (player id, location id) of a queued Sort
     inv_budget = []                    # (size, hard?, entity name) of inventory operations over budget
-    inv_rewards = 0                    # reward items announced for the primary residence
+    inv_rewards = 0                    # reward items announced
     me_id = None                       # your player id, from a line that pairs it with your handle
     me_h = me_q = me_p = me_re = None  # the handle me_id is searched for, and its line probes
     crew_jumps = Counter()             # pilot -> jumps under their hands
@@ -4087,7 +4092,7 @@ def blank_patch():
         # ship kills (4.10.3+): victim class -> n for kills and crippled, reasons, player-owned
         # kills, losses, and the seconds played on builds that log the line (the per-hour base)
         "sk_kills": Counter(), "sk_crip": Counter(), "sk_reason": Counter(), "sk_players": 0,
-        "sk_lost": [], "sk_sessions": 0, "vd_secs": 0,
+        "sk_lost": [], "sk_sessions": 0, "sk_kill_sessions": 0, "vd_secs": 0,
         # home inventory: [local date, start, inv dict] per session that logged anything
         "inv": [],
     }
@@ -4275,8 +4280,10 @@ def fold(agg, s):
         agg["sk_crip"].update(_sk["crippled"])
         agg["sk_reason"].update(_sk["by_reason"])
         agg["sk_players"] += _sk["player_ships"]
-        agg["sk_lost"].extend(_sk["lost"])
+        agg["sk_lost"].extend(dict(r, date=_d) for r in _sk["lost"])
         agg["sk_sessions"] += 1
+        if _sk["kills"]:
+            agg["sk_kill_sessions"] += 1
     _ld = s.get("loads") or []
     agg["loads"].extend(_ld)
     agg["loads_hung"] += s.get("loads_hung", 0)
@@ -4699,9 +4706,10 @@ def vehicle_ship_name(cls):
 
 
 def _ship_kills_summary(agg):
-    """Ships you destroyed and lost (4.10.3+), None when no session logged any."""
+    """Ships you destroyed and lost (4.10.3+). {"empty": True} when builds that log the line
+    were played but none was about you, None when no such build is in scope."""
     if not agg["sk_sessions"]:
-        return None
+        return {"empty": True} if agg["vd_secs"] else None
     top, crip = Counter(), Counter()
     for cls, n in agg["sk_kills"].items():
         top[vehicle_ship_name(cls)] += n
@@ -4710,18 +4718,20 @@ def _ship_kills_summary(agg):
     kills = sum(top.values())
     hours = agg["vd_secs"] / 3600
     lost = []
-    for r in agg["sk_lost"]:
+    for r in reversed(agg["sk_lost"]):
         k = re.sub(r"_\d{6,}$", "", r["killer"])
         if k != r["killer"]:
             k = vehicle_ship_name(k)
         lost.append({"ship": vehicle_ship_name(r["cls"]), "reason": r["reason"],
-                     "killer": "" if k.lower() in ("none", "") else k})
+                     "killer": "" if k.lower() in ("none", "") else k, "date": r.get("date")})
+    lost_n = len(lost)
+    lost.sort(key=lambda r: r["date"] or "", reverse=True)      # newest first, stable inside a day
     return {"kills": kills, "crippled": sum(crip.values()), "player_ships": agg["sk_players"],
             "per10h": round(kills / hours * 10, 1) if hours >= 1 else None,
-            "hours": round(hours, 1), "sessions": agg["sk_sessions"],
+            "hours": round(hours, 1), "sessions": agg["sk_kill_sessions"],
             "top": [[k, n] for k, n in sorted(top.items(), key=lambda kv: (-kv[1], kv[0]))[:10]],
             "by_reason": [[k, n] for k, n in sorted(agg["sk_reason"].items(), key=lambda kv: (-kv[1], kv[0]))],
-            "lost": lost}
+            "lost": lost[:10], "lost_n": lost_n}
 
 
 def _hours_split(agg):
@@ -6354,9 +6364,9 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     margin-left:auto;text-align:right;line-height:1.25}
   .mini.na{opacity:.72}.mini.na::before{background:var(--line)}
   .mini.na .mv{color:var(--dim);font-size:16px}.mini.na .mi{color:var(--dim)}
-  /* a stat this patch's game build never recorded — muted so it reads "absent", not "zero" */
   .kpi.warn .v{color:var(--amber)}
   .kpi.bad .v{color:var(--red)}
+  /* a stat this patch's game build never recorded — muted so it reads "absent", not "zero" */
   .kpi.na .v{color:var(--dim);font-size:24px}
   .kpi.na::after{background:linear-gradient(90deg,var(--line),transparent)}
   .kpi .l{font-size:11px;text-transform:uppercase;letter-spacing:.7px;color:var(--muted);margin-top:8px}
@@ -8123,8 +8133,8 @@ function splitbar(el, parts, center){
 }
 
 const NOTE = noteFold(
-  `Built from your client logs. Playtime, ships, missions, deaths, travel and loadout are real; kills, K/D and accuracy aren't in the log any more.`,
-  `CIG moved combat server-side in the 2026 builds. A weapon's drawn count is how often you pulled it into your hand, not shots fired. Reloads are magazine swaps read off the weapon from 4.10 (ammo-box repools are counted separately), and the repool events before that; carried comes from your stow and holster slots. Armour, attachments and props are left out of the loadout lists. Ship deaths are the only death the log names; gear lost on death comes from the list the game writes for your body, so it covers on-foot deaths too.`);
+  `Built from your client logs. Playtime, ships, missions, deaths, travel and loadout are real. K/D and accuracy aren't in the log any more. Ship kills are logged from 4.10.3.`,
+  `CIG moved combat server-side in the 2026 builds. A weapon's drawn count is how often you pulled it into your hand, not shots fired. Reloads are magazine swaps read off the weapon from 4.10 (ammo-box repools are counted separately), and the repool events before that; carried comes from your stow and holster slots. Armour, attachments and props are left out of the loadout lists. The log names ship deaths. On-foot deaths only show up as gear lost, read from the list the game writes for your body.`);
 // Patch labels. A numeric version reads "Patch 4.8"; a Tech-Preview feature branch
 // carries no version at all (Branch: scp-crafting) so it is named after the feature
 // it was previewing, and 'unknown' is the catch-all for anything else.
@@ -8363,16 +8373,19 @@ function airHTML(v){
 function shipKillsHTML(v){
   const k=v.ship_kills;
   if(!k) return '';
-  const lost=(k.lost||[]).map(r=>`<div class="row"><span>${esc(r.ship)}</span> <span class="vv-u">${esc(r.reason.replace(/([a-z])([A-Z])/g,'$1 $2').toLowerCase())}${r.killer?' · '+esc(r.killer):''}</span></div>`).join('');
+  if(k.empty) return `<div class="card" style="margin-top:16px"><div class="empty">No ship kills in this scope.</div></div>`;
+  const rw=x=>x.replace(/([a-z])([A-Z])/g,'$1 $2').toLowerCase();
+  const lost=(k.lost||[]).map(r=>`<div class="row"><span>${esc(r.ship)}</span> <span class="sub" style="margin:0">${esc(rw(r.reason))}${r.killer?' · '+esc(r.killer):''}${r.date?' · '+ddmm(r.date):''}</span></div>`).join('');
+  const why=(k.by_reason||[]).map(([r,n])=>`${fmt(n)} ${esc(rw(r))}`).join(', ')||'none';
   return `<div style="margin-top:16px">`+kpiRow([
-      [icon('kills'), fmt(k.kills), 'Ships destroyed', `in ${fmt(k.sessions)} ${k.sessions===1?'session':'sessions'}`],
+      [icon('kills'), fmt(k.kills), 'Ships destroyed', why],
       [icon('damage'), fmt(k.crippled), 'Crippled', `not destroyed`],
       [icon('target'), fmt(k.player_ships), 'Player ships', `owned by other players`],
       (k.per10h!=null ? [icon('time'), fmt(k.per10h), 'Per 10 h', `over ${fmt(k.hours)} h logged`]
                       : [icon('time'), 'N/A', 'Per 10 h', `under 1 h logged`, 'na']),
     ])+
     barsCard('Ships you destroyed','top 10 by name','shipKillBars')+
-    (lost ? `<div class="card" style="margin-top:16px"><h3>Ships you lost <span class="u">— ship, reason, killer</span></h3>${lost}</div>` : '')+
+    (lost ? `<div class="card" style="margin-top:16px"><h3>Ships you lost <span class="u">— latest ${fmt((k.lost||[]).length)}${k.lost_n>k.lost.length?' of '+fmt(k.lost_n):''}, newest first</span></h3>${lost}</div>` : '')+
     `</div>`;
 }
 function secCombat(v){
@@ -9670,11 +9683,12 @@ function inventoryHTML(v){
   const i=v.inventory;
   if(!i) return `<div class="card"><div class="empty">No inventory readings in this scope.</div></div>`;
   const h=i.home, rq=i.req, hd=i.hard;
-  const pctTile = h ? [icon('cargo'), Math.round(h.pct)+'%', 'Home inventory full',
-      `${fmt(h.used)} of ${fmt(h.cap)} SCU · ${esc(h.name)}${h.date?' · '+ddmm(h.date):''}`, invCls(h.pct)]
+  const hp = h ? Math.round(h.pct) : 0;
+  const pctTile = h ? [icon('cargo'), hp+'%', 'Home inventory full',
+      `${fmt(h.used)} of ${fmt(h.cap)} SCU · ${esc(h.name)}${h.date?' · '+ddmm(h.date):''}`, invCls(hp)]
     : [icon('cargo'), 'N/A', 'Home inventory full', 'no capacity reading here', 'na'];
   const sorts = h ? h.sorts : [0,0];
-  const sortTile = [icon('transfer'), fmt(sorts[1]), 'Failed sorts', `${fmt(sorts[0])} worked, ${fmt(sorts[1])} failed`,
+  const sortTile = [icon('transfer'), fmt(sorts[1]), 'Failed sorts', `${fmt(sorts[0])} worked`,
     sorts[1] ? 'bad' : ''];
   const reqTile = rq ? [icon('system'), fmt(rq.kb)+' KB', 'Largest inventory request',
       `${rq.pct}% of the 1 MB cap${rq.date?' · '+ddmm(rq.date):''}`, invCls(rq.pct)]
@@ -9684,8 +9698,8 @@ function inventoryHTML(v){
   return kpiRow([pctTile, sortTile, reqTile, hardTile])+
     callout(icon('cargo'),
       `Over <b>100%</b> the game counts the inventory as overloaded. Sort sends the whole inventory in one request `+
-      `and fails once that request is too big. Anything over 1 MB is dropped. Rewards land in the primary residence`+
-      (i.rewards ? `: <b>${fmt(i.rewards)}</b> reward items announced in this scope.` : '.'))+
+      `and fails once that request is too big. Anything over 1 MB is dropped.`+
+      (i.rewards ? ` Reward items announced in this scope: <b>${fmt(i.rewards)}</b>.` : ''))+
     `<div class="grid2">`+
     (h && h.months.length ? cardHTML('Home inventory by month','highest % full per month','invByMonth')
       : '<div class="card"><div class="empty">No capacity readings in this scope.</div></div>')+
@@ -9840,7 +9854,7 @@ function secSystem(v, STAB){
       bootsHTML(v))+
     group(5,'satellite','Servers','Which region you played on, and how often you changed server mid-session',
       serversHTML(v))+
-    group(6,'cargo','Home inventory','How full your primary residence is, and whether Sort still works',
+    group(6,'cargo','Home inventory','How full your home inventory is, and whether Sort still works',
       inventoryHTML(v))+
     group(7,'warning','Session outcomes','How your sessions ended',
       rated ? stabKpis+ctx+newcomerVerdict(v,oc,rated,thin)+stabNote+

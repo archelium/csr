@@ -582,7 +582,8 @@ class ShipIndex:
         data, fetched = None, None
         if os.path.isfile(self.cache_path):
             try:
-                raw = json.load(open(self.cache_path, encoding="utf-8"))
+                with open(self.cache_path, encoding="utf-8") as fh:
+                    raw = json.load(fh)
                 # {"fetched": date, "ships": [...]} since parser 17; a bare list before
                 data, fetched = (raw.get("ships"), raw.get("fetched")) if isinstance(raw, dict) else (raw, None)
             except Exception:
@@ -674,9 +675,6 @@ class ShipIndex:
             self._resolved[cls] = self.by_name[alias]
             return self.by_name[alias]
         base = SHIP_VARIANT.sub("", cls)
-        if base in self.extra:
-            self._resolved[cls] = self.extra[base]
-            return self.extra[base]
         parts = base.split("_")
         code, tokens = parts[0], [p for p in parts[1:] if p]
         rec = self._best(self.by_code.get(code, []), tokens)
@@ -684,6 +682,8 @@ class ShipIndex:
             # game manufacturer code differs from the matrix (Fury MISC->MRAI,
             # Nox XIAN->XNAA, Stinger VNCL->ESPR): match the model across all ships
             rec = self._best(list(self.by_name.values()), tokens, strict=True)
+        if rec is None:
+            rec = self.extra.get(base)      # hull the matrix doesn't list
         self._resolved[cls] = rec
         return rec
 
