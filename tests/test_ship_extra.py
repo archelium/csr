@@ -12,7 +12,7 @@ import sc_names  # noqa: E402
 def index(extra_ships=()):
     """Bundled matrix, minus any Marauder/Hyun record, plus `extra_ships`."""
     raw = json.load(open(os.path.join(sc_names.SCRIPT_DIR, "sc_ship_matrix.json"), encoding="utf-8"))
-    ships = [s for s in raw["ships"] if s["name"].strip() not in ("Marauder", "Hyun")]
+    ships = [s for s in raw["ships"] if s["name"].strip() not in ("Marauder", "Hyun", "Hyūn")]
     with tempfile.TemporaryDirectory() as d:
         p = os.path.join(d, "m.json")
         json.dump({"fetched": "2026-10-16", "ships": ships + list(extra_ships)},
@@ -30,11 +30,13 @@ class ShipExtraTests(unittest.TestCase):
 
     def test_hyun(self):
         name, man, rec = index().display("GAMA_Hyun")
-        self.assertEqual((name, man), ("Hyun", "Gatac Manufacture"))
-        self.assertEqual(rec["code"], "GAMA")
+        self.assertEqual((name, man), ("Hyūn", "Gatac Manufacture"))
+        self.assertEqual((rec["code"], rec["type"], rec["focus"]),
+                         ("GAMA", "Industrial", "Mining / Salvage"))
 
     def test_crew_channel_name(self):
-        self.assertEqual(index().match_display("Gatac Hyun")["name"], "Hyun")
+        for n in ("Gatac Hyun", "Gatac Hyūn"):
+            self.assertEqual(index().match_display(n)["name"], "Hyūn", n)
 
     def test_matrix_record_wins(self):
         rec = {"name": "Marauder", "man": "Drake Interplanetary", "code": "DRAK",

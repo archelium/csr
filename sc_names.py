@@ -14,6 +14,7 @@ import datetime
 import json
 import os
 import re
+import unicodedata
 import ssl
 import urllib.parse
 import urllib.request
@@ -514,14 +515,15 @@ SHIP_ALIAS_NAME = {"f7 hornet mk wikelo": "F7C-M Super Hornet Mk II"}
 
 # Hulls flown in game that the RSI matrix does not list yet, keyed by the exact game class.
 # Used only while the loaded matrix has no ship of that name, so a later matrix wins with no
-# code change. Source: api.star-citizen.wiki /vehicles (name, maker, career, role).
+# code change. Source: api.star-citizen.wiki /vehicles (maker); starcitizen.tools (Hyūn name,
+# career, role: its infobox disagrees with the API, the page wins).
 # size, url and images stay empty: the wiki gives a numeric size class and no art.
 SHIP_EXTRA = {
     "DRAK_Marauder": {"name": "Marauder", "man": "Drake Interplanetary", "code": "DRAK",
                       "url": "", "size": "", "type": "Combat", "focus": "Medium Fighter",
                       "img_small": "", "img_large": ""},
-    "GAMA_Hyun": {"name": "Hyun", "man": "Gatac Manufacture", "code": "GAMA",
-                  "url": "", "size": "", "type": "Generalist", "focus": "Generalist",
+    "GAMA_Hyun": {"name": "Hyūn", "man": "Gatac Manufacture", "code": "GAMA",
+                  "url": "", "size": "", "type": "Industrial", "focus": "Mining / Salvage",
                   "img_small": "", "img_large": ""},
 }
 
@@ -529,7 +531,13 @@ _ROMAN = {"i": "1", "ii": "2", "iii": "3", "iv": "4", "v": "5"}
 _MK_RE = re.compile(r"\bmk\.?\s*(iv|iii|ii|i|v)\b", re.I)
 
 
+def _fold(x):
+    # "Hyūn" -> "Hyun": crew-channel names carry no accents
+    return unicodedata.normalize("NFKD", x).encode("ascii", "ignore").decode()
+
+
 def _norm(x):
+    x = _fold(x)
     # normalise "Mk II" / "Mk2" to a common form so game classes (arabic) match
     # the RSI matrix (roman): "F7C-M Super Hornet Mk II" <-> "Hornet_F7CM_Mk2".
     x = _MK_RE.sub(lambda m: "mk" + _ROMAN[m.group(1).lower()], x.lower())
@@ -686,13 +694,13 @@ class ShipIndex:
         key = "@" + name
         if key in self._resolved:
             return self._resolved[key]
-        low, best = " " + re.sub(r"\s+", " ", name.lower()) + " ", None
+        low, best = " " + re.sub(r"\s+", " ", _fold(name).lower()) + " ", None
         alias = next((n for ph, n in SHIP_ALIAS_NAME.items() if ph in low), None)
         if alias in self.by_name:
             self._resolved[key] = self.by_name[alias]
             return self.by_name[alias]
         for n, rec in self.by_name.items():
-            if n and f" {n.lower()} " in low and (best is None or len(n) > len(best["name"])):
+            if n and f" {_fold(n).lower()} " in low and (best is None or len(n) > len(best["name"])):
                 best = rec
         if best is None:
             # variants the matrix doesn't list ('Origin 600i', 'Drake Dragonfly Star
