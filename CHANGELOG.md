@@ -5,7 +5,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and CSR
 uses [Semantic Versioning](https://semver.org/) (MAJOR.MINOR.PATCH).
 
 
-## [Unreleased]
+## [1.9.0] — 2026-11-15
 
 ### Added
 - **Ship kills** (Combat). 4.10.3 logs every ship destroyed again, with the killer's
