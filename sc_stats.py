@@ -2952,6 +2952,13 @@ def _lz_visits(stamps):
 # The game asks for your stored items when you land or dock somewhere, and again whenever
 # an inventory or shop screen opens there. Flying past a place doesn't log it.
 PLACE_RE = re.compile(r"<RequestLocationInventory> Player\[([^\]]+)\] requested inventory for Location\[([^\]]+)\]")
+# Home inventory check. Capacity is in micro-SCU (5,000,000,000 = 5,000 SCU).
+INV_READ_RE = re.compile(r"(?:Source|Target)\[(\d+):Location:(\d+)\] Capacity\[(\d+)\] UsedCapacity\[(\d+)")
+INV_SORT_RE = re.compile(r"Queued Request\[(\d+)\] Type\[Sort\].*?Source Inventory\[(\d+):Location:(\d+)\]")
+INV_DONE_RE = re.compile(r"Request\[(\d+)\] for '[^']*' \[\d+\] Type\[Sort\] Result\[(\w+)\]")
+INV_BUDGET_RE = re.compile(r'size (\d+) is greater than .*?entityName="([^"]*)"')
+REWARDS_RE = re.compile(r"You.ve Earned: (\d+) Reward")
+INV_CAP_BYTES = 1000000            # a remote method over this is not replicated at all
 _PLACE_BODY = {  # the planet or moon number in a location code
     "Stanton1": "Hurston", "Stanton1a": "Arial", "Stanton1b": "Aberdeen", "Stanton1c": "Magda",
     "Stanton1d": "Ita", "Stanton2": "Crusader", "Stanton2a": "Cellin", "Stanton2b": "Daymar",
@@ -3154,6 +3161,24 @@ def air_episodes(spans, me):
             "nohelm": sum(1 for s, e, nh in merged if nh and (e - s).total_seconds() >= AIR_MIN)}
 
 
+def inventory_check(reads, votes, sorts, budget, rewards, me, me_id):
+    """Fold one session's inventory lines into the `inv` dict, None when there are none.
+    reads: (player id, location id) -> [max used, capacity], micro-SCU.
+    votes: location id -> Counter of the Location[...] codes requested just before a reading.
+    sorts: (player id, location id) -> [ok, failed]. budget: (size, hard, entity name) rows."""
+    mine = lambda pid: not me_id or pid == me_id
+    locs = {}
+    for (pid, loc), (used, cap) in reads.items():
+        if mine(pid):
+            code = votes[loc].most_common(1)[0][0] if votes.get(loc) else ""
+            locs[loc] = [used, cap, code]
+    srt = {loc: list(r) for (pid, loc), r in sorts.items() if mine(pid)}
+    bud = [[size, hard] for size, hard, who in budget if not me or who.lower() == me]
+    if not (locs or srt or bud or rewards):
+        return None
+    return {"locs": locs, "sorts": srt, "budget": bud, "rewards": rewards}
+
+
 def ship_kill_events(events, me, me_id):
     """Fold the <Vehicle Destroyed> events of one session into the `ship_kills` dict.
     events: (vehicle id, class, owner id, reason, from, to, killer, killer id) in log order.
@@ -3215,6 +3240,13 @@ def scan_log(path):
     air_blk = None                     # the open record whose [STAMINA] detail block is being read
     air_spans = []                     # (player, start, end, helmet off?) per closed pair
     vkills = []                        # <Vehicle Destroyed> events (4.10.3+), see ship_kill_events
+    inv_reads = {}                     # (player id, location id) -> [max used, capacity]
+    inv_votes = defaultdict(Counter)   # location id -> Location[...] codes requested before a reading
+    inv_code = None                    # the last Location[...] an inventory was requested for
+    inv_sorts = {}                     # (player id, location id) -> [sorts ok, sorts failed]
+    inv_queued = {}                    # request number -> (player id, location id) of a queued Sort
+    inv_budget = []                    # (size, hard?, entity name) of inventory operations over budget
+    inv_rewards = 0                    # reward items announced for the primary residence
     me_id = None                       # your player id, from a line that pairs it with your handle
     me_h = me_q = me_p = me_re = None  # the handle me_id is searched for, and its line probes
     crew_jumps = Counter()             # pilot -> jumps under their hands
@@ -3535,6 +3567,10 @@ def scan_log(path):
                 elif QT_RE in line:
                     qt_targets += 1
                 elif 'Added notification "' in line:
+                    if "Earned: " in line:       # the text runs over several lines, no closing quote
+                        m = REWARDS_RE.search(line)
+                        if m:
+                            inv_rewards += int(m.group(1))
                     nm = NOTIF_RE.search(line)
                     if nm:
                         hud_n += 1
@@ -3580,6 +3616,35 @@ def scan_log(path):
                     m = PLACE_RE.search(line)
                     if m and not m.group(2).startswith("INVALID"):
                         places.append((m.group(1), m.group(2)))
+                        inv_code = m.group(2)
+                elif "<OnDragInventoryItemModifyTarget>" in line:
+                    for m in INV_READ_RE.finditer(line):
+                        key, used, cap = (m.group(1), m.group(2)), int(m.group(4)), int(m.group(3))
+                        row = inv_reads.get(key)
+                        if row is None:
+                            inv_reads[key] = [used, cap]
+                        elif used > row[0]:
+                            row[0], row[1] = used, cap
+                        if inv_code:
+                            inv_votes[m.group(2)][inv_code] += 1
+                elif "Type[Sort]" in line:
+                    if "Result[" in line:
+                        m = INV_DONE_RE.search(line)
+                        key = inv_queued.pop(m.group(1), None) if m else None
+                        if key:
+                            tally = inv_sorts.setdefault(key, [0, 0])
+                            if m.group(2) == "Failed":
+                                tally[1] += 1
+                            elif m.group(2) == "Succeed":
+                                tally[0] += 1
+                    elif "Queued Request[" in line and ":Location:" in line:
+                        m = INV_SORT_RE.search(line)
+                        if m:
+                            inv_queued[m.group(1)] = (m.group(2), m.group(3))
+                elif "Over Budget" in line and "InventoryManagementOperation" in line:
+                    m = INV_BUDGET_RE.search(line)
+                    if m:
+                        inv_budget.append((int(m.group(1)), "(Soft Limit)" not in line, m.group(2)))
                 elif "<Join PU>" in line:
                     m = JOIN_PU_RE.search(line)
                     if m:
@@ -3869,6 +3934,7 @@ def scan_log(path):
     places_seen = sorted({c for a, c in places if not _me or a.lower() == _me})
     air = air_episodes(air_spans, _me)
     ship_kills = ship_kill_events(vkills, _me, me_id)
+    inv = inventory_check(inv_reads, inv_votes, inv_sorts, inv_budget, inv_rewards, _me, me_id)
     medbed_parts = Counter()
     for a, _ship, parts in medbed:
         if not _me or a.lower() == _me:
@@ -3909,7 +3975,7 @@ def scan_log(path):
         "contracts_failed": dict(contracts_failed),
         "injuries": dict(injuries), "medbed_n": medbed_n, "medbed_ship": medbed_ship,
         "medbed_parts": dict(medbed_parts), "crew_jumps": dict(crew_jumps),
-        "places": places_seen, "air": air, "ship_kills": ship_kills,
+        "places": places_seen, "air": air, "ship_kills": ship_kills, "inv": inv,
         "party_acc": party_acc, "party_secs": round(party_secs), "crimestat": crimestat,
         "haul_scu": haul_scu, "haul_runs": haul_runs, "haul_lost": haul_lost, "haul_max": haul_max,
         "haul_com": dict(haul_com), "haul_dest": dict(haul_dest),
@@ -4022,6 +4088,8 @@ def blank_patch():
         # kills, losses, and the seconds played on builds that log the line (the per-hour base)
         "sk_kills": Counter(), "sk_crip": Counter(), "sk_reason": Counter(), "sk_players": 0,
         "sk_lost": [], "sk_sessions": 0, "vd_secs": 0,
+        # home inventory: [local date, start, inv dict] per session that logged anything
+        "inv": [],
     }
 
 
@@ -4196,6 +4264,9 @@ def fold(agg, s):
         _top = max(_air["eps"])
         if agg["air_longest"] is None or _top > agg["air_longest"][0]:
             agg["air_longest"] = [_top, _d]
+    _inv = s.get("inv")
+    if _inv:
+        agg["inv"].append([_d, s["start"].isoformat() if s.get("start") else "", _inv])
     if logs_vehicle_kills(s.get("patch"), s.get("build")):
         agg["vd_secs"] += s["dur"]
     _sk = s.get("ship_kills")
@@ -4528,6 +4599,59 @@ def _loading_summary(agg):
         "login_n": len(agg["login_secs"]),
         "hung": agg["loads_hung"],
     }
+
+
+def _inventory_summary(agg):
+    """The home inventory: the location read in the most sessions. A session's figure is
+    its maximum reading, since an inventory dips while its pages load. None when no
+    session logged an inventory line."""
+    rows = sorted(agg["inv"], key=lambda r: r[1])
+    if not rows:
+        return None
+    seen, codes, latest = Counter(), defaultdict(Counter), {}
+    for d, _st, inv in rows:
+        for loc, (used, cap, code) in inv["locs"].items():
+            if cap > 0:
+                seen[loc] += 1
+                latest[loc] = (d, used, cap)
+                if code:
+                    codes[loc][code] += 1
+
+    def label(loc):
+        return place_name(codes[loc].most_common(1)[0][0])[0] if codes.get(loc) else "Unnamed location"
+
+    home = home_loc = None
+    if seen:
+        loc = home_loc = max(seen, key=lambda k: (seen[k], latest[k][0] or "", k))
+        d, used, cap = latest[loc]
+        months = {}
+        for rd, _st, inv in rows:
+            r = inv["locs"].get(loc)
+            if rd and r and r[1] > 0:
+                ym = rd[:7]
+                months[ym] = max(months.get(ym, 0), 100 * r[0] / r[1])
+        ok = fail = 0
+        for _d, _st, inv in rows:
+            tally = inv["sorts"].get(loc)
+            if tally:
+                ok += tally[0]
+                fail += tally[1]
+        home = {"name": label(loc), "used": round(used / 1e6), "cap": round(cap / 1e6),
+                "pct": round(100 * used / cap, 1), "date": d, "sessions": seen[loc],
+                "months": [[k, round(v, 1)] for k, v in sorted(months.items())],
+                "sorts": [ok, fail]}
+    req = None
+    for d, _st, inv in reversed(rows):
+        if inv["budget"]:
+            size = max(b[0] for b in inv["budget"])
+            req = {"kb": round(size / 1000), "pct": round(100 * size / INV_CAP_BYTES, 1), "date": d}
+            break
+    hard = [d for d, _st, inv in rows for b in inv["budget"] if b[1]]
+    others = [[label(k), round(100 * u / c, 1), d] for k, (d, u, c) in latest.items()
+              if k != home_loc]
+    others.sort(key=lambda r: (-r[1], r[0]))
+    return {"home": home, "req": req, "hard": [len(hard), hard[-1] if hard else None],
+            "rewards": sum(inv["rewards"] for _d, _st, inv in rows), "others": others[:5]}
 
 
 def _places_summary(agg):
@@ -4890,6 +5014,7 @@ def finalize(agg):
         "loading": _loading_summary(agg),
         "hours_split": _hours_split(agg),
         "places": _places_summary(agg),
+        "inventory": _inventory_summary(agg),
         "air": _air_summary(agg),
         "ship_kills": _ship_kills_summary(agg),
         "gear_lost": _gear_lost_summary(agg),
@@ -6230,6 +6355,8 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
   .mini.na{opacity:.72}.mini.na::before{background:var(--line)}
   .mini.na .mv{color:var(--dim);font-size:16px}.mini.na .mi{color:var(--dim)}
   /* a stat this patch's game build never recorded — muted so it reads "absent", not "zero" */
+  .kpi.warn .v{color:var(--amber)}
+  .kpi.bad .v{color:var(--red)}
   .kpi.na .v{color:var(--dim);font-size:24px}
   .kpi.na::after{background:linear-gradient(90deg,var(--line),transparent)}
   .kpi .l{font-size:11px;text-transform:uppercase;letter-spacing:.7px;color:var(--muted);margin-top:8px}
@@ -9537,6 +9664,35 @@ function serversHTML(v){
       : '<div class="card"><div class="empty">Only one patch in this scope.</div></div>')+
     `</div>`;
 }
+const invCls=p=>p>=100?'bad':(p>=80?'warn':'');
+const invColor=p=>p>=100?'#ff5468':(p>=80?'#ff9147':'var(--cyan)');
+function inventoryHTML(v){
+  const i=v.inventory;
+  if(!i) return `<div class="card"><div class="empty">No inventory readings in this scope.</div></div>`;
+  const h=i.home, rq=i.req, hd=i.hard;
+  const pctTile = h ? [icon('cargo'), Math.round(h.pct)+'%', 'Home inventory full',
+      `${fmt(h.used)} of ${fmt(h.cap)} SCU · ${esc(h.name)}${h.date?' · '+ddmm(h.date):''}`, invCls(h.pct)]
+    : [icon('cargo'), 'N/A', 'Home inventory full', 'no capacity reading here', 'na'];
+  const sorts = h ? h.sorts : [0,0];
+  const sortTile = [icon('transfer'), fmt(sorts[1]), 'Failed sorts', `${fmt(sorts[0])} worked, ${fmt(sorts[1])} failed`,
+    sorts[1] ? 'bad' : ''];
+  const reqTile = rq ? [icon('system'), fmt(rq.kb)+' KB', 'Largest inventory request',
+      `${rq.pct}% of the 1 MB cap${rq.date?' · '+ddmm(rq.date):''}`, invCls(rq.pct)]
+    : [icon('system'), 'N/A', 'Largest inventory request', 'none over budget here', 'na'];
+  const hardTile = [icon('warning'), fmt(hd[0]), 'Operations dropped over 1 MB',
+    hd[0] ? `last ${ddmm(hd[1])}` : 'none dropped', hd[0] ? 'bad' : ''];
+  return kpiRow([pctTile, sortTile, reqTile, hardTile])+
+    callout(icon('cargo'),
+      `Over <b>100%</b> the game counts the inventory as overloaded. Sort sends the whole inventory in one request `+
+      `and fails once that request is too big. Anything over 1 MB is dropped. Rewards land in the primary residence`+
+      (i.rewards ? `: <b>${fmt(i.rewards)}</b> reward items announced in this scope.` : '.'))+
+    `<div class="grid2">`+
+    (h && h.months.length ? cardHTML('Home inventory by month','highest % full per month','invByMonth')
+      : '<div class="card"><div class="empty">No capacity readings in this scope.</div></div>')+
+    (i.others.length ? barsCard('Other locations','latest % full','invOthers')
+      : '<div class="card"><div class="empty">No other inventories read.</div></div>')+
+    `</div>`;
+}
 // Loading screens: the game logs how long each one stayed up. PU = Stanton, Pyro, Nyx.
 const loadSecs=x=>x===null||x===undefined ? '—'
   : x>=3600 ? Math.floor(x/3600)+'h '+String(Math.floor(x%3600/60)).padStart(2,'0')+'m'
@@ -9684,7 +9840,9 @@ function secSystem(v, STAB){
       bootsHTML(v))+
     group(5,'satellite','Servers','Which region you played on, and how often you changed server mid-session',
       serversHTML(v))+
-    group(6,'warning','Session outcomes','How your sessions ended',
+    group(6,'cargo','Home inventory','How full your primary residence is, and whether Sort still works',
+      inventoryHTML(v))+
+    group(7,'warning','Session outcomes','How your sessions ended',
       rated ? stabKpis+ctx+newcomerVerdict(v,oc,rated,thin)+stabNote+
         `<div class="grid2" style="margin-top:16px">`+
         cardHTML('How sessions ended','share of '+fmt(rated)+' sessions','outcomeChart')+
@@ -9803,6 +9961,18 @@ function secSystem(v, STAB){
           color:s.value>=40?'#ff9147':'var(--cyan)'})),
         {h:230, w:Math.max(460, series.length*70), maxbw:48, fmtY:x=>Math.round(x)+'%'});
     }
+  }
+  if(STAB && v.inventory){
+    const i=v.inventory, im=$('#invByMonth');
+    if(im && i.home){
+      const lbl=k=>{ const p=k.split('-'); return MON[+p[1]-1]+' '+p[0].slice(2); };
+      vbars(im, i.home.months.map(([k,p])=>({label:lbl(k), value:p, disp:Math.round(p)+'%',
+          full:`${lbl(k)} — up to ${Math.round(p)}% full`, color:invColor(p)})),
+        {h:230, w:Math.max(460, i.home.months.length*60), maxbw:44, fmtY:x=>Math.round(x)+'%'});
+    }
+    const io=$('#invOthers');
+    if(io) hbars(io, i.others.map(([n,p,d])=>({label:n, value:p, disp:Math.round(p)+'%', color:invColor(p),
+      title:d?ddmm(d):''})));
   }
   if(!STAB && v.loading){
     const bd=$('#loadByDest');
