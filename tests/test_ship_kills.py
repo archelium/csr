@@ -1,0 +1,113 @@
+"""Ship kills: <Vehicle Destroyed> lines (4.10.3+), one event per vehicle."""
+import os
+import sys
+import tempfile
+import unittest
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import sc_stats  # noqa: E402
+
+DAY = "2026-11-13"
+ME = "archelium"
+MY_ID = "204821712526"
+
+
+def line(hms, body):
+    return f"<{DAY}T{hms}Z> {body}\n"
+
+
+LOG_START = line("10:00:00.000", "Log started")
+LOGIN = (line("10:00:01.000", f"[Notice] <Legacy login response> Handle[{ME}] login ok")
+         + line("10:00:02.000", f"[Notice] <Inventory Mgmt Request Queued> Queued Request[1] for '{ME}' [{MY_ID}] Source"))
+
+
+def vd(hms, vid, cls, frm, to, killer=ME, kid=MY_ID, owner="0", reason="Combat"):
+    return line(hms, f"[Notice] <Vehicle Destroyed> Vehicle '{cls}_{vid}' [{vid}] class '{cls}' "
+                     f"(owner player [{owner}], driver [0]) destroyed: reason [{reason}] "
+                     f"level [{frm}] -> [{to}] flags [4066] killer '{killer}' [{kid}] "
+                     f"authority [0] [Team_CGP4][Vehicle]")
+
+
+def scan(text, login=LOGIN):
+    with tempfile.TemporaryDirectory() as d:
+        p = os.path.join(d, "Game.log")
+        with open(p, "w", encoding="utf-8") as fh:
+            fh.write(LOG_START + login + text + line("11:00:00.000", "end"))
+        return sc_stats.scan_log(p)
+
+
+def summary(*sessions):
+    agg = sc_stats.blank_patch()
+    for s in sessions:
+        sc_stats.fold(agg, s)
+    return sc_stats._ship_kills_summary(agg)
+
+
+GLAD = "AEGS_Gladius_PU_AI_CRIM"
+
+
+class ScanLogTests(unittest.TestCase):
+    def test_kill_by_you(self):
+        sk = scan(vd("10:10:00.000", "1", GLAD, 0, 2))["ship_kills"]
+        self.assertEqual(sk["kills"], {GLAD: 1})
+        self.assertEqual((sk["crippled"], sk["player_ships"], sk["lost"]), ({}, 0, []))
+        self.assertEqual(sk["by_reason"], {"Combat": 1})
+
+    def test_crippled_only(self):
+        sk = scan(vd("10:10:00.000", "1", GLAD, 0, 1))["ship_kills"]
+        self.assertEqual((sk["kills"], sk["crippled"]), ({}, {GLAD: 1}))
+
+    def test_two_lines_one_vehicle_count_once(self):
+        sk = scan(vd("10:10:00.000", "1", GLAD, 0, 1) + vd("10:10:30.000", "1", GLAD, 1, 2))["ship_kills"]
+        self.assertEqual((sk["kills"], sk["crippled"]), ({GLAD: 1}, {}))
+
+    def test_kill_by_another_player_not_counted(self):
+        text = vd("10:10:00.000", "1", GLAD, 0, 2, killer="somebody", kid="999")
+        self.assertIsNone(scan(text)["ship_kills"])
+
+    def test_player_owned_victim(self):
+        sk = scan(vd("10:10:00.000", "1", "RSI_Aurora_Mk2", 0, 2, owner="555"))["ship_kills"]
+        self.assertEqual((sk["kills"], sk["player_ships"]), ({"RSI_Aurora_Mk2": 1}, 1))
+
+    def test_own_ship_lost(self):
+        text = vd("10:10:00.000", "1", "MISC_Fury", 0, 2, killer="foe", kid="42", owner=MY_ID, reason="Collision")
+        sk = scan(text)["ship_kills"]
+        self.assertEqual(sk["kills"], {})
+        self.assertEqual(sk["lost"], [{"cls": "MISC_Fury", "reason": "Collision", "killer": "foe"}])
+
+    def test_no_vehicle_lines(self):
+        self.assertIsNone(scan("")["ship_kills"])
+
+
+class SummaryTests(unittest.TestCase):
+    def test_suffixes_resolve_to_the_base_hull(self):
+        sc_stats.SHIPS.load()
+        for cls, name in (("AEGS_Gladius_PU_AI_CRIM", "Gladius"),
+                          ("AEGS_Gladius_PU_AI_CRIM_IK", "Gladius"),
+                          ("AEGS_Gladius_AI_Super_CRIM", "Gladius"),
+                          ("AEGS_Vanguard_Harbinger_PU_AI_CRIM", "Vanguard Harbinger"),
+                          ("MISC_Freelancer_MIS_PU_AI_CRIM", "Freelancer MIS"),
+                          ("MISC_Freelancer_MIS_AI_Super_Crim", "Freelancer MIS"),
+                          ("AEGS_Sabre_Firebird_PU_AI_CRIM", "Sabre Firebird")):
+            self.assertEqual(sc_stats.vehicle_ship_name(cls), name, cls)
+
+    def test_old_session_folds_cleanly(self):
+        s = scan(vd("10:10:00.000", "1", GLAD, 0, 2) + vd("10:11:00.000", "2", GLAD, 0, 1))
+        old = dict(s)
+        del old["ship_kills"]
+        agg = sc_stats.blank_patch()
+        sc_stats.fold(agg, old)
+        self.assertIsNone(sc_stats._ship_kills_summary(agg))
+        sm = summary(old, s)
+        self.assertEqual((sm["kills"], sm["crippled"], sm["sessions"]), (1, 1, 1))
+        self.assertEqual(sm["top"], [["Gladius", 1]])
+
+    def test_lost_carries_names(self):
+        sc_stats.SHIPS.load()
+        s = scan(vd("10:10:00.000", "1", "MISC_Fury", 0, 2, killer="foe", kid="42", owner=MY_ID, reason="Combat"))
+        sm = summary(s)
+        self.assertEqual(sm["lost"], [{"ship": "Fury", "reason": "Combat", "killer": "foe"}])
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -50,7 +50,7 @@ CSR_CONTACT = "support@archelium.com"      # publisher/contact (archelium.com)
 # Bump whenever scan_log() learns to extract something new or fixes an extraction bug.
 # A quick refresh reuses archived sessions only when they were parsed by THIS version,
 # so improved parsing always re-reads old logs instead of silently keeping stale numbers.
-PARSER_VERSION = 24
+PARSER_VERSION = 25
 
 
 # --------------------------------------------------------------------------- #
@@ -1417,6 +1417,11 @@ VDESTROY_RE = re.compile(
     r"<Vehicle Destruction> CVehicle::OnAdvanceDestroyLevel: Vehicle '([^']+)' \[\d+\] "
     r"in zone '([^']*)'.*?driven by '([^']*)' \[\d+\] "
     r"advanced from destroy level (\d+) to (\d+) caused by '([^']*)'")
+# 4.10.3+: one line per vehicle damage-state change, with the killer and the owner's id.
+VKILL_RE = re.compile(
+    r"<Vehicle Destroyed> Vehicle '[^']+' \[(\d+)\] class '([^']+)' "
+    r"\(owner player \[(\d+)\], driver \[\d+\]\) destroyed: reason \[(\w+)\] "
+    r"level \[(\d+)\] -> \[(\d+)\] .*?killer '([^']*)' \[(\d+)\]")
 GAMERULES_RE = re.compile(r'gamerules="([^"]+)"')
 # shop purchases: item buys carry a price + item class + quantity; commodity buys
 # carry a price only (the good is a resourceGUID we don't name).  client_price is
@@ -3140,6 +3145,41 @@ def air_episodes(spans, me):
             "nohelm": sum(1 for s, e, nh in merged if nh and (e - s).total_seconds() >= AIR_MIN)}
 
 
+def ship_kill_events(events, me, me_id):
+    """Fold the <Vehicle Destroyed> events of one session into the `ship_kills` dict.
+    events: (vehicle id, class, owner id, reason, from, to, killer, killer id) in log order.
+    One event per vehicle, the line with its highest level. None when none is about you."""
+    best = {}
+    for ev in events:
+        if ev[0] not in best or ev[5] >= best[ev[0]][5]:
+            best[ev[0]] = ev
+
+    def mine(name, pid):
+        return bool(pid and pid == me_id) or bool(me and name.lower() == me)
+    kills, crip, reasons, lost, players, seen = Counter(), Counter(), Counter(), [], 0, False
+    for _vid, cls, owner, reason, _frm, to, killer, kid in best.values():
+        own = bool(me_id) and owner == me_id
+        by_me = mine(killer, kid)
+        if not (own or by_me):
+            continue
+        seen = True
+        reasons[reason] += 1
+        if own:
+            if to >= 2:
+                lost.append({"cls": cls, "reason": reason, "killer": killer})
+        elif reason == "Combat":
+            if to >= 2:
+                kills[cls] += 1
+                if owner:
+                    players += 1
+            elif to == 1:
+                crip[cls] += 1
+    if not seen:
+        return None
+    return {"kills": dict(kills), "crippled": dict(crip), "by_reason": dict(reasons),
+            "player_ships": players, "lost": lost}
+
+
 def scan_log(path):
     """Extract one session's stats from a single Game.log file."""
     try:
@@ -3165,6 +3205,8 @@ def scan_log(path):
     air_open = {}                      # (kind, player) -> [start, helmet off?] while a notice is open
     air_blk = None                     # the open record whose [STAMINA] detail block is being read
     air_spans = []                     # (player, start, end, helmet off?) per closed pair
+    vkills = []                        # <Vehicle Destroyed> events (4.10.3+), see ship_kill_events
+    me_id = None                       # your player id, from a line that pairs it with your handle
     crew_jumps = Counter()             # pilot -> jumps under their hands
     party_open = None                  # when the current party invite was accepted
     party_acc = 0                      # invites accepted
@@ -3272,6 +3314,22 @@ def scan_log(path):
                 ship_time.feed(line, p)
                 if "Loading screen for " in line or (load_t.login_at is None and "<LoginCompleted>" in line):
                     load_t.feed(line, p)
+                if "<Vehicle Destroyed>" in line:
+                    m = VKILL_RE.search(line)
+                    if m:
+                        vid, vcls, owner, why, frm, to, kname, kid = m.groups()
+                        vkills.append((vid, vcls, owner if owner != "0" else "", why,
+                                       int(frm), int(to), kname, kid if kid != "0" else ""))
+                if me_id is None and (handle or handle_fb):
+                    _h = handle or handle_fb
+                    if "'" + _h + "' [" in line:
+                        m = re.search(r"'" + re.escape(_h) + r"' \[(\d+)\]", line)
+                    elif "Player " + _h + "[" in line:
+                        m = re.search(r"Player " + re.escape(_h) + r"\[(\d+)\]", line)
+                    else:
+                        m = None
+                    if m and m.group(1) != "0":
+                        me_id = m.group(1)
                 if air_blk is not None:         # detail lines carry the stamp, then [STAMINA]
                     if line[27:36] == "[STAMINA]":
                         if "Not Wearing Helmet" in line:
@@ -3801,6 +3859,7 @@ def scan_log(path):
     medbed_ship = sum(1 for a, ship, _p in medbed if ship and (not _me or a.lower() == _me))
     places_seen = sorted({c for a, c in places if not _me or a.lower() == _me})
     air = air_episodes(air_spans, _me)
+    ship_kills = ship_kill_events(vkills, _me, me_id)
     medbed_parts = Counter()
     for a, _ship, parts in medbed:
         if not _me or a.lower() == _me:
@@ -3841,7 +3900,7 @@ def scan_log(path):
         "contracts_failed": dict(contracts_failed),
         "injuries": dict(injuries), "medbed_n": medbed_n, "medbed_ship": medbed_ship,
         "medbed_parts": dict(medbed_parts), "crew_jumps": dict(crew_jumps),
-        "places": places_seen, "air": air,
+        "places": places_seen, "air": air, "ship_kills": ship_kills,
         "party_acc": party_acc, "party_secs": round(party_secs), "crimestat": crimestat,
         "haul_scu": haul_scu, "haul_runs": haul_runs, "haul_lost": haul_lost, "haul_max": haul_max,
         "haul_com": dict(haul_com), "haul_dest": dict(haul_dest),
@@ -3950,6 +4009,10 @@ def blank_patch():
         "places": {},
         # out of air: episode seconds, those without a helmet, sessions with one, longest
         "air_eps": [], "air_nohelm": 0, "air_sessions": 0, "air_longest": None,
+        # ship kills (4.10.3+): victim class -> n for kills and crippled, reasons, player-owned
+        # kills, losses, and the hours of the sessions that log the line
+        "sk_kills": Counter(), "sk_crip": Counter(), "sk_reason": Counter(), "sk_players": 0,
+        "sk_lost": [], "sk_sessions": 0, "sk_secs": 0,
     }
 
 
@@ -4124,6 +4187,15 @@ def fold(agg, s):
         _top = max(_air["eps"])
         if agg["air_longest"] is None or _top > agg["air_longest"][0]:
             agg["air_longest"] = [_top, _d]
+    _sk = s.get("ship_kills")
+    if _sk:
+        agg["sk_kills"].update(_sk["kills"])
+        agg["sk_crip"].update(_sk["crippled"])
+        agg["sk_reason"].update(_sk["by_reason"])
+        agg["sk_players"] += _sk["player_ships"]
+        agg["sk_lost"].extend(_sk["lost"])
+        agg["sk_sessions"] += 1
+        agg["sk_secs"] += s["dur"]
     _ld = s.get("loads") or []
     agg["loads"].extend(_ld)
     agg["loads_hung"] += s.get("loads_hung", 0)
@@ -4469,6 +4541,55 @@ def _air_summary(agg):
             "nohelm": agg["air_nohelm"], "sessions": agg["air_sessions"]}
 
 
+_AI_TOKENS = {"pu", "ai", "super", "crim", "ik"}
+
+
+def vehicle_ship_name(cls):
+    """Ship name for a <Vehicle Destroyed> class. NPC classes carry AI/crime suffixes
+    (AEGS_Gladius_PU_AI_CRIM, ..._AI_Super_CRIM). They come off first, then the model is
+    matched by its exact matrix name so Vanguard Harbinger and Sabre Firebird stay
+    themselves. Falls back to the matrix match, then to the class without its maker code."""
+    parts = cls.split("_")
+    while len(parts) > 1 and parts[-1].lower() in _AI_TOKENS:
+        parts.pop()
+    base = "_".join(parts)
+    if SHIPS.ok:
+        want = " ".join(parts[1:]).lower()
+        for n, rec in SHIPS.by_name.items():
+            if n and n.lower() == want and rec.get("name"):
+                return rec["name"]
+        nm = _ship_display_name(base)
+        if nm:
+            return nm
+    return " ".join(parts[1:] or parts)
+
+
+def _ship_kills_summary(agg):
+    """Ships you destroyed and lost (4.10.3+), None when no session logged any."""
+    if not agg["sk_sessions"]:
+        return None
+    top, crip = Counter(), Counter()
+    for cls, n in agg["sk_kills"].items():
+        top[vehicle_ship_name(cls)] += n
+    for cls, n in agg["sk_crip"].items():
+        crip[vehicle_ship_name(cls)] += n
+    kills = sum(top.values())
+    hours = agg["sk_secs"] / 3600
+    lost = []
+    for r in agg["sk_lost"]:
+        k = re.sub(r"_\d{6,}$", "", r["killer"])
+        if k != r["killer"]:
+            k = vehicle_ship_name(k)
+        lost.append({"ship": vehicle_ship_name(r["cls"]), "reason": r["reason"],
+                     "killer": "" if k.lower() in ("none", "") else k})
+    return {"kills": kills, "crippled": sum(crip.values()), "player_ships": agg["sk_players"],
+            "per10h": round(kills / hours * 10, 1) if hours >= 1 else None,
+            "hours": round(hours, 1), "sessions": agg["sk_sessions"],
+            "top": [[k, n] for k, n in sorted(top.items(), key=lambda kv: (-kv[1], kv[0]))[:10]],
+            "by_reason": [[k, n] for k, n in sorted(agg["sk_reason"].items(), key=lambda kv: (-kv[1], kv[0]))],
+            "lost": lost}
+
+
 def _hours_split(agg):
     """Seconds per bucket: where the logged hours went. None for an empty scope."""
     if not agg["sessions"]:
@@ -4760,6 +4881,7 @@ def finalize(agg):
         "hours_split": _hours_split(agg),
         "places": _places_summary(agg),
         "air": _air_summary(agg),
+        "ship_kills": _ship_kills_summary(agg),
         "gear_lost": _gear_lost_summary(agg),
         "gun_meta": gun_meta,
         "legacy": legacy,
@@ -8100,25 +8222,42 @@ function airHTML(v){
       [icon('deaths'), fmt(a.nohelm), 'Helmet off', 'no helmet'],
     ])+noteFold(`Episodes under 2 s are left out.`)+`</div>`;
 }
+// Ship kills from <Vehicle Destroyed> lines (4.10.3 onward): your kills, crippled ships and losses.
+function shipKillsHTML(v){
+  const k=v.ship_kills;
+  if(!k) return '';
+  const lost=(k.lost||[]).map(r=>`<div class="row"><span>${esc(r.ship)}</span> <span class="vv-u">${esc(r.reason)}${r.killer?' · '+esc(r.killer):''}</span></div>`).join('');
+  return `<div style="margin-top:16px">`+kpiRow([
+      [icon('kills'), fmt(k.kills), 'Ships destroyed', `in ${fmt(k.sessions)} ${k.sessions===1?'session':'sessions'}`],
+      [icon('damage'), fmt(k.crippled), 'Crippled', `not destroyed`],
+      [icon('target'), fmt(k.player_ships), 'Player ships', `owned by other players`],
+      (k.per10h!=null ? [icon('time'), fmt(k.per10h), 'Per 10 h', `over ${fmt(k.hours)} h logged`]
+                      : [icon('time'), 'N/A', 'Per 10 h', `under 1 h logged`, 'na']),
+    ])+
+    barsCard('Ships you destroyed','top 10 by name','shipKillBars')+
+    (lost ? `<div class="card" style="margin-top:16px"><h3>Ships you lost <span class="u">— ship, reason, killer</span></h3>${lost}</div>` : '')+
+    noteFold(`Logged from 4.10.3.`)+`</div>`;
+}
 function secCombat(v){
   const dc=v.death_causes;
   const guns=v.weapons_top.filter(w=>!w[2]), tools=v.weapons_top.filter(w=>w[2]);
   const lb=v.loot_boxes||{};
   const lootSub=['Small','Medium','Large','Other'].filter(k=>lb[k]).map(k=>fmt(lb[k])+' '+k[0]).join(' · ')||'crates & lockers';
   const info = callout(icon('satellite'),
-    `Current-patch combat (${scopeLabel()}). The 2026 builds only log your ship deaths — no kills, K/D or damage. `+
+    `Current-patch combat (${scopeLabel()}). The 2026 builds log your ship deaths. Ship kills are logged from 4.10.3, no K/D or damage. `+
     `On-foot deaths only show up as the gear you lost. `+
     `Loadout is ranked by how often you drew each weapon. Your old kills are under `+
     `<a class="clink" onclick="gotoSec('legacy')">Legacy Combat</a> →.`);
   $('#content').innerHTML=metaLine(v)+info+
-    group(1,'ship','Ship combat','How you lost ships — all the client log records',
+    group(1,'ship','Ship combat','Ship kills and losses from the client log',
       kpiRow([
         [icon('deaths'), v.deaths, 'Ship deaths', `ships you lost`],
         [icon('kills'), dc.collision, 'By collision', `flew into something`],
         [icon('damage'), dc.other, 'Destroyed / other', `shot down, hazards…`],
       ])+
       cardHTML('How your ship was lost','ship-destruction deaths only','causeChart')+
-      `<div style="margin-top:16px">`+barsCard('Ships you died in most','deaths per ship','deathShips')+`</div>`
+      `<div style="margin-top:16px">`+barsCard('Ships you died in most','deaths per ship','deathShips')+`</div>`+
+      shipKillsHTML(v)
     )+
     group(2,'deaths','Gear lost on death','What was on your body when you died, on foot or in a ship',
       gearLostHTML(v))+
@@ -8158,6 +8297,7 @@ function secCombat(v){
   hbars($('#toolBars'), toItems(tools.map(w=>[w[0],w[1]]), null, true).map(x=>({...x,tool:true})));
   splitbar($('#causeChart'), [{label:'Collision',value:dc.collision,color:'#ff9147'},{label:'Destroyed / other',value:dc.other,color:'#ff5468'}], {big:v.deaths, small:'ship deaths'});
   hbars($('#deathShips'), toItems(v.death_ships,'#ff5468', true));
+  const skb=$('#shipKillBars'); if(skb) hbars(skb, toItems((v.ship_kills||{}).top,'#4ade80', true));
   const ib=$('#injBars'); if(ib) hbars(ib, (v.injury_parts||[]).map(([k,n])=>({label:k, value:n, disp:fmt(n), color:'#ff9147'})));
   const mb=$('#medBars'); if(mb) hbars(mb, ((v.medbed||{}).parts||[]).map(([k,n])=>({label:k, value:n, disp:fmt(n), color:'#4ade80'})));
   const gl=v.gear_lost;
