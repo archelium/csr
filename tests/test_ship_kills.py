@@ -53,6 +53,13 @@ class ScanLogTests(unittest.TestCase):
         self.assertEqual((sk["crippled"], sk["player_ships"], sk["lost"]), ({}, 0, []))
         self.assertEqual(sk["by_reason"], {"Combat": 1})
 
+    def test_collision_and_self_destruct_kills_by_you_count(self):
+        text = (vd("10:10:00.000", "1", GLAD, 0, 2, reason="Collision")
+                + vd("10:11:00.000", "2", GLAD, 0, 2, reason="SelfDestruct"))
+        sk = scan(text)["ship_kills"]
+        self.assertEqual(sk["kills"], {GLAD: 2})
+        self.assertEqual(sk["by_reason"], {"Collision": 1, "SelfDestruct": 1})
+
     def test_crippled_only(self):
         sk = scan(vd("10:10:00.000", "1", GLAD, 0, 1))["ship_kills"]
         self.assertEqual((sk["kills"], sk["crippled"]), ({}, {GLAD: 1}))
@@ -101,6 +108,22 @@ class SummaryTests(unittest.TestCase):
         sm = summary(old, s)
         self.assertEqual((sm["kills"], sm["crippled"], sm["sessions"]), (1, 1, 1))
         self.assertEqual(sm["top"], [["Gladius", 1]])
+
+    def test_hours_cover_every_session_on_a_build_that_logs_the_line(self):
+        def sess(patch, build, text=""):
+            s = dict(scan(text), patch=patch, build=build, dur=7200)
+            return s
+        kill = sess("4.10", "4.10.200.58746", vd("10:10:00.000", "1", GLAD, 0, 2))
+        empty = sess("4.10", "4.10.200.58746")
+        old = sess("4.2", "4.2.152.45836")
+        sm = summary(kill, empty, old)
+        self.assertEqual((sm["kills"], sm["hours"], sm["sessions"]), (1, 4.0, 1))
+        self.assertEqual(sm["per10h"], 2.5)
+        self.assertTrue(sc_stats.logs_vehicle_kills("4.10", "4.10.200.1"))
+        self.assertFalse(sc_stats.logs_vehicle_kills("4.10", "4.10.100.1"))
+        self.assertFalse(sc_stats.logs_vehicle_kills("4.9", "4.9.1.1"))
+        self.assertTrue(sc_stats.logs_vehicle_kills("4.11", ""))
+        self.assertTrue(sc_stats.logs_vehicle_kills(None, None))
 
     def test_lost_carries_names(self):
         sc_stats.SHIPS.load()

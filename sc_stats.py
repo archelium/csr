@@ -1776,6 +1776,15 @@ def has_crew_channel(patch, build):
     return p > (4, 5) or (p == (4, 5) and _ver_tuple(build)[:3] >= (4, 5, 167))
 
 
+def logs_vehicle_kills(patch, build):
+    """Does this build log <Vehicle Destroyed>? From 4.10.200 on. An unknown patch counts
+    as yes, like has_crew_channel. On 4.10 itself the build decides."""
+    p = _ver_tuple(patch)
+    if p == (0,):
+        return True
+    return p > (4, 10) or (p == (4, 10) and _ver_tuple(build)[:3] >= (4, 10, 200))
+
+
 SHIP_HOSTS = {"caterpillar", "ironclad"}    # ships a Drake Command Module plugs into
 
 
@@ -3167,7 +3176,7 @@ def ship_kill_events(events, me, me_id):
         if own:
             if to >= 2:
                 lost.append({"cls": cls, "reason": reason, "killer": killer})
-        elif reason == "Combat":
+        else:
             if to >= 2:
                 kills[cls] += 1
                 if owner:
@@ -4010,9 +4019,9 @@ def blank_patch():
         # out of air: episode seconds, those without a helmet, sessions with one, longest
         "air_eps": [], "air_nohelm": 0, "air_sessions": 0, "air_longest": None,
         # ship kills (4.10.3+): victim class -> n for kills and crippled, reasons, player-owned
-        # kills, losses, and the hours of the sessions that log the line
+        # kills, losses, and the seconds played on builds that log the line (the per-hour base)
         "sk_kills": Counter(), "sk_crip": Counter(), "sk_reason": Counter(), "sk_players": 0,
-        "sk_lost": [], "sk_sessions": 0, "sk_secs": 0,
+        "sk_lost": [], "sk_sessions": 0, "vd_secs": 0,
     }
 
 
@@ -4187,6 +4196,8 @@ def fold(agg, s):
         _top = max(_air["eps"])
         if agg["air_longest"] is None or _top > agg["air_longest"][0]:
             agg["air_longest"] = [_top, _d]
+    if logs_vehicle_kills(s.get("patch"), s.get("build")):
+        agg["vd_secs"] += s["dur"]
     _sk = s.get("ship_kills")
     if _sk:
         agg["sk_kills"].update(_sk["kills"])
@@ -4195,7 +4206,6 @@ def fold(agg, s):
         agg["sk_players"] += _sk["player_ships"]
         agg["sk_lost"].extend(_sk["lost"])
         agg["sk_sessions"] += 1
-        agg["sk_secs"] += s["dur"]
     _ld = s.get("loads") or []
     agg["loads"].extend(_ld)
     agg["loads_hung"] += s.get("loads_hung", 0)
@@ -4574,7 +4584,7 @@ def _ship_kills_summary(agg):
     for cls, n in agg["sk_crip"].items():
         crip[vehicle_ship_name(cls)] += n
     kills = sum(top.values())
-    hours = agg["sk_secs"] / 3600
+    hours = agg["vd_secs"] / 3600
     lost = []
     for r in agg["sk_lost"]:
         k = re.sub(r"_\d{6,}$", "", r["killer"])
