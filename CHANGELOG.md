@@ -5,6 +5,35 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and CSR
 uses [Semantic Versioning](https://semver.org/) (MAJOR.MINOR.PATCH).
 
 
+## [Unreleased]
+
+### Added
+- **Ship kills** (Combat). 4.10.3 logs every ship destroyed again, with the killer's
+  name. CSR counts the ships you destroyed, the ones you only crippled, kills of other
+  players' ships and kills per 10 hours, with the reason split (combat, collision, self
+  destruct) and the ships you destroyed most. NPC crime ships are named as their base
+  hull: *Gladius*, *Vanguard Harbinger*, *Sabre Firebird*. Ships you lost list the latest
+  ten with the date and who did it. Logged from 4.10.3.
+- **Home inventory** (Stability). How full your home inventory is, from the capacity the
+  game reports when you drag an item: used SCU against the 5,000 SCU cap, by month.
+  Also failed sorts, the size of the largest inventory request against the 1 MB cap the
+  game sends, operations dropped over that cap, and reward items announced. Over 100% the
+  game counts the inventory as overloaded.
+- **Drake Marauder and Gatac Hyūn.** Both are flyable in 4.10.3 and missing from RSI's
+  Ship Matrix. CSR names them from the Star Citizen wiki until RSI lists them. Size and
+  artwork stay empty, no source gives them.
+
+### Fixed
+- **Shader-cache logs counted as sessions.** Since 5 Nov the launcher writes
+  `PSOCacheGen` logs into `logbackups`. CSR read each one as a 3-minute game session that
+  died. They're skipped now, and ones already in your archive drop out.
+- Ship names with accents match with or without them. *San'tok.yāi* resolves from its
+  class for the first time.
+
+### Changed
+- Parser **25**: the next refresh re-reads your archive once.
+
+
 ## [1.8.0] — 2026-10-30
 
 ### Added
