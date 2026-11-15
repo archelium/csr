@@ -5,7 +5,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and CSR
 uses [Semantic Versioning](https://semver.org/) (MAJOR.MINOR.PATCH).
 
 
-## [Unreleased]
+## [1.9.1] — 2026-11-15
 
 ### Changed
 - **The full re-read after an update is about 20× faster.** Logs now parse in worker
