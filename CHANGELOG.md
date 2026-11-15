@@ -5,6 +5,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and CSR
 uses [Semantic Versioning](https://semver.org/) (MAJOR.MINOR.PATCH).
 
 
+## [1.9.1] — 2026-11-15
+
+### Changed
+- **The full re-read after an update is about 20× faster.** Logs now parse in worker
+  processes, half your CPU threads up to 8. A log copied into another channel folder
+  (same name, size and date) is read once. The copy was already dropped as a duplicate,
+  now it isn't parsed first. On 3,790 logs (11.4 GB, 2,372 of them copies) the parse went
+  from 286 s to 14 s, same sessions. Quick refreshes don't change.
+
+
 ## [1.9.0] — 2026-11-15
 
 ### Added
