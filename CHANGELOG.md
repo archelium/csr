@@ -5,6 +5,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and CSR
 uses [Semantic Versioning](https://semver.org/) (MAJOR.MINOR.PATCH).
 
 
+## [1.9.3] — 2026-11-23
+
+### Fixed
+- **Magazines for new guns showed their code** (Combat, Economy). The Arlington's
+  magazine read *Hdgw Rifle Ballistic 01 Mag* in Gear lost on death. A magazine the
+  SC-Wiki item index doesn't list yet is now named after its gun: *Arlington Magazine*.
+- Named from their starcitizen.tools pages until the item index lists them: the
+  **Verdict LMG** (Kastak Arms) and the **Myers (4x Telescopic)** scope. Buying the
+  Arlington in a shop shows *Arlington* too.
+
+
 ## [1.9.2] — 2026-11-23
 
 ### Fixed

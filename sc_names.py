@@ -63,6 +63,9 @@ WEAPON_MODELS = {
     "crlf_medgun_01": "MedGun (ParaMed)",
     "crlf_consumable_healing_01": "Hemozal Injector",
     "hdgw_rifle_ballistic_01": "Arlington",   # Hedeby Gunworks lever-action rifle (4.10)
+    # not in the SC-Wiki item index yet, named from their starcitizen.tools pages
+    "hdgw_optics_tsco_x4_s2": "Myers (4x Telescopic)",   # Hedeby scope for the Arlington
+    "ksar_lmg_energy_01": "Verdict LMG",                 # Kastak Arms energy LMG
 }
 
 # Type words used to build a readable fallback ("<Man> Ballistic Sniper")

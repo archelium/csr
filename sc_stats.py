@@ -47,7 +47,7 @@ import sc_names
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
-CSR_VERSION = "1.9.2"
+CSR_VERSION = "1.9.3"
 CSR_CONTACT = "support@archelium.com"      # publisher/contact (archelium.com)
 # Bump whenever scan_log() learns to extract something new or fixes an extraction bug.
 # A quick refresh reuses archived sessions only when they were parsed by THIS version,
@@ -2762,6 +2762,11 @@ def purchase_display(cls):
         hit = sc_names.ITEMS.idx.get(k) if sc_names.ITEMS else None
         if hit:
             return sc_names._skin_strip(hit)
+    # 1b. a magazine the index doesn't list (a gun newer than the index, like the
+    #     Arlington): named after its gun. Before the prefix fallback, which would
+    #     return the gun's own name for its magazine.
+    if low.endswith("_mag"):
+        return f"{sc_names.weapon_display(low[:-4])[0]} Magazine"
     # 2. ships (buyable for aUEC) — before the noisy prefix fallback
     if SHIPS.ok:
         rec = SHIPS.match(cls)
@@ -2772,7 +2777,11 @@ def purchase_display(cls):
         r = sc_names.ITEMS.resolve(low)
         if r and r.strip().lower() not in _PART_WORDS:
             return r
-    # 4. prettify (drop trailing id/size segments)
+    # 4. the curated arms table (guns the index doesn't list yet)
+    model = sc_names.WEAPON_MODELS.get(sc_names.strip_variant(low))
+    if model:
+        return model
+    # 5. prettify (drop trailing id/size segments)
     pretty = re.sub(r"\s+", " ", re.sub(r"(_\d{2,})+$", "", cls).replace("_", " ")).strip()
     return pretty.title() or cls
 
