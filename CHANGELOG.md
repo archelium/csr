@@ -5,7 +5,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and CSR
 uses [Semantic Versioning](https://semver.org/) (MAJOR.MINOR.PATCH).
 
 
-## [Unreleased]
+## [1.10.0] — 2026-11-23
 
 ### Added
 - **On this page** (sidebar). Tabs with three or more groups list them under the nav.
