@@ -5,6 +5,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and CSR
 uses [Semantic Versioning](https://semver.org/) (MAJOR.MINOR.PATCH).
 
 
+## [Unreleased]
+
+### Added
+- **On this page** (sidebar). Tabs with three or more groups list them under the nav.
+  Click one to jump to it. The group you're reading lights up as you scroll. Hidden on
+  the icon sidebar and on short windows.
+
+### Changed
+- **HUD look.** Panels have bevelled corners and a cyan top edge, group titles sit on a
+  lit cyan rail, readouts are larger, and the top entry of every list is amber. In the
+  light theme the glows are off.
+- **Text is easier to read.** One type scale, nothing under 12 px except heatmap and
+  spec-sheet labels at 11 px. Sublines and notes are in the sans face, mono is for
+  numbers and labels. Notes wrap at about 80 characters on any window.
+
+### Fixed
+- **On a wide window the top bar and the cards didn't line up**, and everything past
+  about 1,500 px was empty. Both now use the full width with matching edges. Charts stop
+  growing taller at 460 px.
+- **On a short window the sidebar footer was cut off.** The sidebar now scrolls inside
+  itself when it doesn't fit.
+
+
 ## [1.9.3] — 2026-11-23
 
 ### Fixed
