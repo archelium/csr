@@ -47,7 +47,7 @@ import sc_names
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
-CSR_VERSION = "1.9.3"
+CSR_VERSION = "1.10.0"
 CSR_CONTACT = "support@archelium.com"      # publisher/contact (archelium.com)
 # Bump whenever scan_log() learns to extract something new or fixes an extraction bug.
 # A quick refresh reuses archived sessions only when they were parsed by THIS version,
@@ -7383,9 +7383,17 @@ nav a::after{background:var(--menu-bg);border-color:var(--glass-line);box-shadow
 @media(max-width:760px){ .sidebar{width:64px;flex-basis:64px;margin:10px 0 10px 10px;height:calc(100vh - 20px);top:10px} }
 
 /* ---- topbar: title · scope pill · tools ---- */
-.topbar{z-index:30;gap:18px;padding:22px 32px 16px;border-bottom:0;max-width:1244px;
+.topbar{z-index:30;gap:18px;padding:22px 32px 16px;border-bottom:0;
   background:color-mix(in srgb,var(--bg) 90%,transparent);-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px)}
   /* no mask or overflow on .topbar: the scope, bell and status popovers hang below it */
+/* the bar and the cards share one fluid width and the same side padding, so their
+   edges line up at any window size */
+.topbar,.content,.limited-note{max-width:none}
+.content{padding-left:32px;padding-right:32px}
+.limited-note{margin-left:32px;margin-right:32px}
+/* charts keep their aspect ratio. On a very wide window a full-width chart stops
+   growing taller here and centres in its card */
+.content .card svg{max-height:460px}
 #secTitle{font-size:28px;font-weight:600;letter-spacing:-.01em}
 .scope-badge{font-size:11px;border-radius:6px;padding:3px 8px;border-color:rgba(91,209,230,.45)}
 .scope-badge.patch{border-color:rgba(244,169,42,.55)}
@@ -7654,6 +7662,73 @@ nav a::after{background:var(--menu-bg);border-color:var(--glass-line);box-shadow
 #bpList .tev{display:grid;grid-template-columns:96px minmax(0,1fr) auto;align-items:baseline;column-gap:16px}
 #bpList .tev .tw{min-width:0}
 #bpList .tev .tv{margin-left:0}
+
+/* ==== spec 6: HUD polish (Nov 2026) ==== */
+/* type baseline: one scale, nothing under 12px, mono for numbers and labels only,
+   notes wrap at a readable width on any window */
+:root{--fs-xs:12px;--fs-sm:13px;--fs-md:14px}
+.kpi .l{font-size:var(--fs-xs);letter-spacing:.08em}
+.kpi .s,.gs,.card h3 .u{font-family:var(--font-display);font-size:var(--fs-sm);letter-spacing:0;
+  text-transform:none;color:var(--muted)}
+.callout{font-size:var(--fs-md);line-height:1.6}
+.callout>div{max-width:82ch}
+.patch-meta,.foot-disc,.side-foot,.bppl{font-size:var(--fs-xs)}
+.bar-row .nm{font-size:var(--fs-md)}
+.bar-row .vv{font-size:var(--fs-sm)}
+.kpi .v,.bar-row .vv{font-variant-numeric:tabular-nums}
+/* small labels, chips and table cells that sat at 8.5–11.5px. Selectors match the rules
+   they override, so the later one wins at the same specificity */
+.tev .td,.tev .tv,.mchip .mk,.bar-row .vv .vv-u,.bgrid td span,.bgrid th,.sitem .sk2,.sitem .sk2 b,
+.vpill.sm .vc,details.fold.nf > summary .nfm,details.fold.nf .nfb,.cbrow .cbsub,.cbrow .cbw,.pb-gl span,
+.wbar span,.row .foot-link,.pager .foot-link,.spec .ss,.profile .pf .l,.ov-ch,.slight .sm,.ov-tag,.ov-k,
+.cbh,.pager .pgi,details.fold > summary .cnt,.act .ad2,.bpk,.gnum,.bph,.sp-k,.scope-badge,.pb-val,
+.sb-small,.ov-ck,.chip-c,.card h3 .u,.bsc .u,.bset .bsgo,.pb-peak,.wscan .wsub,.amore{font-size:var(--fs-xs)}
+/* heatmap and spec-sheet axis labels and tiny badges sit in cells too narrow for 12px */
+.heat .hl,.heat .hx,.spec .sk,.beta,.kind-main,.kind-aff,.org-card .obadge .k{font-size:11px}
+
+/* panels: bevelled top-right and bottom-left corners, a cyan top edge, a faint lit top.
+   corner-shape cuts the border and background together, so nothing inside is clipped.
+   Browsers without it keep the asymmetric radius. */
+.card,.kpi,.callout{border-radius:3px 14px 3px 14px;corner-shape:round bevel round bevel}
+.card,.kpi{border-top-color:color-mix(in srgb,var(--cyan) 55%,transparent);
+  background-image:linear-gradient(180deg,color-mix(in srgb,var(--cyan) 6%,transparent),transparent 45%)}
+.callout{border-left:3px solid var(--cyan)}
+/* readouts */
+.kpi .v{font-size:38px;color:color-mix(in srgb,var(--txt) 90%,var(--cyan));
+  text-shadow:0 0 18px color-mix(in srgb,var(--cyan) 35%,transparent)}
+.kpi .l::before{content:"";display:inline-block;width:6px;height:6px;background:var(--cyan);
+  margin-right:8px;vertical-align:1px}
+/* group heads: a rule with a lit cyan rail under the title */
+.ghead{position:relative;padding-bottom:12px;border-bottom:1px solid var(--line)}
+.ghead::after{content:"";position:absolute;left:0;bottom:-1px;width:140px;height:2px;background:var(--cyan);
+  box-shadow:0 0 10px color-mix(in srgb,var(--cyan) 60%,transparent)}
+.gnum{color:var(--amber);background:var(--tint-amber)}
+.card h3{letter-spacing:.12em}
+/* bars: a lit gradient, amber for the top entry of a list */
+.bar-fill{background:linear-gradient(90deg,color-mix(in srgb,var(--cyan) 30%,transparent),var(--cyan));
+  box-shadow:0 0 8px color-mix(in srgb,var(--cyan) 35%,transparent)}
+.bar-row:first-child .rk,.bar-row:first-child .vv{color:var(--amber)}
+/* light theme: glows read as smudges on white */
+:root[data-theme="light"] .kpi .v{text-shadow:none;color:var(--txt)}
+:root[data-theme="light"] .ghead::after,:root[data-theme="light"] .bar-fill{box-shadow:none}
+
+/* sidebar: scrolls inside itself when the window is short, and lists the open tab's
+   groups ("On this page") in the space under the nav on long pages */
+.sidebar{overflow-y:auto;scrollbar-width:thin}
+.side-toc{display:flex;flex-direction:column;gap:1px;flex:1 1 auto;min-height:0;overflow-y:auto;
+  margin:16px 0 12px;padding:14px 4px 0;border-top:1px solid var(--line);scrollbar-width:thin}
+.side-toc[hidden]{display:none}
+.toc-h{font-family:var(--font-mono);font-size:var(--fs-xs);letter-spacing:.12em;text-transform:uppercase;
+  color:var(--dim);padding:0 10px 8px}
+.side-toc button{all:unset;box-sizing:border-box;cursor:pointer;display:flex;gap:10px;align-items:baseline;
+  padding:6px 10px;border-radius:6px;color:var(--muted);font-size:var(--fs-sm);line-height:1.3}
+.side-toc button i{font-style:normal;font-family:var(--font-mono);font-size:var(--fs-xs);color:var(--dim)}
+.side-toc button:hover{color:var(--txt);background:var(--tint-cyan)}
+.side-toc button.on{color:var(--cyan);background:var(--tint-cyan)}
+.side-toc button.on i{color:var(--amber)}
+.side-toc button:focus-visible{outline:2px solid var(--cyan);outline-offset:-2px}
+@media(max-width:1120px),(max-height:760px){ .side-toc{display:none} }
+@media(max-height:720px){ .side-foot{gap:8px} .foot-disc{display:none} }
 </style>
 </head>
 <body>
@@ -7681,6 +7756,7 @@ nav a::after{background:var(--menu-bg);border-color:var(--glass-line);box-shadow
       <a data-sec="stability" data-label="Stability &amp; Crashes"><span>🩺</span> Stability<i class="navlive" id="navLive" title="CSR is watching your logs"></i></a>
       <a data-sec="orgs" data-label="Orgs &amp; Profile"><span>🪪</span> Orgs &amp; Profile</a>
     </nav>
+    <div class="side-toc" id="sideToc" aria-label="On this page" hidden></div>
     <div class="side-foot">
       <button class="foot-link" id="aboutBtn">About &amp; legal</button>
       <div id="gen"></div>
@@ -8014,7 +8090,7 @@ function barsCard(title, unit, innerId){
 // Combat tab covers ship combat, on-foot combat and looting) — the numbered badge and
 // full-width rule make the boundaries obvious instead of relying on a small caption.
 function group(n, ic, title, sub, body){
-  return `<section class="gsec">`+
+  return `<section class="gsec" id="grp-${n}">`+
     `<div class="ghead"><div class="gnum">${String(n).padStart(2,'0')}</div>`+
     `<div class="gic">${icon(ic)}</div>`+
     `<div class="gtx"><div class="gt">${title}</div><div class="gs">${sub||''}</div></div></div>`+
@@ -10157,7 +10233,35 @@ function render(){
     sb.classList.toggle('patch', current!=='all'); }
   renderLimitedNote();
   SECTIONS[section].fn(view());
+  buildToc();
 }
+// "On this page": the open tab's groups in the sidebar, the one in view lit. Only for
+// tabs with three or more groups. CSS hides it on the icon rail and on short windows.
+function buildToc(){
+  const el=$('#sideToc'); if(!el) return;
+  const gs=[...document.querySelectorAll('#content .gsec[id]')];
+  if(gs.length<3){ el.hidden=true; el.innerHTML=''; return; }
+  el.innerHTML='<div class="toc-h">On this page</div>'+gs.map(g=>
+    `<button type="button" data-g="${g.id}"><i>${esc((g.querySelector('.gnum')||{}).textContent||'')}</i>`+
+    `${esc((g.querySelector('.gt')||{}).textContent||'')}</button>`).join('');
+  el.hidden=false;
+  el.querySelectorAll('button').forEach(b=>b.onclick=()=>{
+    const g=document.getElementById(b.dataset.g); if(!g) return;
+    const tb=document.querySelector('.topbar');
+    scrollToY(g.getBoundingClientRect().top+window.pageYOffset-(tb?tb.offsetHeight:0)-12);
+  });
+  tocSpy();
+}
+function tocSpy(){
+  const el=$('#sideToc'); if(!el||el.hidden) return;
+  const gs=[...document.querySelectorAll('#content .gsec[id]')]; if(!gs.length) return;
+  const tb=document.querySelector('.topbar'), line=(tb?tb.offsetHeight:0)+40;
+  let cur=gs[0].id;
+  for(const g of gs){ if(g.getBoundingClientRect().top<=line) cur=g.id; else break; }
+  if(window.innerHeight+window.pageYOffset>=document.documentElement.scrollHeight-4) cur=gs[gs.length-1].id;
+  el.querySelectorAll('button').forEach(b=>b.classList.toggle('on', b.dataset.g===cur));
+}
+window.addEventListener('scroll', tocSpy, {passive:true});
 // banner shown when the current view includes sessions from a game build that
 // logged far less than usual (playtime counts; weapons/kills/missions may be missing)
 function renderLimitedNote(){
