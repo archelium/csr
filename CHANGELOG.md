@@ -11,6 +11,11 @@ uses [Semantic Versioning](https://semver.org/) (MAJOR.MINOR.PATCH).
 - **On this page** (sidebar). Tabs with three or more groups list them under the nav.
   Click one to jump to it. The group you're reading lights up as you scroll. Hidden on
   the icon sidebar and on short windows.
+- **Pictures on Flight & Travel, Combat, Missions, Economy and Blueprints.** Each page
+  opens on its #1: your most-flown ship, most-drawn gun, top hauling destination, biggest
+  ship purchase, closest armour set. In every ranked list of ships, guns, items and places
+  the top 3 are picture tiles and the rest have thumbnails. Ships come from RSI, the rest
+  from starcitizen.tools. Something with no picture shows its list's icon in the same slot.
 
 ### Changed
 - **HUD look.** Panels have bevelled corners and a cyan top edge, group titles sit on a
@@ -26,6 +31,8 @@ uses [Semantic Versioning](https://semver.org/) (MAJOR.MINOR.PATCH).
   render. Update now picks again.
 - **Update now also pulls the item catalogue.** Names, gun types and images for items
   added since the last release. Its date shows next to the other catalogues.
+- **Each picture is stored once in the page.** Every patch view used to carry its own copy
+  of the same ship renders.
 
 ### Fixed
 - **On a wide window the top bar and the cards didn't line up**, and everything past
@@ -43,6 +50,12 @@ uses [Semantic Versioning](https://semver.org/) (MAJOR.MINOR.PATCH).
   game data, fixed to their wiki names (an Antium helmet read "Antium Core Jet"). Items
   the wiki no longer lists keep their last known name. Placeholder names are ignored.
 - **"Crafting catalogue offline" showed at every boot** when no catalogue was stale.
+- **Place names were CIG codenames.** "Castra jump point (Nyx)" is the Stanton Gateway,
+  "Kaboos" is the QV Logistics Station. The Stanton-side Nyx Gateway showed as the Magnus
+  Gateway. Its code is the old Magnus gate. Before 4.4 it still reads Magnus.
+- **Places now use the game's own names**, from its localisation and route log: Pyro
+  outposts (Jackson's Swap, Shepherd's Rest), Onyx facilities, People's Service Stations,
+  distribution centres, Lazarus transport hubs and aid shelters.
 
 
 ## [1.9.3] — 2026-11-23

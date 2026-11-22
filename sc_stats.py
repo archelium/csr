@@ -3015,8 +3015,19 @@ def _place_table():
             ("StantonMagnus", "Magnus Gateway (Stanton)", "Stanton"),
             ("PyroStanton", "Stanton Gateway (Pyro)", "Pyro"),
             ("PyroNyx", "Nyx Gateway (Pyro)", "Pyro"),
-            ("NyxPyro", "Pyro Gateway (Nyx)", "Nyx")):
+            ("NyxPyro", "Pyro Gateway (Nyx)", "Nyx"),
+            # Stanton - Nyx (4.4 on): CIG reused the Magnus gate in Stanton and the Castra
+            # gate in Nyx. The game's route log names them Nyx Gateway and Stanton Gateway.
+            ("NyxCastra", "Stanton Gateway (Nyx)", "Nyx")):
         t["RR_JP_" + code] = (name, system, "Jump point")
+    t["Nyx_Kaboos"] = ("QV Logistics Station", "Nyx", "Station")          # Kaboos_Starmap_Name
+    for n, greek in enumerate(("Alpha", "Delta", "Theta", "Lambda", "Omicron"), 1):
+        t[f"AsteroidClusterBase_Nyx_Social_Keeger_{n:03d}"] = (
+            f"People's Service Station {greek}", "Nyx", "Station")
+    for part in "abc":
+        t["AsteroidClusterBase_Pyro_Dungeon_Executive_001" + part] = ("PYAM-EXHANG-0-1", "Pyro", "Station")
+    t["Stanton4b_RayariHydro_McGarth"] = ("Rayari McGrath Research Outpost", "Stanton", "Facility")
+    t["Stanton4_EMShelter_Nuisquat"] = ("Nuiqsut Emergency Shelter", "Stanton", "Outpost")
     for code, name, system, kind in (
             ("Stanton1_Lorville", "Lorville", "Stanton", "City"),
             ("Stanton2_Orison", "Orison", "Stanton", "City"),
@@ -3101,15 +3112,34 @@ def _place_label(code):
         tail = m.group(1)
         tail = tail.replace("_", "-") if "_" in tail else re.sub(r"^([A-Za-z]+)(\d+)$", r"\1-\2", tail)
         return f"Shubin Mining Facility {tail}", "Facility"
-    m = re.match(r"(Stanton\d[a-z]?)_ASD_Delve_Facility_(\d+)$", code)
+    m = re.match(r"Stanton(\d[a-z]?)_ASD_Delve_Facility_(\d+)$", code)
+    if m:   # the game's own pattern: Stanton3a ... 002 = Onyx Facility S3A2
+        return f"Onyx Facility S{m.group(1).upper()}{int(m.group(2))}", "Facility"
+    m = re.match(r"Stanton(\d)[a-z]?_DistributionCentre_(\w+?)_(.+)$", code)
     if m:
-        return f"ASD Delve {m.group(2)} ({_PLACE_BODY.get(m.group(1), m.group(1))})", "Facility"
-    m = re.match(r"Stanton\d[a-z]?_DistributionCentre_(.+)$", code)
-    if m:
-        return " ".join(_place_words(p) for p in m.group(1).split("_")), "Facility"
+        body, firm, site = m.group(1), m.group(2), m.group(3)
+        named = {"Covalex": f"Covalex Distribution Centre {site}",
+                 "microTech": f"microTech Logistics Depot {site}",
+                 "Hurston": f"HDPC-{site}",
+                 "SakuraSun": f"Sakura Sun {site} Workcenter",
+                 "Astro": f"Cry-Astro Processing Plant {site.replace('Plant', '')}"}.get(firm)
+        g = re.match(r"Complex([A-Z])$", site)
+        if firm == "Greycat" and g:
+            named = f"Greycat Stanton {_ROMAN[int(body)]} Production Complex-{g.group(1)}"
+        return named or " ".join(_place_words(p) for p in (firm + "_" + site).split("_")), "Facility"
+    m = re.match(r"Pyro\d_ASD_Monorail_LazarusTransportHub_([A-Za-z]+)_\d([A-C])$", code)
+    if m:   # 1A/1B/1C = Phoenix-I/II/III
+        return f"Lazarus Transport Hub {m.group(1)}-{_ROMAN['ABC'.index(m.group(2)) + 1]}", "Facility"
     m = re.match(r"Pyro\d_ASD_Monorail_(.+)$", code)
     if m:
         return " ".join(_place_words(p) for p in m.group(1).split("_")), "Facility"
+    m = re.match(r"Stanton(\d)[a-z]?_EMShelter_(\w+)$", code)
+    if m:   # Crusader's moons call them Aid Shelters, microTech Emergency Shelters
+        kind = "Emergency Shelter" if m.group(1) == "4" else "Aid Shelter"
+        return f"{_place_words(m.group(2))} {kind}", "Outpost"
+    m = re.match(r"Stanton\d[a-z]?_RayariHydro_([A-Za-z]+)$", code)
+    if m:
+        return f"Rayari {m.group(1)} Research Outpost", "Facility"
     m = re.match(r"Nyx_TSG_QVExtractionStation_(\d+)$", code)
     if m:
         return f"QV Extraction Station {m.group(1)}", "Station"
@@ -3129,14 +3159,49 @@ def _place_label(code):
     return " ".join(_place_words(p) for p in rest.split("_")), kind
 
 
-def place_name(code):
-    """(name, system, kind) for a location code. Names are confirmed against the wiki or
-    built from the code. Kind is City, Station, Rest stop, Jump point, Outpost, Facility,
-    Wikelo or Other."""
-    hit = _PLACES.get(code.lower())
+_PLACE_LOC = None
+
+
+def _place_loc():
+    """The game's own names for outposts and Onyx facilities, keyed by lower-case code.
+    Built from global.ini by tools/place_names.py."""
+    global _PLACE_LOC
+    if _PLACE_LOC is None:
+        try:
+            with open(os.path.join(resource_dir(), "sc_place_names.json"), encoding="utf-8") as fh:
+                _PLACE_LOC = json.load(fh)
+        except (OSError, ValueError):
+            _PLACE_LOC = {}
+    return _PLACE_LOC
+
+
+def _patch_key(p):
+    return tuple(int(x) for x in re.findall(r"\d+", str(p or ""))[:3]) or (0,)
+
+
+# A code whose place changed with a patch: (from patch, name from then on)
+_PLACE_RENAMED = {"rr_jp_stantonmagnus": ((4, 4), ("Nyx Gateway (Stanton)", "Stanton", "Jump point"))}
+
+
+def place_name(code, patch=None):
+    """(name, system, kind) for a location code. Names come from the game's localisation,
+    the route log or the wiki, else are built from the code. Kind is City, Station,
+    Rest stop, Jump point, Outpost, Facility, Wikelo or Other. `patch` matters for codes
+    CIG reused: RR_JP_StantonMagnus is the Nyx Gateway from 4.4."""
+    low = code.lower()
+    ren = _PLACE_RENAMED.get(low)
+    if ren and (patch is None or _patch_key(patch) >= ren[0]):
+        return ren[1]
+    hit = _PLACES.get(low)
     if hit:
         return hit
     name, kind = _place_label(code)
+    # the object name and the localisation key can disagree on CIG's own typos
+    game = _place_loc().get(low) or _place_loc().get(low.replace("_tsrpst_", "_trdpst_"))
+    if game:
+        if game == "Derelict Outpost":
+            kind = "Outpost"
+        return game, _place_system(code), (kind if kind != "Other" else "Outpost")
     return name, _place_system(code), kind
 
 
@@ -4268,7 +4333,7 @@ def fold(agg, s):
         agg["gl_cls"].update(_gl.get("cls") or {})
     _pl = {}
     for code in s.get("places") or []:
-        name, sysn, kind = place_name(code)
+        name, sysn, kind = place_name(code, s.get("patch"))
         _pl.setdefault(name, (sysn, kind))      # two codes can share a name
     for name, (sysn, kind) in _pl.items():
         row = agg["places"].setdefault(name, [sysn, kind, 0, _d])
@@ -5683,6 +5748,10 @@ def refresh_online_data():
             del cache[k]
             dropped += 1
     _GUN_PICK.clear()                  # gun pictures are chosen again from the wiki
+    for cache in (_URL_IMG, _WIKI_LEAD):
+        for k in [k for k, v in cache.items() if not v]:
+            del cache[k]
+            dropped += 1
     save_img_cache()
     reload_catalogues()
     stamp_online("forced")
@@ -5774,6 +5843,8 @@ def load_img_cache():
         _GUN_IMG.update(d.get("gun", {}))
         _MAN_IMG.update(d.get("man", {}))
         _GUN_PICK.update(d.get("pick", {}))
+        _URL_IMG.update(d.get("url", {}))
+        _WIKI_LEAD.update(d.get("lead", {}))
         csub(f"art cache mounted — {len(_SHIP_IMG)} hulls · {len(_GUN_IMG)} arms · {len(_MAN_IMG)} makers")
     except Exception:
         pass
@@ -5781,7 +5852,8 @@ def load_img_cache():
 
 def save_img_cache():
     try:
-        json.dump({"ship": _SHIP_IMG, "gun": _GUN_IMG, "man": _MAN_IMG, "pick": _GUN_PICK},
+        json.dump({"ship": _SHIP_IMG, "gun": _GUN_IMG, "man": _MAN_IMG, "pick": _GUN_PICK,
+                   "url": _URL_IMG, "lead": _WIKI_LEAD},
                   open(_img_cache_path(), "w", encoding="utf-8"))
     except Exception as e:
         cerr(f"could not save image cache: {e}")
@@ -5914,6 +5986,251 @@ def build_showcase(career, patches, order):
     return out
 
 
+# ---- list art: pictures for the ranked lists on Flight, Combat, Missions, Economy and
+# Blueprints. Every picture is a URL fetched once (cached in sc_images.json under "url")
+# and stored once in the page: views point at it by key. Three sizes per subject: a row
+# thumbnail, a gallery tile for the top 3, and a hero for the page's #1.
+_URL_IMG = {}           # source url -> data-uri, or None when it couldn't be fetched
+_WIKI_LEAD = {}         # starcitizen.tools page title -> lead image url, "" when none
+ART_THUMB, ART_TILE, ART_HERO = 200, 480, 960
+
+
+def _wiki_w(url, w):
+    """Candidate urls for a starcitizen.tools picture at width w, best first. The wiki
+    resizes any file on request (a 200 px WebP of a 160 KB cargo render is 10 KB) but
+    answers 404 for a width past the original's, so the file itself is the last try.
+    Other hosts' urls pass through."""
+    if not url:
+        return []
+    if "media.starcitizen.tools/" not in url:
+        return [url]
+    base = url.split("?")[0]
+    m = re.match(r"(https://media\.starcitizen\.tools)/thumb/(\w/\w\w/([^/]+))/\d+px-[^/]+$", base)
+    if m:
+        root, path, name = m.groups()
+    else:
+        m = re.match(r"(https://media\.starcitizen\.tools)/(\w/\w\w/([^/]+))$", base)
+        if not m:
+            return [url]
+        root, path, name = m.groups()
+    thumb = lambda px: f"{root}/thumb/{path}/{px}px-{name}" + ("" if name.lower().endswith(".webp") else ".webp")
+    return [thumb(w)] + ([thumb(600)] if w > 600 else []) + [f"{root}/{path}"]
+
+
+def _fetch_urls(urls):
+    """Download every url not cached yet, eight at a time. Stops early when the network
+    is clearly down, so an offline refresh doesn't wait on hundreds of timeouts."""
+    # a failed download is tried again on the next run: the wiki drops requests under load
+    todo = [u for u in dict.fromkeys(urls) if u and not _URL_IMG.get(u)]
+    if not todo:
+        return
+    from concurrent.futures import ThreadPoolExecutor
+    fails = [0]
+
+    def get(u):
+        if fails[0] >= 12:
+            return u, None, False
+        d = sc_names.fetch_data_uri(u, timeout=12, max_bytes=500_000)
+        fails[0] = 0 if d else fails[0] + 1
+        return u, d, True
+    csub(f"fetching {len(todo):,} list pictures")
+    for workers in (6, 2):                    # a gentler second pass for what failed
+        with ThreadPoolExecutor(workers) as ex:
+            for u, d, tried in ex.map(get, todo):
+                if tried:
+                    _URL_IMG[u] = d
+        todo = [u for u in todo if not _URL_IMG.get(u)]
+        if not todo or fails[0] >= 12:
+            break
+
+
+def _fetch_first(cands_list, caps):
+    """For each candidate list, the first url that downloads within its byte cap. Tries
+    the best candidates of every list in one pass, then the fallbacks of the ones that
+    failed. The cap keeps a 600 KB original out of a 56 px row thumbnail."""
+    ok = lambda x, cap: bool(_URL_IMG.get(x)) and len(_URL_IMG[x]) <= cap
+    for depth in range(3):
+        _fetch_urls([c[depth] for c, cap in zip(cands_list, caps) if len(c) > depth
+                     and not any(ok(x, cap) for x in c[:depth])])
+    return [next((_URL_IMG[x] for x in c if ok(x, cap)), None) for c, cap in zip(cands_list, caps)]
+
+
+def _wiki_leads(titles):
+    """Lead image urls for starcitizen.tools pages, 40 titles a call, cached."""
+    import urllib.parse
+    todo = [t for t in dict.fromkeys(titles) if t and t not in _WIKI_LEAD]
+    for i in range(0, len(todo), 40):
+        chunk = todo[i:i + 40]
+        try:
+            q = urllib.parse.urlencode({"action": "query", "format": "json", "redirects": 1,
+                                        "prop": "pageimages", "piprop": "thumbnail",
+                                        "pithumbsize": 600, "titles": "|".join(chunk)})
+            req = urllib.request.Request("https://starcitizen.tools/api.php?" + q, headers=sc_names._UA)
+            d = json.loads(urllib.request.urlopen(req, timeout=20, context=sc_names._SSL).read())
+        except Exception:
+            return
+        back = {}
+        for r in d["query"].get("normalized", []) + d["query"].get("redirects", []):
+            back[r["to"]] = back.get(r["from"], r["from"])
+        for p in d["query"].get("pages", {}).values():
+            _WIKI_LEAD[back.get(p.get("title"), p.get("title"))] = (p.get("thumbnail") or {}).get("source") or ""
+        for t in chunk:
+            _WIKI_LEAD.setdefault(t, "")
+
+
+def _view_lists(v):
+    """The picture-carrying lists of one view as (kind, [names in display order]). A row
+    of top_items is a ship when the matrix knows it, else an item."""
+    haul = v.get("haul") or {}
+    bought = [r[0] for r in v.get("top_items") or []]
+    return [
+        ("ship", [r[0] for r in v.get("ships_top") or []]),
+        ("ship", [r[0] for r in v.get("death_ships") or []]),
+        ("ship", [r[0] for r in ((v.get("ship_kills") or {}).get("top") or [])]),
+        ("mixed", bought),
+        ("gun", [w[0] for w in v.get("weapons_top") or [] if not w[2]]),
+        ("item", [w[0] for w in v.get("weapons_top") or [] if w[2]]),
+        ("item", [r[0] for r in ((v.get("gear_lost") or {}).get("top") or [])]),
+        ("place", [r[0] for r in ((v.get("places") or {}).get("rows") or [])[:15]]),
+        ("item", [r[0] for r in haul.get("com") or []]),
+        ("place", [r[0] for r in haul.get("dest") or []]),
+    ]
+
+
+def _views(data):
+    for ch in (data.get("ch") or {}).values():
+        for acct in (ch.get("acct") or {}).values():
+            yield acct.get("career") or {}
+            yield from (acct.get("patches") or {}).values()
+
+
+def _is_system(name):
+    return bool(re.search(r"\bSystem$", name or ""))
+
+
+def build_list_art(data):
+    """{kind: {name: [thumb, tile, hero]}} for every picture-carrying list in every view,
+    as data-uris (render_html stores each once). Thumbnails for every row, tiles for the
+    top 3 of a list long enough for a gallery, heroes for what a page opens on. A missing
+    size is null: the page draws the list's icon in its place."""
+    rows, tiles, heroes = set(), set(), set()
+    for v in _views(data):
+        for kind, ns in _view_lists(v):
+            keyed = [(("ship" if SHIPS.record_by_name(n) else "item") if kind == "mixed" else kind, n)
+                     for n in ns]
+            rows.update(keyed)
+            if len(keyed) >= 4:
+                tiles.update(k for k in keyed[:3] if not _is_system(k[1]))
+        # the hero each page opens on (see mountHero calls in the page)
+        top = v.get("ships_top") or []
+        if top:
+            heroes.add(("ship", top[0][0]))
+        gun = next((w[0] for w in v.get("weapons_top") or [] if not w[2]), None)
+        if gun:
+            heroes.add(("gun", gun))
+        bought = [r[0] for r in v.get("top_items") or []]
+        ship = next((n for n in bought if SHIPS.record_by_name(n)), None)
+        if ship:
+            heroes.add(("ship", ship))
+        elif bought:
+            heroes.add(("item", bought[0]))
+        dest = next((r[0] for r in (v.get("haul") or {}).get("dest") or [] if not _is_system(r[0])), None)
+        if dest:
+            heroes.add(("place", dest))
+    # blueprint sets and size ladders you've started: the core piece, the first owned size
+    owned = set()
+    for v in _views(data):
+        owned.update(r[6] for r in v.get("blueprints") or [] if len(r) > 6 and r[6])
+    cat = _bp_catalog_payload() if BPS.ok else None
+    bp, lead = {}, []
+    if cat:
+        cls_of = {r[0]: r[2] for r in cat["rows"]}
+        for name, _c, _w, pcs in cat["sets"]:
+            o = sum(1 for _s, k, _n in pcs if k in owned)
+            if o:
+                core = next((p for p in pcs if p[0] == 1), pcs[0])     # slot 1 is the core
+                bp[name] = cls_of.get(core[1])
+                lead.append((o == len(pcs), len(pcs) - o, -o, name))
+        heroes.update(("bp", x[3]) for x in sorted(lead)[:3])           # closest unfinished set
+        for f in cat["fams"]:
+            if any(p[1] in owned for p in f[2]):
+                bp[f[0]] = cls_of.get(f[2][0][1])
+    rows.update(("bp", n) for n in bp)
+    # where each subject's picture lives
+    picks = {}                                       # (kind, name) -> wiki url or rsi record
+    _wiki_leads([n for k, n in rows if k == "place"] + [n for k, n in rows if k == "ship" and
+                                                       not (SHIPS.record_by_name(n) or {}).get("img_large")])
+    gun_meta = {}
+    for v in _views(data):
+        for n, m in (v.get("gun_meta") or {}).items():
+            if len(m) > 3 and m[3]:
+                gun_meta.setdefault(n, m[3])
+    for kind, n in rows:
+        rec = SHIPS.record_by_name(n) if kind == "ship" else None
+        if rec and rec.get("img_large"):
+            picks[(kind, n)] = rec
+        elif kind == "ship":
+            picks[(kind, n)] = _WIKI_LEAD.get(n)
+        elif kind == "gun":
+            picks[(kind, n)] = _gun_pick(n, gun_meta.get(n))
+        elif kind == "item":
+            picks[(kind, n)] = ITEMS.image_for(n) if ITEMS.ok else None
+        elif kind == "bp":
+            picks[(kind, n)] = ITEMS.imgs.get((bp.get(n) or "").lower()) if ITEMS.ok else None
+        elif kind == "place" and not _is_system(n):
+            picks[(kind, n)] = _WIKI_LEAD.get(n) or _WIKI_LEAD.get(re.sub(r"\s*\(.*?\)$", "", n))
+
+    def cands(key, size):
+        p = picks.get(key)
+        if not p:
+            return []
+        if isinstance(p, dict):                       # RSI ship matrix record
+            big = p["img_large"]
+            # a gallery tile is ~200 px wide: RSI's 180 px thumb serves both small sizes
+            return [[p.get("img_small") or big], [p.get("img_small") or big], [big]][size]
+        return _wiki_w(p, (ART_THUMB, ART_TILE, ART_HERO)[size])
+    keys = [k for k in picks if picks[k]]
+    plan = [(k, 0) for k in keys] + [(k, 1) for k in keys if k in tiles] + [(k, 2) for k in keys if k in heroes]
+    caps = (90_000, 200_000, 700_000)          # data-uri bytes for a thumb, a tile, a hero
+    lists = [cands(k, s) for k, s in plan]
+    got = _fetch_first(lists, [caps[s] for _k, s in plan])
+    used = {x for c in lists for x in c}
+    for u in [u for u in _URL_IMG if u not in used]:   # nothing on the page uses it any more
+        del _URL_IMG[u]
+    out = defaultdict(dict)
+    for (key, size), d in zip(plan, got):
+        if d:
+            out[key[0]].setdefault(key[1], [None, None, None])[size] = d
+    return dict(out)
+
+
+_ART_TAG = "\u0001art:"
+
+
+def _pack_images(data):
+    """Every data-uri in the page, stored once. Strings are swapped for a tag the page
+    swaps back on load: the same ship render sat in every patch view's showcase and
+    took half of a 20 MB page."""
+    store, seen = [], {}
+
+    def walk(x):
+        if isinstance(x, dict):
+            return {k: walk(v) for k, v in x.items()}
+        if isinstance(x, list):
+            return [walk(v) for v in x]
+        if isinstance(x, str) and x.startswith("data:image/") and len(x) > 200:
+            k = seen.get(x)
+            if k is None:
+                k = seen[x] = len(store)
+                store.append(x)
+            return f"{_ART_TAG}{k}"
+        return x
+    packed = walk(data)
+    if store:
+        packed["ART"] = store
+    return packed
+
+
 # --------------------------------------------------------------------------- #
 #  HTML rendering
 # --------------------------------------------------------------------------- #
@@ -5921,7 +6238,7 @@ def build_showcase(career, patches, order):
 def render_html(data):
     # Log text rides along in the data (crash errors, notifications); a "</script>" in it
     # would end the page's script early. "<\/" is the same string to JSON.parse and JS.
-    payload = json.dumps(data, separators=(",", ":")).replace("</", "<\\/")
+    payload = json.dumps(_pack_images(data), separators=(",", ":")).replace("</", "<\\/")
     fonts = sc_names.fetch_google_fonts_embed(cache_file("sc_fonts_embed.css"))
     return (HTML_TEMPLATE
             .replace("/*__FONTS__*/", fonts)
@@ -7771,6 +8088,64 @@ nav a::after{background:var(--menu-bg);border-color:var(--glass-line);box-shadow
 .side-toc button:focus-visible{outline:2px solid var(--cyan);outline-offset:-2px}
 @media(max-width:1120px),(max-height:760px){ .side-toc{display:none} }
 @media(max-height:720px){ .side-foot{gap:8px} .foot-disc{display:none} }
+
+/* ---- page art (layout B): a hero on the page's #1, top-3 picture tiles, row thumbnails.
+   A subject with no picture keeps its slot: the list's icon on a dark panel, same size,
+   so rows stay aligned and the ranking never skips anyone. */
+.phero{position:relative;height:340px;border-radius:var(--r-lg,12px);overflow:hidden;margin:6px 0 26px;
+  border:1px solid rgba(91,209,230,.24);background:#070b11 linear-gradient(135deg,#0d1824,#070b11)}
+.phero.nok{height:230px}
+.phero .phi{position:absolute;inset:0;background-size:cover;background-position:center 45%}
+.phero .phi.ph{display:flex;align-items:center;justify-content:flex-end;padding-right:6%;color:rgba(91,209,230,.16)}
+.phero .phi.ph .csr-ic{width:240px;height:240px;stroke-width:.8}
+.phero::after{content:"";position:absolute;inset:0;pointer-events:none;
+  background:linear-gradient(90deg,rgba(7,11,17,.96) 0%,rgba(7,11,17,.8) 32%,rgba(7,11,17,.18) 72%,rgba(7,11,17,0) 100%),
+             linear-gradient(0deg,rgba(7,11,17,.92),rgba(7,11,17,0) 48%)}
+.phero .ph-tx{position:absolute;left:32px;top:28px;z-index:2;max-width:70%}
+.phero .ph-eb{font-family:var(--font-mono);font-size:var(--fs-xs,12px);letter-spacing:.16em;text-transform:uppercase;color:#f4a92a}
+.phero .ph-t{font-family:var(--font-display);font-size:34px;font-weight:700;line-height:1.1;margin-top:8px;color:#fff;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.phero .ph-t a{color:inherit;text-decoration:none}
+.phero .ph-t a:hover{color:#5bd1e6}
+.phero .ph-s{font-family:var(--font-mono);font-size:var(--fs-sm,13px);color:#9fb4c6;margin-top:8px}
+.phero .ph-k{position:absolute;left:24px;right:24px;bottom:20px;z-index:2}
+.phero .ph-k .hero{margin:0;display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px}
+.phero .ph-k .kpi{background:rgba(10,18,28,.74);backdrop-filter:blur(6px);border-color:rgba(91,209,230,.22);
+  padding:12px 16px;min-height:0;color:#dbe7f4}
+.phero .ph-k .kpi .v{font-size:26px;color:#fff}
+.phero .ph-k .kpi .l,.phero .ph-k .kpi .s{color:#9fb4c6}
+.bgal{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin:2px 0 14px}
+.bgt{position:relative;border-radius:var(--r-md,8px);overflow:hidden;background:var(--tile);border:1px solid var(--line);
+  display:flex;flex-direction:column;min-width:0}
+.bgt .bgi{display:block;aspect-ratio:16/9;max-height:170px;background-size:cover;background-position:center;background-color:#0b1520}
+.bgt .bgr{position:absolute;left:9px;top:9px;font-family:var(--font-mono);font-size:var(--fs-xs,12px);
+  background:rgba(7,11,17,.82);color:#5bd1e6;border:1px solid rgba(91,209,230,.35);border-radius:4px;padding:1px 7px}
+.bgt:first-child .bgr{color:#f4a92a;border-color:rgba(244,169,42,.55)}
+.bgt .bgn{padding:9px 11px 10px;display:flex;flex-direction:column;gap:3px;min-width:0}
+.bgt .bgnm{font-size:var(--fs-md,14px);font-weight:600;color:var(--txt);line-height:1.25;overflow-wrap:anywhere}
+.bgt .bgnm a{color:inherit}
+.bgt .bgv{font-family:var(--font-mono);font-size:var(--fs-sm,13px);color:var(--cyan)}
+.bgt:first-child .bgv{color:var(--amber)}
+.bar-row.art{display:grid;grid-template-columns:56px minmax(0,1fr);column-gap:12px;align-items:center}
+.bar-row.art>.bthumb{grid-row:1/span 4;width:56px;height:32px;border-radius:4px;background-size:cover;
+  background-position:center;background-color:#0b1520;border:1px solid rgba(91,209,230,.16)}
+.bar-row.art>*:not(.bthumb){grid-column:2;min-width:0}
+.bgi.ph,.bthumb.ph,.bxth.ph{display:flex;align-items:center;justify-content:center;color:rgba(91,209,230,.42);
+  background:repeating-linear-gradient(135deg,#0b1520 0 6px,#0d1926 6px 12px)}
+.bgi.ph .csr-ic{width:34%;height:auto;max-height:60%}
+.bthumb.ph .csr-ic,.bxth.ph .csr-ic{width:18px;height:18px}
+.bsn.bxa{display:flex!important;align-items:center;gap:10px}
+.bsn.bxa .bxth{flex:none;width:52px;height:30px;border-radius:4px;background-size:cover;background-position:center;
+  background-color:#0b1520;border:1px solid rgba(91,209,230,.16)}
+:root[data-theme="light"] .bgi.ph,:root[data-theme="light"] .bthumb.ph,:root[data-theme="light"] .bxth.ph{
+  color:rgba(14,147,168,.5);background:repeating-linear-gradient(135deg,#e7edf4 0 6px,#eef3f8 6px 12px)}
+@media(max-width:760px){ .bgal{grid-template-columns:1fr 1fr} .bgal .bgt:nth-child(3){display:none}
+  .phero{height:auto;min-height:300px} .phero.nok{min-height:200px}
+  .phero .ph-tx{left:20px;right:20px;top:20px;max-width:none}
+  .phero .ph-t{white-space:normal;font-size:26px}
+  .phero .ph-k{position:relative;left:auto;right:auto;bottom:auto;padding:150px 12px 12px}
+  .phero .ph-k .hero{grid-template-columns:1fr 1fr;gap:8px}
+  .phero .ph-k .kpi{padding:10px 12px} .phero .ph-k .kpi .v{font-size:22px} }
 </style>
 </head>
 <body>
@@ -7990,6 +8365,39 @@ nav a::after{background:var(--menu-bg);border-color:var(--glass-line);box-shadow
 
 <script>
 const DATA = /*__DATA__*/;
+// every picture is stored once in DATA.ART; views carry a tag in its place
+(function unpackArt(){
+  const S=DATA.ART||[], T='\u0001art:', n=T.length;
+  const fix=o=>{ for(const k in o){ const x=o[k];
+    if(typeof x==='string'){ if(x.charCodeAt(0)===1 && x.startsWith(T)) o[k]=S[+x.slice(n)]; }
+    else if(x && typeof x==='object') fix(x); } };
+  fix(DATA); delete DATA.ART;
+})();
+const LART=DATA.list_art||{};
+const ART_IC={ship:'ship', gun:'gun', item:'cargo', place:'planet', bp:'blueprints'};
+function lart(kind, name){ const k=LART[kind]; return (k && k[name]) || null; }
+// a picture box in one of three sizes (0 row, 1 tile, 2 hero); with no picture, the
+// list's icon on a hatched panel of the same size
+function artBox(kind, name, size, cls){
+  // any size on hand beats the icon: it is already in the page
+  const a=lart(kind, name), src=a && (a[size] || a[1] || a[0] || a[2]);
+  return src ? `<span class="${cls}" style="background-image:url('${src}')" role="img" aria-label="${esc(name)}"></span>`
+             : `<span class="${cls} ph" aria-hidden="true">${ICON[ART_IC[kind]]||ICON.cargo}</span>`;
+}
+// the page opens on its #1: picture, name, a value line, and the first KPI row moved in
+function mountHero(kind, name, eyebrow, sub, href, kpis=true){
+  const c=$('#content'); if(!c || !name) return;
+  const a=lart(kind, name), src=a && (a[2] || a[1] || a[0]);
+  const img = src ? `<div class="phi" style="background-image:url('${src}')" role="img" aria-label="${esc(name)}"></div>`
+                  : `<div class="phi ph" aria-hidden="true">${ICON[ART_IC[kind]]||ICON.cargo}</div>`;
+  const t = href ? link(href, esc(name)) : esc(name);
+  const h=document.createElement('div'); h.className='phero'+(kpis?'':' nok');
+  h.innerHTML=img+`<div class="ph-tx"><div class="ph-eb">${esc(eyebrow)}</div><div class="ph-t" title="${esc(name)}">${t}</div>`+
+    `<div class="ph-s">${sub||''}</div></div><div class="ph-k"></div>`;
+  const row=kpis && c.querySelector('.hero'); if(row) h.querySelector('.ph-k').append(row); else h.classList.add('nok');
+  const meta=c.querySelector('.patch-meta');
+  if(meta) meta.after(h); else c.prepend(h);
+}
 const $ = s => document.querySelector(s);
 const fmt = n => n.toLocaleString();
 const auec = n => n>=1e9?(n/1e9).toFixed(2)+'B':n>=1e6?(n/1e6).toFixed(1)+'M':n>=1e3?(n/1e3).toFixed(0)+'k':fmt(n);
@@ -8286,16 +8694,26 @@ function vbars(el, items, opts={}){
 }
 
 // ---- horizontal bar list ----
+// opts.art = picture kind (ship, gun, item, place) or per row d.ak: the top 3 become
+// picture tiles (4+ rows only) and the rest get a thumbnail
 function hbars(el, items, opts={}){
   if(!items.length){ el.innerHTML='<div class="empty">None recorded here.</div>'; return; }
   const max=Math.max(1,...items.map(d=>d.value));
-  el.innerHTML = items.map((d,i)=>{
+  const kindOf=d=>d.ak||opts.art, key=d=>d.full||d.label;
+  const galN = opts.art && items.length>=4 ? 3 : 0;
+  const disp=d=>d.disp!==undefined?d.disp:d.value;
+  const tile=(d,i)=>{ const nm = d.href ? link(d.href, esc(d.label), 'lk') : esc(d.label);
+    return `<div class="bgt">${artBox(kindOf(d), key(d), 1, 'bgi')}<span class="bgr">#${i+1}</span>`+
+      `<div class="bgn"><span class="bgnm">${nm}</span><span class="bgv">${disp(d)}</span></div></div>`; };
+  const gal = galN ? `<div class="bgal">${items.slice(0,galN).map(tile).join('')}</div>` : '';
+  el.innerHTML = gal + items.slice(galN).map((d,j)=>{ const i=j+galN;
     const pct=Math.max(2, 100*d.value/max);
     const nm = d.href ? link(d.href, esc(d.label), 'lk') : esc(d.label);
     const sub = d.subHtml ? `<div class="bsub">${d.subHtml}</div>` : (d.sub ? `<div class="bsub">${esc(d.sub)}</div>` : '');
-    return `<div class="bar-row ${d.tool?'tool':''}"${d.title?` title="${esc(d.title)}"`:''}>`+
+    const k=kindOf(d), th = k ? artBox(k, key(d), 0, 'bthumb') : '';
+    return `<div class="bar-row ${d.tool?'tool':''}${k?' art':''}"${d.title?` title="${esc(d.title)}"`:''}>`+th+
       `<div class="bar-head"><div class="nm"><span class="rk">${i+1}</span>${nm}</div>`+
-      `<div class="vv">${d.disp!==undefined?d.disp:d.value}</div></div>`+sub+
+      `<div class="vv">${disp(d)}</div></div>`+sub+
       `<div class="bar-track"><div class="bar-fill" style="width:${pct}%"></div></div></div>`;
   }).join('');
 }
@@ -8535,7 +8953,9 @@ function secFlight(v){
     value: byTime ? aboard : c, href:wikiURL(n),
     disp: byTime ? `${aboard} <span class="vv-u">h</span>` : `${fmt(c)} <span class="vv-u">sess</span>`,
     subHtml: byTime ? shipMetaHTML(to,first,last,0,seat,c) : shipMetaHTML(to,first,last,aboard,seat)}));
-  hbars($('#shipBars'), shipItems);
+  hbars($('#shipBars'), shipItems, {art:'ship'});
+  if(shipItems.length) mountHero('ship', shipItems[0].label, byTime?'Most time aboard':'Most-flown ship',
+    shipItems[0].disp, shipItems[0].href);
   // the headline counts ships; the bar measures sessions by hull size (the caption says so)
   const sz=v.ship_size.map(([n,c])=>({label:n,value:c,color:SIZE_COLOR[n]||'#8aa0b8'}));
   splitbar($('#sizeChart'), sz, {big:fmt(v.ships_unique), small:'distinct ships · bar = sessions by hull size'});
@@ -8543,7 +8963,7 @@ function secFlight(v){
   hbars($('#sysBars'), toItems(v.systems,'#b98bff'));
   const jb=$('#jurisBars'); if(jb) hbars(jb, (v.juris||[]).map(([k,s,n])=>({label:k, value:s, disp:`${fmt(s)} <span class="vv-u">sess</span> · ${fmt(n)} entries`})));
   const pb=$('#placeBars'); if(pb) hbars(pb, ((v.places||{}).rows||[]).slice(0,15).map(([nm,sy,kd,n,first])=>({label:nm, value:n,
-    disp:`${fmt(n)} <span class="vv-u">sess</span>`, title:`${sy} · ${kd.toLowerCase()}${first?' · first visit '+ddmm(first):''}`})));
+    disp:`${fmt(n)} <span class="vv-u">sess</span>`, title:`${sy} · ${kd.toLowerCase()}${first?' · first visit '+ddmm(first):''}`})), {art:'place'});
   const cw=$('#crewBars'); if(cw){ const rows=(v.crew_pilots||[]).map(([k,s,n])=>({label:k, value:s, disp:`${fmt(s)} <span class="vv-u">sess</span> · ${fmt(n)} jumps`, color:'#b98bff'}));
     if(rows.length) hbars(cw, rows); else cw.innerHTML='<div class="empty">Every jump here was your own.</div>'; }
 }
@@ -8633,17 +9053,19 @@ function secCombat(v){
       ])
     )+
     `${NOTE}`;
-  hbars($('#gunBars'), toItems(guns.map(w=>[w[0],w[1]]), null, true));
-  hbars($('#toolBars'), toItems(tools.map(w=>[w[0],w[1]]), null, true).map(x=>({...x,tool:true})));
+  hbars($('#gunBars'), toItems(guns.map(w=>[w[0],w[1]]), null, true), {art:'gun'});
+  hbars($('#toolBars'), toItems(tools.map(w=>[w[0],w[1]]), null, true).map(x=>({...x,tool:true})), {art:'item'});
   splitbar($('#causeChart'), [{label:'Collision',value:dc.collision,color:'#ff9147'},{label:'Destroyed / other',value:dc.other,color:'#ff5468'}], {big:v.deaths, small:'ship deaths'});
-  hbars($('#deathShips'), toItems(v.death_ships,'#ff5468', true));
-  const skb=$('#shipKillBars'); if(skb) hbars(skb, toItems((v.ship_kills||{}).top,'#4ade80', true));
+  hbars($('#deathShips'), toItems(v.death_ships,'#ff5468', true), {art:'ship'});
+  const skb=$('#shipKillBars'); if(skb) hbars(skb, toItems((v.ship_kills||{}).top,'#4ade80', true), {art:'ship'});
   const ib=$('#injBars'); if(ib) hbars(ib, (v.injury_parts||[]).map(([k,n])=>({label:k, value:n, disp:fmt(n), color:'#ff9147'})));
   const mb=$('#medBars'); if(mb) hbars(mb, ((v.medbed||{}).parts||[]).map(([k,n])=>({label:k, value:n, disp:fmt(n), color:'#4ade80'})));
   const gl=v.gear_lost;
   const gc=$('#glCats'); if(gc&&gl) splitbar(gc, gl.cats.map(([k,n])=>({label:k, value:n, color:GEAR_COLOR[k]||'#8b9bb4'})),
     {big:fmt(gl.items), small:'items lost'});
-  const gt=$('#glTop'); if(gt&&gl) hbars(gt, toItems(gl.top,'#ff5468', true));
+  const gt=$('#glTop'); if(gt&&gl) hbars(gt, toItems(gl.top,'#ff5468', true), {art:'item'});
+  // the first numbers on this page are ship deaths: they stay under Ship combat, not on a gun
+  if(guns.length) mountHero('gun', guns[0][0], 'Most-drawn gun', `drawn ${fmt(guns[0][1])}×`, wikiURL(guns[0][0]), false);
 }
 const GEAR_COLOR={'Magazines & ammo':'#f4a92a','Grenades':'#ff9147','Medical':'#4ade80','Tools':'#b98bff',
   'Armor':'#42d0e6','Weapon attachments':'#6fbf7f','Weapons':'#ff5468'};
@@ -8768,7 +9190,12 @@ function secEconomy(v){
     noteFold(
       `Spend is real — the log carries the price of every purchase. Balance, earnings and sales aren't logged.`,
       `Purchases are grouped by item category rather than store; the shop codes in the log aren't reliable brand names. Fleet size is your ASOP list read at a terminal, so it includes ships bought with aUEC as well as pledges.`);
-  hbars($('#itemBars'), (v.top_items||[]).map(([n,amt,q])=>({label:n, value:amt, disp:auec(amt)+' · ×'+fmt(q), href:wikiURL(n)})));
+  const bought=(v.top_items||[]).map(([n,amt,q])=>({label:n, value:amt, disp:auec(amt)+' · ×'+fmt(q), href:wikiURL(n),
+    ak: lart('ship', n) ? 'ship' : 'item'}));
+  hbars($('#itemBars'), bought, {art:'item'});
+  // the page opens on the biggest ship you bought; with none, on the top purchase
+  const topShip=bought.find(d=>d.ak==='ship'), lead=topShip||bought[0];
+  if(lead) mountHero(lead.ak, lead.label, topShip?'Biggest ship purchase':'Top purchase', lead.disp, lead.href);
   hbars($('#catBars'), (v.buy_cats||[]).map(([n,c])=>({label:n, value:c, disp:fmt(c)+' buys'})));
 }
 
@@ -8840,6 +9267,7 @@ function bpListHTML(v){
 // grid. Sets and families come from the catalogue (DATA.bp_catalog.sets / .fams); the
 // page only decides which squares are filled. Singles are not sets and stay in the list.
 let bpSetTab='partial', bpSetAll=false, bpFamAll=false;
+let bpLead=null;
 // ---- the planner ----
 // A blueprint drops from missions; a mission needs a standing with a faction; a
 // standing is reputation, which the game never writes to the log. So the planner shows
@@ -8900,6 +9328,7 @@ function bpBoardHTML(catalog){
   B.complete.sort((a,b)=>b.t-a.t||a.name.localeCompare(b.name));
   B.untouched.sort((a,b)=>b.t-a.t||a.name.localeCompare(b.name));
   if(!B[bpSetTab].length) bpSetTab=B.partial.length?'partial':B.complete.length?'complete':'untouched';
+  bpLead = B.partial[0] || B.complete[0] || null;      // the page's hero: your closest set
   const tabs=[['partial','Started'],['complete','Complete'],['untouched','Untouched']].map(([k,l])=>
     `<button class="vpill sm ${bpSetTab===k?'on':''}" data-bpst="${k}">${l} <span class="vc">${fmt(B[k].length)}</span></button>`).join('');
   const LIM=24, list=B[bpSetTab], shown=bpSetAll?list:list.slice(0,LIM);
@@ -8912,7 +9341,7 @@ function bpBoardHTML(catalog){
       : s.o ? `<span class="bsgo" title="${esc(togo.join(', '))}">${esc(togo.join(', '))} to go</span>`
       : `<span class="bsgo dim">${s.t} pieces</span>`;
     const sub=[s.w, s.cat==='Flight suits'?'Flight suit':''].filter(Boolean).join(' · ');
-    return `<div class="bset"><span class="bsn">${esc(s.name)}${sub?`<span class="bpk">${esc(sub)}</span>`:''}</span>`+
+    return `<div class="bset"><span class="bsn bxa">${artBox('bp', s.name, 0, 'bxth')}<span>${esc(s.name)}${sub?`<span class="bpk">${esc(sub)}</span>`:''}</span></span>`+
       `<span class="bsl">${sq}</span><span class="bsc">${s.o}<span class="u">/${s.t}</span></span>${tail}</div>`; };
   const more=list.length>LIM?`<button class="foot-link" data-bpsa="1">${bpSetAll?'Show fewer':`Show all ${fmt(list.length)}`}</button>`:'';
   const setsCard=`<div class="card"><h3>Armour sets <span class="u">— ${fmt(B.complete.length)} complete · ${fmt(B.partial.length)} started · ${fmt(B.untouched.length)} untouched</span></h3>`+
@@ -8927,7 +9356,7 @@ function bpBoardHTML(catalog){
   const lad=f=>{ const dots=Array.from({length:maxS},(_,i)=>i+1).map(s=>{ const p=f.sz.find(x=>x.s===s);
       if(!p) return `<i class="bdot na"></i>`;
       return `<i class="bdot ${p.on?'on':''}" title="${esc(p.n)} — ${p.on?'owned':'missing'}">${s}</i>`; }).join('');
-    return `<div class="blad"><span class="bsn">${esc(f.name)}<span class="bpk">${esc(f.kind)}</span></span><span class="bsl">${dots}</span><span class="bsc">${f.o}<span class="u">/${f.t}</span></span></div>`; };
+    return `<div class="blad"><span class="bsn bxa">${artBox('bp', f.name, 0, 'bxth')}<span>${esc(f.name)}<span class="bpk">${esc(f.kind)}</span></span></span><span class="bsl">${dots}</span><span class="bsc">${f.o}<span class="u">/${f.t}</span></span></div>`; };
   const restH=rest.length?(bpFamAll?rest.map(lad).join(''):'')+`<button class="foot-link" data-bpfa="1">${bpFamAll?'Hide':'Show'} the ${fmt(rest.length)} you haven\u2019t started</button>`:'';
   const singlesOwned=singles.filter(f=>f.o).length;
   const ladCard=`<div class="card"><h3>Ship weapons by size <span class="u">— one family per row, S1 to S${maxS}</span></h3>`+
@@ -9033,6 +9462,8 @@ function secBlueprints(v){
     document.querySelectorAll('#bpBoard [data-bpfa]').forEach(b=>b.onclick=()=>{ bpFamAll=!bpFamAll; board(); });
   };
   wireBoard();
+  if(bpLead) mountHero('bp', bpLead.name, bpLead.o===bpLead.t?'Complete armour set':'Closest armour set',
+    `${bpLead.o} of ${bpLead.t} pieces`, wikiURL(bpLead.name));
   const months=v.bp_months||[];
   if(months.length) vbars($('#bpMonths'), months.map(([m,n])=>({label:MON[+m.slice(5,7)-1]+' '+m.slice(2,4), full:m, value:n})), {w:560,h:200,rot:months.length>9});
   else $('#bpMonths').innerHTML='<div style="color:var(--dim);font-size:12px;padding:8px 2px">Nothing in this scope</div>';
@@ -9074,8 +9505,11 @@ function secMissions(v){
   splitbar($('#missionChart'), [{label:'Completed',value:m.complete,color:'#4ade80'},{label:'Failed',value:m.fail,color:'#ff5468'},{label:'Abandoned',value:m.abandon,color:'#f4a92a'}], {big:(m.rate||0)+'%', small:m.total+' total'});
   hbars($('#typeBars'), toItems(v.mission_types,'#4ade80'));
   const cb=$('#contractBars'); if(cb) hbars(cb, (v.contracts_named||[]).map(([n,a,d,f])=>({label:n, full:n, value:a, disp:`${fmt(a)} <span class="vv-u">acc</span> · ${fmt(d)} done${f?` · ${fmt(f)} failed`:''}`})));
-  const hc=$('#haulComBars'); if(hc) hbars(hc, (h.com||[]).map(([k,n])=>({label:k, value:n, disp:fmt(n)+' SCU', color:'#f4a92a'})));
-  const hd=$('#haulDestBars'); if(hd) hbars(hd, (h.dest||[]).map(([k,n])=>({label:k, value:n, disp:fmt(n)+' SCU', color:'#5bd1e6'})));
+  const hc=$('#haulComBars'); if(hc) hbars(hc, (h.com||[]).map(([k,n])=>({label:k, value:n, disp:fmt(n)+' SCU', color:'#f4a92a'})), {art:'item'});
+  const hd=$('#haulDestBars'); if(hd) hbars(hd, (h.dest||[]).map(([k,n])=>({label:k, value:n, disp:fmt(n)+' SCU', color:'#5bd1e6'})), {art:'place'});
+  // the page opens on your top hauling destination: a station or city, not a whole system
+  const dest=(h.dest||[]).find(([k])=>!/\bSystem$/.test(k));
+  if(dest) mountHero('place', dest[0], 'Top hauling destination', `${fmt(dest[1])} SCU delivered`, wikiURL(dest[0]));
 }
 
 
@@ -11122,6 +11556,12 @@ def generate(out_path, explicit_logs=None, live_path=None, quick=False):
     data = build_from_sessions(sessions, fresh_profile=not quick)
     if not data:
         return None
+    set_progress(0.93, "fetching list pictures")
+    try:
+        data["list_art"] = build_list_art(data)
+    except Exception as e:                 # pictures are decoration: never fail the page
+        cwarn(f"list pictures skipped: {e}")
+        data["list_art"] = {}
     set_progress(0.96, "embedding hull & armament imagery")
     save_img_cache()
     html_out = render_html(data)

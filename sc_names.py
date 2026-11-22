@@ -186,6 +186,8 @@ class ItemIndex:
         self.cache_path = cache or os.path.join(SCRIPT_DIR, "sc_item_names.json")
         self.idx = {}
         self.guns = {}          # class -> [type, ammo class, image url] for personal weapons
+        self.imgs = {}          # class -> catalogue image url, every item that has one
+        self._by_name = None
         self.fetched = None
         self.ok = False
 
@@ -194,9 +196,10 @@ class ItemIndex:
             try:
                 with open(self.cache_path, encoding="utf-8") as fh:
                     raw = json.load(fh)
-                # {"fetched", "names", "guns"} since 1.10.1; a bare name map before
+                # {"fetched", "names", "guns", "imgs"} since 1.10; a bare name map before
                 if isinstance(raw, dict) and isinstance(raw.get("names"), dict):
                     self.idx, self.guns, self.fetched = raw["names"], raw.get("guns") or {}, raw.get("fetched")
+                    self.imgs = raw.get("imgs") or {}
                 else:
                     self.idx, self.guns, self.fetched = raw or {}, {}, None
             except Exception:
@@ -209,7 +212,7 @@ class ItemIndex:
         return self.ok
 
     def _fetch(self):
-        names, guns = {}, {}
+        names, guns, pics = {}, {}, {}
         try:
             page, last = 1, 1
             while page <= last:
@@ -220,14 +223,16 @@ class ItemIndex:
                     if not cn or not _real_name(cn, i.get("name")):
                         continue
                     names.setdefault(cn, i.get("name"))
+                    imgs = [im.get("thumbnail_url") or im.get("original_url")
+                            for im in (i.get("images") or [])]
+                    imgs = [u for u in imgs if u]
+                    # a quoted skin name in the file ("Gallant "Conviction Camo"…") is a
+                    # skin's picture: the card shows the base gun
+                    img = next((u for u in imgs if "%22" not in u), imgs[0] if imgs else None)
+                    if img and (cn not in pics or "%22" in pics[cn]):
+                        pics[cn] = img
                     pw = i.get("personal_weapon") or {}
                     if pw.get("type"):
-                        imgs = [im.get("thumbnail_url") or im.get("original_url")
-                                for im in (i.get("images") or [])]
-                        imgs = [u for u in imgs if u]
-                        # a quoted skin name in the file ("Gallant "Conviction Camo"…") is a
-                        # skin's picture: the card shows the base gun
-                        img = next((u for u in imgs if "%22" not in u), imgs[0] if imgs else None)
                         had = (guns.get(cn) or [None, None, None])[2]
                         if cn not in guns or not had or ("%22" in had and img and "%22" not in img):
                             ammo = pw.get("class") or ""
@@ -239,10 +244,24 @@ class ItemIndex:
             return
         # items the API has dropped keep their last known name (old logs still carry them)
         names = {**{k: v for k, v in self.idx.items() if _real_name(k, v)}, **names}
-        self.idx, self.guns = names, guns
+        self.idx, self.guns, self.imgs, self._by_name = names, guns, pics, None
         self.fetched = datetime.date.today().isoformat()
         with open(self.cache_path, "w", encoding="utf-8") as fh:
-            json.dump({"fetched": self.fetched, "names": names, "guns": guns}, fh)
+            json.dump({"fetched": self.fetched, "names": names, "guns": guns, "imgs": pics}, fh)
+
+    def image_for(self, name):
+        """Catalogue image url for an item by the name CSR shows (skin names stripped),
+        else None. The base item's picture wins over a skin's."""
+        if self._by_name is None:
+            by = {}
+            for cn in sorted(self.imgs, key=len):          # base classes are the shortest
+                n = self.idx.get(cn)
+                if n:
+                    by.setdefault(n, cn)
+                    by.setdefault(_skin_strip(n), cn)
+            self._by_name = by
+        cn = self._by_name.get(name)
+        return self.imgs.get(cn) if cn else None
 
     def gun(self, cls):
         """[type, ammo class, image url] for a personal weapon, from its base class first
