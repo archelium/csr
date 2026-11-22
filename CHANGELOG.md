@@ -5,7 +5,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and CSR
 uses [Semantic Versioning](https://semver.org/) (MAJOR.MINOR.PATCH).
 
 
-## [Unreleased]
+## [1.9.2] — 2026-11-23
 
 ### Fixed
 - **Vanduul ships had broken names** (Combat). Blade, Glaive and Stinger showed as
