@@ -5,7 +5,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and CSR
 uses [Semantic Versioning](https://semver.org/) (MAJOR.MINOR.PATCH).
 
 
-## [Unreleased]
+## [1.9.3] — 2026-11-23
 
 ### Fixed
 - **Magazines for new guns showed their code** (Combat, Economy). The Arlington's
