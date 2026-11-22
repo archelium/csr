@@ -90,6 +90,17 @@ class ScanLogTests(unittest.TestCase):
     def test_no_vehicle_lines(self):
         self.assertIsNone(scan("")["ship_kills"])
 
+    def test_rammed_sentry_is_not_a_ship_kill(self):
+        text = vd("10:10:00.000", "1", "Orbital_Sentry_SecurityNetwork", 0, 2, reason="Collision")
+        sk = scan(text)["ship_kills"]
+        self.assertEqual((sk["kills"], sk["by_reason"]), ({}, {}))
+
+    def test_player_ship_that_self_destructs_after_you_shot_it(self):
+        text = vd("10:10:00.000", "1", "DRAK_Herald", 0, 2, owner="303423934938", reason="SelfDestruct")
+        sk = scan(text)["ship_kills"]
+        self.assertEqual((sk["kills"], sk["player_ships"], sk["by_reason"]),
+                         ({"DRAK_Herald": 1}, 1, {"SelfDestruct": 1}))
+
 
 class SummaryTests(unittest.TestCase):
     def test_suffixes_resolve_to_the_base_hull(self):
@@ -100,7 +111,15 @@ class SummaryTests(unittest.TestCase):
                           ("AEGS_Vanguard_Harbinger_PU_AI_CRIM", "Vanguard Harbinger"),
                           ("MISC_Freelancer_MIS_PU_AI_CRIM", "Freelancer MIS"),
                           ("MISC_Freelancer_MIS_AI_Super_Crim", "Freelancer MIS"),
-                          ("AEGS_Sabre_Firebird_PU_AI_CRIM", "Sabre Firebird")):
+                          ("AEGS_Sabre_Firebird_PU_AI_CRIM", "Sabre Firebird"),
+                          ("VNCL_Blade_PU_AI_VAN", "Blade"),
+                          ("VNCL_Glaive_PU_AI_VAN", "Glaive"),
+                          ("VNCL_Scythe_PU_AI_VAN", "Scythe"),
+                          ("VNCL_Stinger_AI_Super_Vandull", "Stinger"),
+                          ("DRAK_Cutlass_Black_PU_Boarding", "Cutlass Black"),
+                          ("DRAK_Cutlass_Black_PU_AI_CRIM_QIG", "Cutlass Black"),
+                          ("ORIG_600i_PU_AI_CRIM", "600i"),          # base hull, matrix lists variants only
+                          ("MISC_Reliant_PU_AI_CRIM", "Reliant")):
             self.assertEqual(sc_stats.vehicle_ship_name(cls), name, cls)
 
     def test_real_4103_victim_classes(self):
