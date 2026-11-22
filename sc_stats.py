@@ -5682,6 +5682,7 @@ def refresh_online_data():
         for k in [k for k, v in cache.items() if not (v[1] if isinstance(v, list) else v)]:
             del cache[k]
             dropped += 1
+    _GUN_PICK.clear()                  # gun pictures are chosen again from the wiki
     save_img_cache()
     reload_catalogues()
     stamp_online("forced")
@@ -5746,6 +5747,7 @@ def fetch_profile_cached(handle, force=False):
 # re-fetches it. Name-only keys kept the Galaxy's pre-release render after RSI
 # replaced it. Logos are a bare data-uri. A cached null means "tried, no image".
 _SHIP_IMG, _GUN_IMG, _MAN_IMG = {}, {}, {}
+_GUN_PICK = {}      # gun name -> chosen picture URL, re-chosen by Update now
 
 
 def _art(cache, key, src, fetch, retry_miss=False):
@@ -5771,6 +5773,7 @@ def load_img_cache():
         _SHIP_IMG.update(d.get("ship", {}))
         _GUN_IMG.update(d.get("gun", {}))
         _MAN_IMG.update(d.get("man", {}))
+        _GUN_PICK.update(d.get("pick", {}))
         csub(f"art cache mounted — {len(_SHIP_IMG)} hulls · {len(_GUN_IMG)} arms · {len(_MAN_IMG)} makers")
     except Exception:
         pass
@@ -5778,7 +5781,7 @@ def load_img_cache():
 
 def save_img_cache():
     try:
-        json.dump({"ship": _SHIP_IMG, "gun": _GUN_IMG, "man": _MAN_IMG},
+        json.dump({"ship": _SHIP_IMG, "gun": _GUN_IMG, "man": _MAN_IMG, "pick": _GUN_PICK},
                   open(_img_cache_path(), "w", encoding="utf-8"))
     except Exception as e:
         cerr(f"could not save image cache: {e}")
@@ -5817,12 +5820,32 @@ def _ship_img(rec):
                          or sc_names.fetch_data_uri(rec.get("img_small"))))
 
 
+def _gun_pick(name, api_url=None):
+    """URL of the picture for a gun card, chosen once and saved until Update now.
+    A hand-pinned wiki file, else a product shot from the gun's wiki page by file
+    name, else the item catalogue's image unless it's an action shot, else any page
+    file named after the gun. Nothing is saved when nothing is found, so a later run
+    tries again."""
+    if _GUN_PICK.get(name):
+        return _GUN_PICK[name]
+    pin = sc_names.GUN_IMG_FILE.get(name)
+    u = (pin and sc_names.wiki_file_logo(pin, size=640)) or sc_names.wiki_gun_image(name)
+    if not u and api_url:
+        import urllib.parse
+        fname = urllib.parse.unquote(api_url.split("?")[0].rsplit("/", 1)[-1])
+        u = api_url if sc_names.gun_image_score(fname) >= 0 else None
+    u = u or sc_names.wiki_gun_image(name, min_score=0)
+    if u:
+        _GUN_PICK[name] = u
+    return u
+
+
 def _gun_img(name, url=None):
-    """The gun's own image from the item catalogue (a clean side view on
-    starcitizen.tools), else the lead image of its wiki page. A miss is retried: the
-    wiki gets pages later than the game gets guns."""
-    return _art(_GUN_IMG, name, url or "page",
-                lambda: (url and sc_names.fetch_data_uri(url)) or _gun_page_img(name),
+    """The gun card picture (see _gun_pick), else the lead image of its wiki page.
+    A miss is retried: the wiki gets pages later than the game gets guns."""
+    pick = _gun_pick(name, url)
+    return _art(_GUN_IMG, name, pick or "page",
+                lambda: (pick and sc_names.fetch_data_uri(pick)) or _gun_page_img(name),
                 retry_miss=True)
 
 

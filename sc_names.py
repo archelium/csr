@@ -970,6 +970,70 @@ def wiki_weapon_image(page_title):
     return None
 
 
+# starcitizen.tools file names say what a picture shows. A card wants the gun on its
+# own: the standard skin's shop display, a flat lay, a plain background. Not someone
+# aiming it, a roadmap teaser or a WIP render.
+_IMG_BAD = re.compile(
+    r"\b(aiming|inspecting|shooting|ads|sneak|roadmap|wip|concept|newsletter|dev\d*|"
+    r"equipped|bolt from|hanging|advert\w*|citcon|rewards|shot|player|close ?up|vfx|"
+    r"in rifle mode|annotated|monthly report|placeholder\w*|fun military|header|fps|"
+    r"blurred|various angles|showcase|sub-flair|screenshot|min|keyshot|examine|table|"
+    r"mag|ammo box|detail)\b")
+# Guns whose pages name no product shot, and whose other files show someone holding
+# the gun. Pinned to a wiki file by hand.
+GUN_IMG_FILE = {
+    "Parallax Energy Assault Rifle": "Volt Rifle Energy 01 UEE01.jpg",
+    "Quartz Energy SMG": "Volt SMG Energy 01 UEE01.jpg",
+    "Animus Missile Launcher": "APAR-Animus.jpg",
+}
+# shop displays are framed tight on the receiver: a flat lay shows the whole gun
+_IMG_GOOD = (("flat", 4), ("lying", 4), ("laying", 4), ("background", 3), ("cutout", 2),
+             ("cut out", 2), ("on crate", 2), ("gun crate", 2), ("standard skin", 2),
+             ("shop display", 1), ("render", 1), ("on grey", 2), ("on dark", 2))
+
+
+def gun_image_score(fname):
+    """Rank a wiki file name as a gun card picture. Below zero means never use it."""
+    f = " " + re.sub(r"[_]+", " ", (fname or "").lower()) + " "
+    if _IMG_BAD.search(f) or f.strip().endswith(".svg"):
+        return -1
+    s = sum(w for k, w in _IMG_GOOD if k in f)
+    if '"' in f or "%22" in f:          # a named skin's picture
+        s -= 2
+    return s
+
+
+def wiki_gun_image(page_title, size=640, min_score=1):
+    """Thumbnail URL of the best product shot on a gun's starcitizen.tools page, or
+    None when nothing scores min_score. A file named after the gun breaks ties. One call."""
+    if not page_title:
+        return None
+    try:
+        import urllib.parse
+        api = ("https://starcitizen.tools/api.php?action=query&format=json&redirects=1"
+               "&generator=images&gimlimit=500&prop=imageinfo&iiprop=url|size"
+               "&iiurlwidth=" + str(size) + "&titles=" + urllib.parse.quote(page_title))
+        req = urllib.request.Request(api, headers=_UA)
+        d = json.loads(urllib.request.urlopen(req, timeout=20, context=_SSL).read())
+        model = (page_title.split() or [""])[0].lower()
+        best, best_s = None, -1
+        for pg in sorted((d.get("query") or {}).get("pages", {}).values(),
+                         key=lambda p: p.get("title", "")):
+            ii = (pg.get("imageinfo") or [{}])[0]
+            if not ii.get("thumburl") or (ii.get("width") or 0) < 600 \
+                    or (ii.get("width") or 0) < (ii.get("height") or 0):
+                continue                       # tiny or portrait: never a good card
+            fname = pg.get("title", "")[5:]
+            s = gun_image_score(fname)
+            if s >= 0 and model and model in fname.lower():
+                s += 0.5
+            if s > best_s:
+                best, best_s = ii["thumburl"], s
+        return best if best_s >= min_score else None
+    except Exception:
+        return None
+
+
 def wiki_file_logo(filename, size=320):
     """Rendered PNG thumbnail URL of a SPECIFIC wiki File: — used to pin a maker
     to a chosen logo variant, and more robust than embedding a raw SVG (some SVGs,

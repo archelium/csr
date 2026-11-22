@@ -9,8 +9,10 @@ uses [Semantic Versioning](https://semver.org/) (MAJOR.MINOR.PATCH).
 
 ### Changed
 - **Gun cards use the wiki's own data.** Type and ammo come from starcitizen.tools
-  (Arlington Rifle is a Rifle, Gallant is Energy (Laser)). The picture is the gun's
-  catalogue image, a clean side view, in place of the page's lead photo.
+  (Arlington Rifle is a Rifle, Gallant is Energy (Laser)).
+- **Gun pictures show the gun.** Picked from the gun's wiki page: a flat lay or a plain
+  background first, never someone aiming or holding it, a roadmap teaser or a WIP
+  render. Update now picks again.
 - **Update now also pulls the item catalogue.** Names, gun types and images for items
   added since the last release. Its date shows next to the other catalogues.
 
