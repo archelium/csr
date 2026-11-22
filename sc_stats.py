@@ -7383,9 +7383,17 @@ nav a::after{background:var(--menu-bg);border-color:var(--glass-line);box-shadow
 @media(max-width:760px){ .sidebar{width:64px;flex-basis:64px;margin:10px 0 10px 10px;height:calc(100vh - 20px);top:10px} }
 
 /* ---- topbar: title · scope pill · tools ---- */
-.topbar{z-index:30;gap:18px;padding:22px 32px 16px;border-bottom:0;max-width:1244px;
+.topbar{z-index:30;gap:18px;padding:22px 32px 16px;border-bottom:0;
   background:color-mix(in srgb,var(--bg) 90%,transparent);-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px)}
   /* no mask or overflow on .topbar: the scope, bell and status popovers hang below it */
+/* the bar and the cards share one fluid width and the same side padding, so their
+   edges line up at any window size */
+.topbar,.content,.limited-note{max-width:none}
+.content{padding-left:32px;padding-right:32px}
+.limited-note{margin-left:32px;margin-right:32px}
+/* charts keep their aspect ratio. On a very wide window a full-width chart stops
+   growing taller here and centres in its card */
+.content .card svg{max-height:460px}
 #secTitle{font-size:28px;font-weight:600;letter-spacing:-.01em}
 .scope-badge{font-size:11px;border-radius:6px;padding:3px 8px;border-color:rgba(91,209,230,.45)}
 .scope-badge.patch{border-color:rgba(244,169,42,.55)}
