@@ -47,12 +47,12 @@ import sc_names
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
-CSR_VERSION = "1.9.1"
+CSR_VERSION = "1.9.2"
 CSR_CONTACT = "support@archelium.com"      # publisher/contact (archelium.com)
 # Bump whenever scan_log() learns to extract something new or fixes an extraction bug.
 # A quick refresh reuses archived sessions only when they were parsed by THIS version,
 # so improved parsing always re-reads old logs instead of silently keeping stale numbers.
-PARSER_VERSION = 25
+PARSER_VERSION = 26
 
 
 # --------------------------------------------------------------------------- #
@@ -3184,10 +3184,15 @@ def inventory_check(reads, votes, sorts, budget, rewards, me, me_id):
     return {"locs": locs, "sorts": srt, "budget": bud, "rewards": rewards}
 
 
+SHIP_CLASS_RE = re.compile(r"^[A-Z]{3,5}_")     # a maker code: AEGS_, RSI_, VNCL_
+
+
 def ship_kill_events(events, me, me_id):
     """Fold the <Vehicle Destroyed> events of one session into the `ship_kills` dict.
     events: (vehicle id, class, owner id, reason, from, to, killer, killer id) in log order.
-    One event per vehicle, the line with its highest level. None when none is about you."""
+    One event per vehicle, the line with its highest level. None when none is about you.
+    The line also fires for things that aren't ships (Orbital_Sentry_SecurityNetwork). A
+    victim counts only when its class starts with a maker code."""
     best = {}
     for ev in events:
         if ev[0] not in best or ev[5] >= best[ev[0]][5]:
@@ -3205,7 +3210,7 @@ def ship_kill_events(events, me, me_id):
         if own:
             if to >= 2:
                 lost.append({"cls": cls, "reason": reason, "killer": killer})
-        else:
+        elif SHIP_CLASS_RE.match(cls):
             if to >= 2:
                 kills[cls] += 1
                 reasons[reason] += 1
@@ -4682,27 +4687,34 @@ def _air_summary(agg):
             "nohelm": agg["air_nohelm"], "sessions": agg["air_sessions"]}
 
 
-_AI_TOKENS = {"pu", "ai", "super", "crim", "ik"}
-
-
 def vehicle_ship_name(cls):
-    """Ship name for a <Vehicle Destroyed> class. NPC classes carry AI/crime suffixes
-    (AEGS_Gladius_PU_AI_CRIM, ..._AI_Super_CRIM). They come off first, then the model is
-    matched by its exact matrix name so Vanguard Harbinger and Sabre Firebird stay
-    themselves. Falls back to the matrix match, then to the class without its maker code."""
+    """Ship name for a <Vehicle Destroyed> class. NPC classes carry a faction suffix that
+    starts at a PU or AI token (AEGS_Gladius_PU_AI_CRIM, VNCL_Stinger_AI_Super_Vandull,
+    DRAK_Cutlass_Black_PU_Boarding). Everything from that token on comes off, then the model
+    is matched by its exact matrix name so Vanguard Harbinger and Sabre Firebird stay
+    themselves. A base hull the matrix only lists as variants (ORIG_600i: Touring, Explorer,
+    Executive Edition) keeps its plain name rather than picking one. Otherwise falls back to
+    the matrix match, then to the class without its maker code."""
     parts = cls.split("_")
-    while len(parts) > 1 and parts[-1].lower() in _AI_TOKENS:
-        parts.pop()
+    for k in range(2, len(parts)):         # maker and model are never a suffix
+        if parts[k].lower() in ("pu", "ai"):
+            parts = parts[:k]
+            break
     base = "_".join(parts)
+    plain = " ".join(parts[1:] or parts)
     if SHIPS.ok:
-        want = " ".join(parts[1:]).lower()
+        want = plain.lower()
         for n, rec in SHIPS.by_name.items():
             if n and n.lower() == want and rec.get("name"):
                 return rec["name"]
+        toks = want.split()
+        fits = [n for n in SHIPS.by_name if n and all(t in n.lower().split() for t in toks)]
+        if len(fits) > 1:
+            return plain
         nm = _ship_display_name(base)
         if nm:
             return nm
-    return " ".join(parts[1:] or parts)
+    return plain
 
 
 def _ship_kills_summary(agg):
@@ -5489,7 +5501,8 @@ def _from_cachegen(s):
 
 def load_archive():
     try:
-        raw = json.load(open(archive_path(), encoding="utf-8"))
+        with open(archive_path(), encoding="utf-8") as fh:
+            raw = json.load(fh)
         return [_deser_session(s) for s in raw.get("sessions", [])
                 if not _from_cachegen(s)]
     except Exception:

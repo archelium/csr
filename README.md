@@ -110,14 +110,13 @@ CSR is portable, so updating is just **replace the exe**:
 keeps sessions Star Citizen has since deleted from your log folder. If you want a
 belt-and-braces backup first, open CSR and use **💾 Backup & transfer → Export**.
 
-What happens on your first run of v1.9.1, depending on where you're coming from:
+What happens on your first run of v1.9.2, depending on where you're coming from:
 
 | Coming from | What to expect |
 |---|---|
 | **v1.0.0** | v1.0.0 kept no archive, so your history is rebuilt from whatever logs you still have. If your saved folder was `…\StarCitizen\LIVE`, CSR now finds `PTU` and `TECH-PREVIEW` beside it on its own — **no need to re-pick a folder** — and a **Channel** dropdown appears if it finds any. |
-| **v1.1.0 – v1.9.0** | Your archive carries over untouched. |
-| **v1.0.0 – v1.8.0** | The first scan re-reads **every** log (a minute or so). This is deliberate: each release fixes parsing bugs or extracts new data, so nothing older is trusted. It happens once — after that CSR starts, and refreshes, in about a second. |
-| **v1.9.0** | No re-read. 1.9.1 only makes that full re-read faster for the next release that needs one. |
+| **v1.1.0 – v1.9.1** | Your archive carries over untouched. |
+| **any** | The first scan re-reads **every** log (a minute or so). This is deliberate: each release fixes parsing bugs or extracts new data, so nothing older is trusted. It happens once — after that CSR starts, and refreshes, in about a second. |
 
 Coming from **v1.2.0** specifically, the first run also *moves* some existing numbers,
 because v1.3.0 converts session times from the log's UTC stamps to your own clock: the

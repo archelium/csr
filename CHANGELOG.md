@@ -5,6 +5,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and CSR
 uses [Semantic Versioning](https://semver.org/) (MAJOR.MINOR.PATCH).
 
 
+## [1.9.2] — 2026-11-23
+
+### Fixed
+- **Vanduul ships had broken names** (Combat). Blade, Glaive and Stinger showed as
+  *Blade PU AI VAN* or *Stinger AI Super Vandull*. NPC suffixes now come off from their
+  first PU or AI word, whatever the faction, so the boarding and QIG Cutlass variants
+  name cleanly too.
+- **Ramming an orbital security sentry counted as a ship kill.** The game logs sentries
+  with the same line as ships. Only classes with a ship maker's code count now.
+- **NPC 600i and Reliant kills were named as one variant** (*600i Touring*,
+  *Reliant Sen*). Those classes are the base hull. They show as *600i* and *Reliant*.
+
+### Changed
+- Parser **26**: the next refresh re-reads your archive once, about a minute.
+
+
 ## [1.9.1] — 2026-11-15
 
 ### Changed
