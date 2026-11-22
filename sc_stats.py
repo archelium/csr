@@ -4888,7 +4888,8 @@ def finalize(agg):
             if name not in gun_meta:
                 tok = (cls or "").split("_")[0].lower()
                 man = tok.upper() if tok in sc_names.WEAPON_MAN else ""
-                gun_meta[name] = list(sc_names.gun_class_labels(cls, name)) + [man]
+                g = sc_names.ITEMS.gun(cls) if sc_names.ITEMS is not None else None
+                gun_meta[name] = list(sc_names.gun_class_labels(cls, name)) + [man, (g or ["", "", ""])[2] or ""]
     # reloads (from AmmoRepool) & carry (stowed/holstered) resolved to gun names,
     # reusing the same display resolver so they line up with the drawn-weapon names.
     def _resolve_guns(src):
@@ -5668,8 +5669,8 @@ def refresh_online_data():
 
     Clears the profile/org cache and drops art entries that previously FAILED (a
     cached null means "tried once, got nothing" — usually the source was down, and
-    without this they would never be retried). Successfully-fetched art is kept:
-    it never changes, and re-downloading megabytes of it would be pointless."""
+    without this they would never be retried). Fetched art is kept: each entry
+    remembers its source URL, and a new URL in a refreshed catalogue re-fetches it."""
     global _PROFILE_CACHE
     _PROFILE_CACHE = {}
     try:
@@ -5678,9 +5679,10 @@ def refresh_online_data():
         pass
     dropped = 0
     for cache in (_SHIP_IMG, _GUN_IMG, _MAN_IMG):
-        for k in [k for k, v in cache.items() if not v]:
+        for k in [k for k, v in cache.items() if not (v[1] if isinstance(v, list) else v)]:
             del cache[k]
             dropped += 1
+    _GUN_PICK.clear()                  # gun pictures are chosen again from the wiki
     save_img_cache()
     reload_catalogues()
     stamp_online("forced")
@@ -5740,9 +5742,25 @@ def fetch_profile_cached(handle, force=False):
 
 # image caches so each asset is only downloaded once across all patch views.
 # Persisted to disk (app_dir/sc_images.json) so Refresh reuses already-fetched
-# art instead of re-downloading ~5 MB every run. Keyed by ship/gun display name;
-# a cached null means "tried, no image" (won't retry — delete the file to retry).
+# art instead of re-downloading ~5 MB every run. Keyed by ship/gun display name.
+# Ship and gun entries are [source url, data-uri]: a catalogue that points at new art
+# re-fetches it. Name-only keys kept the Galaxy's pre-release render after RSI
+# replaced it. Logos are a bare data-uri. A cached null means "tried, no image".
 _SHIP_IMG, _GUN_IMG, _MAN_IMG = {}, {}, {}
+_GUN_PICK = {}      # gun name -> chosen picture URL, re-chosen by Update now
+
+
+def _art(cache, key, src, fetch, retry_miss=False):
+    """The cached image for `key` while its source is still `src`, else `fetch()`.
+    A legacy entry (bare data-uri, no source) counts as a changed source. A failed
+    re-fetch keeps the old picture and tries again next time."""
+    ent = cache.get(key)
+    old_src, old = ent if isinstance(ent, list) else (None, ent)
+    if key in cache and old_src == src and (old or not retry_miss):
+        return old
+    new = fetch()
+    cache[key] = [src, new] if (new or not old) else [old_src, old]
+    return cache[key][1]
 
 
 def _img_cache_path():
@@ -5755,6 +5773,7 @@ def load_img_cache():
         _SHIP_IMG.update(d.get("ship", {}))
         _GUN_IMG.update(d.get("gun", {}))
         _MAN_IMG.update(d.get("man", {}))
+        _GUN_PICK.update(d.get("pick", {}))
         csub(f"art cache mounted — {len(_SHIP_IMG)} hulls · {len(_GUN_IMG)} arms · {len(_MAN_IMG)} makers")
     except Exception:
         pass
@@ -5762,7 +5781,7 @@ def load_img_cache():
 
 def save_img_cache():
     try:
-        json.dump({"ship": _SHIP_IMG, "gun": _GUN_IMG, "man": _MAN_IMG},
+        json.dump({"ship": _SHIP_IMG, "gun": _GUN_IMG, "man": _MAN_IMG, "pick": _GUN_PICK},
                   open(_img_cache_path(), "w", encoding="utf-8"))
     except Exception as e:
         cerr(f"could not save image cache: {e}")
@@ -5794,19 +5813,43 @@ def _man_logo(name):
 def _ship_img(rec):
     if not rec:
         return None
-    key = rec.get("name")
-    if key not in _SHIP_IMG:
-        # prefer the large store render (crisp on hi-dpi cards), fall back to small
-        _SHIP_IMG[key] = (sc_names.fetch_data_uri(rec.get("img_large"))
-                          or sc_names.fetch_data_uri(rec.get("img_small")))
-    return _SHIP_IMG[key]
+    # prefer the large store render (crisp on hi-dpi cards), fall back to small
+    src = rec.get("img_large") or rec.get("img_small")
+    return _art(_SHIP_IMG, rec.get("name"), src,
+                lambda: (sc_names.fetch_data_uri(rec.get("img_large"))
+                         or sc_names.fetch_data_uri(rec.get("img_small"))))
 
 
-def _gun_img(name):
-    # a cached miss is retried: the wiki gets pages later than the game gets guns
-    # (the Arlington's page is "Arlington Rifle", and sat as a cached None for a patch)
-    if _GUN_IMG.get(name):
-        return _GUN_IMG[name]
+def _gun_pick(name, api_url=None):
+    """URL of the picture for a gun card, chosen once and saved until Update now.
+    A hand-pinned wiki file, else a product shot from the gun's wiki page by file
+    name, else the item catalogue's image unless it's an action shot, else any page
+    file named after the gun. Nothing is saved when nothing is found, so a later run
+    tries again."""
+    if _GUN_PICK.get(name):
+        return _GUN_PICK[name]
+    pin = sc_names.GUN_IMG_FILE.get(name)
+    u = (pin and sc_names.wiki_file_logo(pin, size=640)) or sc_names.wiki_gun_image(name)
+    if not u and api_url:
+        import urllib.parse
+        fname = urllib.parse.unquote(api_url.split("?")[0].rsplit("/", 1)[-1])
+        u = api_url if sc_names.gun_image_score(fname) >= 0 else None
+    u = u or sc_names.wiki_gun_image(name, min_score=0)
+    if u:
+        _GUN_PICK[name] = u
+    return u
+
+
+def _gun_img(name, url=None):
+    """The gun card picture (see _gun_pick), else the lead image of its wiki page.
+    A miss is retried: the wiki gets pages later than the game gets guns."""
+    pick = _gun_pick(name, url)
+    return _art(_GUN_IMG, name, pick or "page",
+                lambda: (pick and sc_names.fetch_data_uri(pick)) or _gun_page_img(name),
+                retry_miss=True)
+
+
+def _gun_page_img(name):
     titles = [name]
     short = re.sub(r"\s+(Rifle|SMG|LMG|Pistol|Shotgun|Sniper( Rifle)?|"
                    r"Assault Rifle|Energy Assault Rifle|Laser Sniper Rifle)$", "", name).strip()
@@ -5819,7 +5862,6 @@ def _gun_img(name):
         img = sc_names.fetch_data_uri(sc_names.wiki_weapon_image(t))
         if img:
             break
-    _GUN_IMG[name] = img
     return img
 
 
@@ -5838,10 +5880,10 @@ def _ship_entry(name, count, first=None, last=None, takeoffs=0, aboard=0, seat=0
 
 
 def _gun_entry(name, count, meta, reloads=0, carried=0, reloads_known=True):
-    gtype, ammo, man = ((meta.get(name) or ["", "", ""]) + ["", "", ""])[:3]
+    gtype, ammo, man, img = ((meta.get(name) or []) + ["", "", "", ""])[:4]
     full = sc_names.WEAPON_MAN.get((man or "").lower(), "")   # BEHR -> Behring
     return {"name": name, "count": count, "type": gtype, "ammo": ammo, "code": man,
-            "man": full, "logo": _man_logo(full), "img": _gun_img(name),
+            "man": full, "logo": _man_logo(full), "img": _gun_img(name, img or None),
             "reloads": reloads, "carried": carried,
             # False when the whole scope logged no reloads at all (a build that never
             # wrote ammo-repool events) — the card then shows N/A instead of a bare 0,
@@ -7893,8 +7935,8 @@ nav a::after{background:var(--menu-bg);border-color:var(--glass-line);box-shadow
       <div>
         <div class="ol-t">Online data</div>
         <div class="ol-s">Ship &amp; weapon art, manufacturer logos, your RSI dossier and orgs — and the
-          catalogues the Blueprints tab is built on: the RSI ship matrix, the SC-Wiki mission index and
-          crafting catalogue. Nothing here updates on its own; press the button after a patch, if you&rsquo;ve
+          catalogues CSR names things from: the RSI ship matrix, the SC-Wiki item catalogue,
+          mission index and crafting catalogue. Nothing here updates on its own; press the button after a patch, if you&rsquo;ve
           joined an org, or if artwork failed to load. <b>Takes about two minutes</b> — the catalogue
           is one call per blueprint. <span id="olWhen"></span></div>
       </div>
@@ -10728,9 +10770,9 @@ function olWhen(){
   const ts=ONLINE.profile||ONLINE.forced, c=ONLINE.catalogues||{};
   const ago=d=>{ const n=Math.floor((Date.now()-new Date(d))/86400000); return n<1?'today':n===1?'yesterday':n+' days ago'; };
   let s = ts ? 'Last updated '+ago(ts)+'. ' : '';
-  const cat=['ships','missions','blueprints'].filter(k=>c[k]).map(k=>`${k} ${ago(c[k])}`).join(', ');
+  const cat=['ships','items','missions','blueprints'].filter(k=>c[k]).map(k=>`${k} ${ago(c[k])}`).join(', ');
   if(cat) s += `Catalogues pulled: ${cat}.`;
-  if(c.stale) s += ` <b style="color:var(--amber)">A catalogue is more than ${c.max_days} days old — new ships, missions or blueprints may be missing until you update.</b>`;
+  if(c.stale) s += ` <b style="color:var(--amber)">A catalogue is more than ${c.max_days} days old — new ships, items, missions or blueprints may be missing until you update.</b>`;
   el.innerHTML=s;
 }
 $('#olBtn').onclick=()=>{
@@ -10984,7 +11026,8 @@ _RESOLVERS_LOADED = False
 def catalogue_ages():
     """{"ships": date, "blueprints": date, "missions": date, "stale": bool} — when each
     catalogue was last pulled, and whether any is past CACHE_MAX_DAYS."""
-    ages = {"ships": SHIPS.fetched, "blueprints": BPS.fetched, "missions": MIS.fetched}
+    ages = {"ships": SHIPS.fetched, "items": ITEMS.fetched, "blueprints": BPS.fetched,
+            "missions": MIS.fetched}
     ages["stale"] = any(sc_names.cache_is_stale(v) for v in ages.values())
     ages["max_days"] = sc_names.CACHE_MAX_DAYS
     return ages
@@ -10997,11 +11040,14 @@ def reload_catalogues():
     global _bp_rev, _bp_cat_idx, _mis_by_dbg
     cstep("pulling the ship matrix")
     SHIPS.load(force=True)
+    cstep("pulling the item catalogue — names, gun types and images")
+    if ITEMS.load(force=True):
+        sc_names.ITEMS = ITEMS
     cstep("pulling the contract registry")
     MIS.load(force=True)
     cstep("pulling the crafting catalogue — one call per blueprint, about two minutes")
     BPS.load(force=True)
-    cok(f"catalogues refreshed — {len(SHIPS.by_name):,} hulls · {len(MIS.rows):,} missions · {len(BPS.rows):,} blueprints")
+    cok(f"catalogues refreshed — {len(SHIPS.by_name):,} hulls · {len(ITEMS.idx):,} items · {len(MIS.rows):,} missions · {len(BPS.rows):,} blueprints")
     _bp_rev, _bp_cat_idx, _mis_by_dbg = None, None, None
     _bp_cache.clear(); _fam_cache.clear()
 
@@ -11031,11 +11077,11 @@ def load_resolvers():
     BPS.cache_path = cache_file("sc_blueprints.json")
     if BPS.load():
         cstep(f"crafting catalogue synced — {len(BPS.rows):,} blueprints ({BPS.version or 'unknown build'})")
+    else:
+        cwarn("crafting catalogue offline — blueprints shown without the missing list")
     ages = catalogue_ages()
     if ages["stale"]:
         cwarn(f"a catalogue is more than {ages['max_days']} days old — Backup & transfer → Online data → Update now re-pulls them (about two minutes)")
-    else:
-        cwarn("crafting catalogue offline — blueprints shown without the missing list")
     _RESOLVERS_LOADED = True
 
 
