@@ -7,6 +7,17 @@ uses [Semantic Versioning](https://semver.org/) (MAJOR.MINOR.PATCH).
 
 ## [Unreleased]
 
+### Added
+- **Pictures on Flight & Travel, Combat, Missions, Economy and Blueprints.** Each page
+  opens on its #1: your most-flown ship, most-drawn gun, top hauling destination, biggest
+  ship purchase, closest armour set. In every ranked list of ships, guns, items and places
+  the top 3 are picture tiles and the rest have thumbnails. Ships come from RSI, the rest
+  from starcitizen.tools. Something with no picture shows its list's icon in the same slot.
+
+### Changed
+- **Each picture is stored once in the page.** Every patch view used to carry its own copy
+  of the same ship renders.
+
 ### Fixed
 - **Place names were CIG codenames.** "Castra jump point (Nyx)" is the Stanton Gateway,
   "Kaboos" is the QV Logistics Station. The Stanton-side Nyx Gateway showed as the Magnus
