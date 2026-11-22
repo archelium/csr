@@ -10312,7 +10312,8 @@ document.addEventListener('keydown',e=>{
 document.querySelectorAll('#nav a').forEach(a=>{
   const s=a.querySelector('span'); if(s&&ICON[a.dataset.sec]) s.innerHTML=ICON[a.dataset.sec];  // swap emoji → HUD glyph
   a.onclick=(e)=>{ e.preventDefault();
-    section=a.dataset.sec; document.querySelectorAll('#nav a').forEach(x=>x.classList.toggle('active',x===a)); render(); };
+    section=a.dataset.sec; document.querySelectorAll('#nav a').forEach(x=>x.classList.toggle('active',x===a)); render();
+    scrollToY(0); };   // a new tab starts at its top, not where the last one was scrolled to
 });
 // swap emoji → HUD glyph on the top-bar chrome buttons & modal headings
 (function(){
