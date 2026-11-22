@@ -5,6 +5,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and CSR
 uses [Semantic Versioning](https://semver.org/) (MAJOR.MINOR.PATCH).
 
 
+## [Unreleased]
+
+### Changed
+- **Gun cards use the wiki's own data.** Type and ammo come from starcitizen.tools
+  (Arlington Rifle is a Rifle, Gallant is Energy (Laser)). The picture is the gun's
+  catalogue image, a clean side view, in place of the page's lead photo.
+- **Update now also pulls the item catalogue.** Names, gun types and images for items
+  added since the last release. Its date shows next to the other catalogues.
+
+### Fixed
+- **Ship and gun art never updated.** A refreshed catalogue pointed at new art, but CSR
+  kept the picture it had saved under that name. The Galaxy kept its pre-release render.
+  Art now re-downloads when its source changes.
+- **Item names.** Arlington is the Arlington Rifle. Ten items carry CIG typos in the
+  game data, fixed to their wiki names (an Antium helmet read "Antium Core Jet"). Items
+  the wiki no longer lists keep their last known name. Placeholder names are ignored.
+- **"Crafting catalogue offline" showed at every boot** when no catalogue was stale.
+
 ## [1.10.0] — 2026-11-23
 
 ### Added

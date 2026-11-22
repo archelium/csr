@@ -62,7 +62,7 @@ WEAPON_MODELS = {
     "grin_tractor_01": "Tractor Beam Attachment",
     "crlf_medgun_01": "MedGun (ParaMed)",
     "crlf_consumable_healing_01": "Hemozal Injector",
-    "hdgw_rifle_ballistic_01": "Arlington",   # Hedeby Gunworks lever-action rifle (4.10)
+    "hdgw_rifle_ballistic_01": "Arlington Rifle",   # Hedeby Gunworks lever-action rifle (4.10)
     # not in the SC-Wiki item index yet, named from their starcitizen.tools pages
     "hdgw_optics_tsco_x4_s2": "Myers (4x Telescopic)",   # Hedeby scope for the Arlington
     "ksar_lmg_energy_01": "Verdict LMG",                 # Kastak Arms energy LMG
@@ -111,8 +111,35 @@ ITEMS = None
 
 
 def _skin_strip(name):
-    """Drop the quoted skin nickname: 'P8-AR "Blackguard" Rifle' -> 'P8-AR Rifle'."""
-    return re.sub(r"\s+", " ", re.sub(r'\s*"[^"]*"\s*', " ", name or "")).strip()
+    """Drop the quoted skin nickname: 'P8-AR "Blackguard" Rifle' -> 'P8-AR Rifle'.
+    Single quotes too (Deadrig 'Noxious' Shotgun), only as a whole word pair."""
+    name = re.sub(r'\s*"[^"]*"\s*', " ", name or "")
+    name = re.sub(r"(^|\s)'[^']+'(?=\s|$)", " ", name)
+    return re.sub(r"\s+", " ", name).strip()
+
+
+# The game's own item names (the API's "name" is its localisation string) with CIG's
+# typos fixed to the starcitizen.tools page. Applied over every load of the index.
+NAME_FIX = {
+    "qrt_specialist_heavy_helmet_01_01_12": "Antium Helmet Jet",          # game: "Antium Core Jet"
+    "qrt_specialist_heavy_arms_01_01_13": "Antium Arms Maroon",           # game: "Antium Helmet Jet"
+    "rrs_combat_heavy_backpack_04_02_01": "Morozov-CH Backpack Gold Horizon",
+    "fta_medium_helmet_01_01_13": "Ambrose Helmet Onyx",                  # game: "Strata …"
+    "fta_medium_helmet_01_01_15": "Ambrose Helmet Calico",
+    "fta_medium_helmet_01_01_18": "Ambrose Helmet Piston",
+    "vgl_armor_light_legs_01_01_15": "TrueDef-Pro Legs Tan/Silver",
+    "rsi_explorer_armor_light_helmet_01_01_01": "Venture Helmet",
+    "klwe_ubarrel_flsh_s1": "Brightspot Flashlight",                      # game: "… Purple"
+    "sasu_pistol_toy_01": "WowBlast Desperado Toy Pistol",                # base reads "… Red"
+}
+
+# personal_weapon.class from the API, in one spelling ("Electron" and "Energy (Electron)")
+_AMMO_FIX = {"Electron": "Energy (Electron)", "Laser": "Energy (Laser)", "Plasma": "Energy (Plasma)"}
+
+
+def _real_name(cn, name):
+    """False for the API's placeholder names: the class id itself, "@loc_key", PLACEHOLDER."""
+    return bool(name) and name.lower() != cn and not name.startswith("@")         and "placeholder" not in name.lower()
 
 
 def weapon_display(cls):
@@ -158,20 +185,31 @@ class ItemIndex:
     def __init__(self, cache=None):
         self.cache_path = cache or os.path.join(SCRIPT_DIR, "sc_item_names.json")
         self.idx = {}
+        self.guns = {}          # class -> [type, ammo class, image url] for personal weapons
+        self.fetched = None
         self.ok = False
 
-    def load(self, allow_fetch=True):
+    def load(self, allow_fetch=True, force=False):
         if os.path.isfile(self.cache_path):
             try:
-                self.idx = json.load(open(self.cache_path, encoding="utf-8"))
+                with open(self.cache_path, encoding="utf-8") as fh:
+                    raw = json.load(fh)
+                # {"fetched", "names", "guns"} since 1.10.1; a bare name map before
+                if isinstance(raw, dict) and isinstance(raw.get("names"), dict):
+                    self.idx, self.guns, self.fetched = raw["names"], raw.get("guns") or {}, raw.get("fetched")
+                else:
+                    self.idx, self.guns, self.fetched = raw or {}, {}, None
             except Exception:
                 self.idx = {}
-        if not self.idx and allow_fetch:
+        if allow_fetch and (not self.idx or force):
             self._fetch()
         self.ok = bool(self.idx)
+        if self.ok:
+            self.idx.update(NAME_FIX)
         return self.ok
 
     def _fetch(self):
+        names, guns = {}, {}
         try:
             page, last = 1, 1
             while page <= last:
@@ -179,13 +217,38 @@ class ItemIndex:
                 d = json.loads(urllib.request.urlopen(req, timeout=40, context=_SSL).read())
                 for i in d.get("data", []):
                     cn = (i.get("class_name") or "").lower()
-                    if cn and cn not in self.idx:
-                        self.idx[cn] = i.get("name")
+                    if not cn or not _real_name(cn, i.get("name")):
+                        continue
+                    names.setdefault(cn, i.get("name"))
+                    pw = i.get("personal_weapon") or {}
+                    if pw.get("type"):
+                        imgs = [im.get("thumbnail_url") or im.get("original_url")
+                                for im in (i.get("images") or [])]
+                        imgs = [u for u in imgs if u]
+                        # a quoted skin name in the file ("Gallant "Conviction Camo"…") is a
+                        # skin's picture: the card shows the base gun
+                        img = next((u for u in imgs if "%22" not in u), imgs[0] if imgs else None)
+                        had = (guns.get(cn) or [None, None, None])[2]
+                        if cn not in guns or not had or ("%22" in had and img and "%22" not in img):
+                            ammo = pw.get("class") or ""
+                            guns[cn] = [pw.get("type"), _AMMO_FIX.get(ammo, ammo), img or had]
                 last = d.get("meta", {}).get("last_page", 1)
                 page += 1
-            json.dump(self.idx, open(self.cache_path, "w", encoding="utf-8"))
         except Exception as e:
             print(f"[sc_names] item index fetch failed: {e}")
+            return
+        # items the API has dropped keep their last known name (old logs still carry them)
+        names = {**{k: v for k, v in self.idx.items() if _real_name(k, v)}, **names}
+        self.idx, self.guns = names, guns
+        self.fetched = datetime.date.today().isoformat()
+        with open(self.cache_path, "w", encoding="utf-8") as fh:
+            json.dump({"fetched": self.fetched, "names": names, "guns": guns}, fh)
+
+    def gun(self, cls):
+        """[type, ammo class, image url] for a personal weapon, from its base class first
+        (a card groups every skin under the base gun), then its own, else None."""
+        c = (cls or "").lower()
+        return self.guns.get(strip_variant(c)) or self.guns.get(c)
 
     def resolve(self, base_key):
         if base_key in self.idx:
@@ -417,7 +480,11 @@ _GUN_TYPE_RULES = (
 
 
 def gun_class_labels(cls, name=""):
-    """Return (type, ammo) e.g. ('Assault Rifle','Energy') for a gun class id."""
+    """Return (type, ammo) e.g. ('Assault Rifle','Energy (Laser)') for a gun class id.
+    The wiki's personal_weapon data when the index has it, else a guess from the class."""
+    g = ITEMS.gun(cls) if ITEMS is not None and hasattr(ITEMS, "gun") else None
+    if g and g[0]:
+        return g[0], g[1] or ""
     n = (cls + " " + (name or "")).lower()
     gtype = ""
     for key, label in _GUN_TYPE_RULES:

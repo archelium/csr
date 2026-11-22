@@ -20,7 +20,7 @@ class FakeIndex:
 class UnlistedItemTests(unittest.TestCase):
     def test_unlisted_magazine_is_named_after_its_gun(self):
         with mock.patch.object(sc_names, "ITEMS", FakeIndex()):
-            self.assertEqual(sc_stats.purchase_display("hdgw_rifle_ballistic_01_mag"), "Arlington Magazine")
+            self.assertEqual(sc_stats.purchase_display("hdgw_rifle_ballistic_01_mag"), "Arlington Rifle Magazine")
 
     def test_listed_magazine_keeps_its_index_name(self):
         with mock.patch.object(sc_names, "ITEMS", FakeIndex()):
@@ -29,11 +29,11 @@ class UnlistedItemTests(unittest.TestCase):
 
     def test_magazine_without_any_index(self):
         with mock.patch.object(sc_names, "ITEMS", None):
-            self.assertEqual(sc_stats.purchase_display("hdgw_rifle_ballistic_01_mag"), "Arlington Magazine")
+            self.assertEqual(sc_stats.purchase_display("hdgw_rifle_ballistic_01_mag"), "Arlington Rifle Magazine")
 
     def test_unlisted_gun_uses_the_curated_name(self):
         with mock.patch.object(sc_names, "ITEMS", FakeIndex()):
-            self.assertEqual(sc_stats.purchase_display("hdgw_rifle_ballistic_01"), "Arlington")
+            self.assertEqual(sc_stats.purchase_display("hdgw_rifle_ballistic_01"), "Arlington Rifle")
 
 
 if __name__ == "__main__":
