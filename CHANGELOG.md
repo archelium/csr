@@ -5,14 +5,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and CSR
 uses [Semantic Versioning](https://semver.org/) (MAJOR.MINOR.PATCH).
 
 
-## [Unreleased]
-
-### Fixed
-- **Switching tabs kept the scroll position.** Scroll to the bottom of Flight & Travel,
-  click Combat, and Combat opened at its bottom too. A tab picked from the sidebar now
-  opens at its top. Changing patch or account on the same tab still keeps your place.
-
-
 ## [1.10.0] — 2026-11-23
 
 ### Added
@@ -34,6 +26,9 @@ uses [Semantic Versioning](https://semver.org/) (MAJOR.MINOR.PATCH).
   growing taller at 460 px.
 - **On a short window the sidebar footer was cut off.** The sidebar now scrolls inside
   itself when it doesn't fit.
+- **Switching tabs kept the scroll position.** Scroll to the bottom of Flight & Travel,
+  click Combat, and Combat opened at its bottom too. A tab picked from the sidebar now
+  opens at its top. Changing patch or account on the same tab still keeps your place.
 
 
 ## [1.9.3] — 2026-11-23
