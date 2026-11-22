@@ -5,6 +5,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and CSR
 uses [Semantic Versioning](https://semver.org/) (MAJOR.MINOR.PATCH).
 
 
+## [Unreleased]
+
+### Fixed
+- **Place names were CIG codenames.** "Castra jump point (Nyx)" is the Stanton Gateway,
+  "Kaboos" is the QV Logistics Station. The Stanton-side Nyx Gateway showed as the Magnus
+  Gateway. Its code is the old Magnus gate. Before 4.4 it still reads Magnus.
+- **Places now use the game's own names**, from its localisation and route log: Pyro
+  outposts (Jackson's Swap, Shepherd's Rest), Onyx facilities, People's Service Stations,
+  distribution centres, Lazarus transport hubs and aid shelters.
+
 ## [1.10.0] — 2026-11-23
 
 ### Added

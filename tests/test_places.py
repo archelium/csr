@@ -45,9 +45,40 @@ class PlaceNameTests(unittest.TestCase):
         self.assertEqual(sc_stats.place_name("RR_JP_StantonPyro"),
                          ("Pyro Gateway (Stanton)", "Stanton", "Jump point"))
 
-    def test_unconfirmed_jump_point_station_keeps_the_mechanical_label(self):
+    def test_stanton_nyx_gateways_reuse_old_codes(self):
+        # the route log names them; Magnus was the Magnus Gateway before 4.4
         self.assertEqual(sc_stats.place_name("RR_JP_NyxCastra"),
-                         ("Castra jump point (Nyx)", "Nyx", "Jump point"))
+                         ("Stanton Gateway (Nyx)", "Nyx", "Jump point"))
+        self.assertEqual(sc_stats.place_name("RR_JP_StantonMagnus", "4.10"),
+                         ("Nyx Gateway (Stanton)", "Stanton", "Jump point"))
+        self.assertEqual(sc_stats.place_name("RR_JP_StantonMagnus", "4.3")[0], "Magnus Gateway (Stanton)")
+
+    def test_unconfirmed_jump_point_station_keeps_the_mechanical_label(self):
+        self.assertEqual(sc_stats.place_name("RR_JP_TerraCastra"),
+                         ("Castra jump point (Terra)", "Terra", "Jump point"))
+
+    def test_nyx_codenames(self):
+        self.assertEqual(sc_stats.place_name("Nyx_Kaboos")[0], "QV Logistics Station")
+        self.assertEqual(sc_stats.place_name("AsteroidClusterBase_Nyx_Social_Keeger_004")[0],
+                         "People's Service Station Lambda")
+
+    def test_game_names_for_built_families(self):
+        cases = {
+            "Pyro2_Outpost_col_m_trdp_indy_001": "Jackson's Swap",
+            "Pyro3_Outpost_col_s_tsrpst_indy_002": "Frigid Knot",
+            "Stanton3a_ASD_Delve_Facility_002": "Onyx Facility S3A2",
+            "Stanton4_DistributionCentre_Covalex_S4DC05": "Covalex Distribution Centre S4DC05",
+            "Stanton4_DistributionCentre_Greycat_ComplexA": "Greycat Stanton IV Production Complex-A",
+            "Stanton4_DistributionCentre_Astro_Plant19-02": "Cry-Astro Processing Plant 19-02",
+            "Stanton1_DistributionCentre_Hurston_Farnesway": "HDPC-Farnesway",
+            "Stanton4_DistributionCentre_microTech_S4LD13": "microTech Logistics Depot S4LD13",
+            "Pyro1_ASD_Monorail_LazarusTransportHub_Tithonus_2C": "Lazarus Transport Hub Tithonus-III",
+            "Stanton2c_EMShelter_KossoBasin": "Kosso Basin Aid Shelter",
+            "Stanton4_EMShelter_PointWain": "Point Wain Emergency Shelter",
+            "AsteroidClusterBase_Pyro_Dungeon_Executive_001b": "PYAM-EXHANG-0-1",
+        }
+        for code, name in cases.items():
+            self.assertEqual(sc_stats.place_name(code)[0], name, code)
 
     def test_mechanical_label_when_no_name_is_confirmed(self):
         self.assertEqual(sc_stats.place_name("RR_P2_L2"), ("Pyro II L2 rest stop", "Pyro", "Rest stop"))
@@ -67,9 +98,9 @@ class PlaceNameTests(unittest.TestCase):
 
     def test_distribution_centre(self):
         self.assertEqual(sc_stats.place_name("Stanton4_DistributionCentre_Covalex_S4DC05"),
-                         ("Covalex S4DC05", "Stanton", "Facility"))
+                         ("Covalex Distribution Centre S4DC05", "Stanton", "Facility"))
         self.assertEqual(sc_stats.place_name("Stanton4_DistributionCentre_microTech_S4LD13"),
-                         ("microTech S4LD13", "Stanton", "Facility"))
+                         ("microTech Logistics Depot S4LD13", "Stanton", "Facility"))
 
     def test_facilities_and_outposts(self):
         self.assertEqual(sc_stats.place_name("Stanton1_HurdynMining_HDMSHadley"),
@@ -79,9 +110,9 @@ class PlaceNameTests(unittest.TestCase):
         self.assertEqual(sc_stats.place_name("Outpost_PAF_Stanton1b_Ruptura_2"),
                          ("Ruptura PAF-II", "Stanton", "Outpost"))
         self.assertEqual(sc_stats.place_name("Stanton3b_ASD_Delve_Facility_010"),
-                         ("ASD Delve 010 (Wala)", "Stanton", "Facility"))
+                         ("Onyx Facility S3B10", "Stanton", "Facility"))
         self.assertEqual(sc_stats.place_name("Pyro5b_Outpost_col_m_scrp_otlw_001"),
-                         ("Pyro 5b outpost scrp otlw 001", "Pyro", "Outpost"))
+                         ("Seer's Canyon", "Pyro", "Outpost"))
 
     def test_unknown_code_falls_back_to_its_words(self):
         self.assertEqual(sc_stats.place_name("Stanton2_SomeNewPlace"), ("Some New Place", "Stanton", "Other"))
@@ -139,7 +170,7 @@ class AggregateTests(unittest.TestCase):
             _session("2026-03-02", ["pyro3_outpost_col_s_frm_otlw_002"]),
         ])["places"]
         self.assertEqual(v["n"], 1)
-        self.assertEqual(v["rows"], [["Pyro 3 outpost frm otlw 002", "Pyro", "Outpost", 2, "2026-03-01"]])
+        self.assertEqual(v["rows"], [["The Yard", "Pyro", "Outpost", 2, "2026-03-01"]])
 
     def test_sessions_archived_before_places_are_ignored(self):
         old = _session("2026-03-01", [])

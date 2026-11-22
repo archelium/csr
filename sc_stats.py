@@ -3015,8 +3015,19 @@ def _place_table():
             ("StantonMagnus", "Magnus Gateway (Stanton)", "Stanton"),
             ("PyroStanton", "Stanton Gateway (Pyro)", "Pyro"),
             ("PyroNyx", "Nyx Gateway (Pyro)", "Pyro"),
-            ("NyxPyro", "Pyro Gateway (Nyx)", "Nyx")):
+            ("NyxPyro", "Pyro Gateway (Nyx)", "Nyx"),
+            # Stanton - Nyx (4.4 on): CIG reused the Magnus gate in Stanton and the Castra
+            # gate in Nyx. The game's route log names them Nyx Gateway and Stanton Gateway.
+            ("NyxCastra", "Stanton Gateway (Nyx)", "Nyx")):
         t["RR_JP_" + code] = (name, system, "Jump point")
+    t["Nyx_Kaboos"] = ("QV Logistics Station", "Nyx", "Station")          # Kaboos_Starmap_Name
+    for n, greek in enumerate(("Alpha", "Delta", "Theta", "Lambda", "Omicron"), 1):
+        t[f"AsteroidClusterBase_Nyx_Social_Keeger_{n:03d}"] = (
+            f"People's Service Station {greek}", "Nyx", "Station")
+    for part in "abc":
+        t["AsteroidClusterBase_Pyro_Dungeon_Executive_001" + part] = ("PYAM-EXHANG-0-1", "Pyro", "Station")
+    t["Stanton4b_RayariHydro_McGarth"] = ("Rayari McGrath Research Outpost", "Stanton", "Facility")
+    t["Stanton4_EMShelter_Nuisquat"] = ("Nuiqsut Emergency Shelter", "Stanton", "Outpost")
     for code, name, system, kind in (
             ("Stanton1_Lorville", "Lorville", "Stanton", "City"),
             ("Stanton2_Orison", "Orison", "Stanton", "City"),
@@ -3101,15 +3112,34 @@ def _place_label(code):
         tail = m.group(1)
         tail = tail.replace("_", "-") if "_" in tail else re.sub(r"^([A-Za-z]+)(\d+)$", r"\1-\2", tail)
         return f"Shubin Mining Facility {tail}", "Facility"
-    m = re.match(r"(Stanton\d[a-z]?)_ASD_Delve_Facility_(\d+)$", code)
+    m = re.match(r"Stanton(\d[a-z]?)_ASD_Delve_Facility_(\d+)$", code)
+    if m:   # the game's own pattern: Stanton3a ... 002 = Onyx Facility S3A2
+        return f"Onyx Facility S{m.group(1).upper()}{int(m.group(2))}", "Facility"
+    m = re.match(r"Stanton(\d)[a-z]?_DistributionCentre_(\w+?)_(.+)$", code)
     if m:
-        return f"ASD Delve {m.group(2)} ({_PLACE_BODY.get(m.group(1), m.group(1))})", "Facility"
-    m = re.match(r"Stanton\d[a-z]?_DistributionCentre_(.+)$", code)
-    if m:
-        return " ".join(_place_words(p) for p in m.group(1).split("_")), "Facility"
+        body, firm, site = m.group(1), m.group(2), m.group(3)
+        named = {"Covalex": f"Covalex Distribution Centre {site}",
+                 "microTech": f"microTech Logistics Depot {site}",
+                 "Hurston": f"HDPC-{site}",
+                 "SakuraSun": f"Sakura Sun {site} Workcenter",
+                 "Astro": f"Cry-Astro Processing Plant {site.replace('Plant', '')}"}.get(firm)
+        g = re.match(r"Complex([A-Z])$", site)
+        if firm == "Greycat" and g:
+            named = f"Greycat Stanton {_ROMAN[int(body)]} Production Complex-{g.group(1)}"
+        return named or " ".join(_place_words(p) for p in (firm + "_" + site).split("_")), "Facility"
+    m = re.match(r"Pyro\d_ASD_Monorail_LazarusTransportHub_([A-Za-z]+)_\d([A-C])$", code)
+    if m:   # 1A/1B/1C = Phoenix-I/II/III
+        return f"Lazarus Transport Hub {m.group(1)}-{_ROMAN['ABC'.index(m.group(2)) + 1]}", "Facility"
     m = re.match(r"Pyro\d_ASD_Monorail_(.+)$", code)
     if m:
         return " ".join(_place_words(p) for p in m.group(1).split("_")), "Facility"
+    m = re.match(r"Stanton(\d)[a-z]?_EMShelter_(\w+)$", code)
+    if m:   # Crusader's moons call them Aid Shelters, microTech Emergency Shelters
+        kind = "Emergency Shelter" if m.group(1) == "4" else "Aid Shelter"
+        return f"{_place_words(m.group(2))} {kind}", "Outpost"
+    m = re.match(r"Stanton\d[a-z]?_RayariHydro_([A-Za-z]+)$", code)
+    if m:
+        return f"Rayari {m.group(1)} Research Outpost", "Facility"
     m = re.match(r"Nyx_TSG_QVExtractionStation_(\d+)$", code)
     if m:
         return f"QV Extraction Station {m.group(1)}", "Station"
@@ -3129,14 +3159,49 @@ def _place_label(code):
     return " ".join(_place_words(p) for p in rest.split("_")), kind
 
 
-def place_name(code):
-    """(name, system, kind) for a location code. Names are confirmed against the wiki or
-    built from the code. Kind is City, Station, Rest stop, Jump point, Outpost, Facility,
-    Wikelo or Other."""
-    hit = _PLACES.get(code.lower())
+_PLACE_LOC = None
+
+
+def _place_loc():
+    """The game's own names for outposts and Onyx facilities, keyed by lower-case code.
+    Built from global.ini by tools/place_names.py."""
+    global _PLACE_LOC
+    if _PLACE_LOC is None:
+        try:
+            with open(os.path.join(resource_dir(), "sc_place_names.json"), encoding="utf-8") as fh:
+                _PLACE_LOC = json.load(fh)
+        except (OSError, ValueError):
+            _PLACE_LOC = {}
+    return _PLACE_LOC
+
+
+def _patch_key(p):
+    return tuple(int(x) for x in re.findall(r"\d+", str(p or ""))[:3]) or (0,)
+
+
+# A code whose place changed with a patch: (from patch, name from then on)
+_PLACE_RENAMED = {"rr_jp_stantonmagnus": ((4, 4), ("Nyx Gateway (Stanton)", "Stanton", "Jump point"))}
+
+
+def place_name(code, patch=None):
+    """(name, system, kind) for a location code. Names come from the game's localisation,
+    the route log or the wiki, else are built from the code. Kind is City, Station,
+    Rest stop, Jump point, Outpost, Facility, Wikelo or Other. `patch` matters for codes
+    CIG reused: RR_JP_StantonMagnus is the Nyx Gateway from 4.4."""
+    low = code.lower()
+    ren = _PLACE_RENAMED.get(low)
+    if ren and (patch is None or _patch_key(patch) >= ren[0]):
+        return ren[1]
+    hit = _PLACES.get(low)
     if hit:
         return hit
     name, kind = _place_label(code)
+    # the object name and the localisation key can disagree on CIG's own typos
+    game = _place_loc().get(low) or _place_loc().get(low.replace("_tsrpst_", "_trdpst_"))
+    if game:
+        if game == "Derelict Outpost":
+            kind = "Outpost"
+        return game, _place_system(code), (kind if kind != "Other" else "Outpost")
     return name, _place_system(code), kind
 
 
@@ -4268,7 +4333,7 @@ def fold(agg, s):
         agg["gl_cls"].update(_gl.get("cls") or {})
     _pl = {}
     for code in s.get("places") or []:
-        name, sysn, kind = place_name(code)
+        name, sysn, kind = place_name(code, s.get("patch"))
         _pl.setdefault(name, (sysn, kind))      # two codes can share a name
     for name, (sysn, kind) in _pl.items():
         row = agg["places"].setdefault(name, [sysn, kind, 0, _d])
