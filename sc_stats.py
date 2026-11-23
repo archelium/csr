@@ -42,8 +42,10 @@ import sys
 import time
 import shutil
 import subprocess
+import tempfile
 import threading
 import urllib.parse
+import zipfile
 import webbrowser
 from collections import defaultdict, Counter, deque
 from datetime import datetime, timedelta, timezone
@@ -6090,6 +6092,140 @@ def import_archive_file(path_or_sessions):
     return len(merged) - before, len(merged)
 
 
+_TLM_CHANNEL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,31}$")
+_TLM_FILE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}\.jsonl\.gz$")
+_ARCHIVE_MEMBER_RE = re.compile(r"^CSR-archive-[A-Za-z0-9_.-]{1,40}\.json$")
+IMPORT_ZIP_MAX = 2 * 1024 ** 3
+
+
+def _archive_object(archive_file=None):
+    path = archive_file or archive_path()
+    try:
+        with open(path, encoding="utf-8") as fh:
+            obj = json.load(fh)
+    except Exception:
+        obj = None
+    if not isinstance(obj, dict):
+        obj = {"v": ARCHIVE_VERSION, "app": "CSR", "version": CSR_VERSION,
+               "saved": datetime.now().isoformat(), "sessions": []}
+    return obj
+
+
+def export_zip_file(root=None, archive_file=None):
+    """Zip the archive and every recording into a temp file. Returns (path, filename).
+    The caller deletes the file."""
+    root = root or sc_tlm_stats.tlm_dir(app_dir())
+    stamp = datetime.now().strftime("%Y-%m-%d")
+    obj = _archive_object(archive_file)
+    obj["telemetry"] = list(sc_tlm_stats.load_index(root).values())
+    fd, tmp = tempfile.mkstemp(suffix=".zip", prefix="csr-export-")
+    os.close(fd)
+    try:
+        with zipfile.ZipFile(tmp, "w", zipfile.ZIP_STORED, allowZip64=True) as z:
+            z.writestr("CSR-archive-%s.json" % stamp,
+                       json.dumps(obj, default=_json_default))
+            for f in sc_tlm_stats.recording_files(root):
+                chan = os.path.basename(os.path.dirname(f))
+                try:
+                    z.write(f, "telemetry/%s/%s" % (chan, os.path.basename(f)))
+                except OSError:
+                    pass
+    except Exception:
+        os.remove(tmp)
+        raise
+    return tmp, "CSR-backup-%s.zip" % stamp
+
+
+def export_payload(include_recordings, root=None, archive_file=None):
+    """(body, content type, filename). JSON carries the archive plus the telemetry
+    summaries. With recordings it is a zip of that JSON and the recording files."""
+    if include_recordings:
+        tmp, name = export_zip_file(root, archive_file)
+        try:
+            with open(tmp, "rb") as f:
+                return f.read(), "application/zip", name
+        finally:
+            os.remove(tmp)
+    root = root or sc_tlm_stats.tlm_dir(app_dir())
+    obj = _archive_object(archive_file)
+    obj["telemetry"] = list(sc_tlm_stats.load_index(root).values())
+    stamp = datetime.now().strftime("%Y-%m-%d")
+    return (json.dumps(obj, default=_json_default).encode("utf-8"), "application/json",
+            "CSR-archive-%s.json" % stamp)
+
+
+def import_telemetry(entries, files, root=None):
+    """Add index entries and recording files that are not there yet (same file name).
+    `files` maps "<channel>/<file>" to bytes or a callable returning a binary stream.
+    Returns how many recordings were added."""
+    root = root or sc_tlm_stats.tlm_dir(app_dir())
+    added = set()
+    with sc_tlm_stats._index_lock:
+        idx = sc_tlm_stats.load_index(root)
+        have = {os.path.basename(p) for p in sc_tlm_stats.recording_files(root)}
+        for e in entries if isinstance(entries, list) else []:
+            name = e.get("file") if isinstance(e, dict) else None
+            if (not isinstance(name, str) or not _TLM_FILE_RE.match(name)
+                    or name in idx):
+                continue
+            idx[name] = e
+            added.add(name)
+        for key, src in (files or {}).items():
+            chan, _sep, name = str(key).partition("/")
+            if (not _TLM_CHANNEL_RE.match(chan) or not _TLM_FILE_RE.match(name)
+                    or name in have):
+                continue
+            d = os.path.join(root, chan)
+            os.makedirs(d, exist_ok=True)
+            dest, tmp = os.path.join(d, name), os.path.join(d, name + ".import.tmp")
+            try:
+                with open(tmp, "wb") as out:
+                    if isinstance(src, (bytes, bytearray)):
+                        out.write(src)
+                    else:
+                        with src() as r:
+                            shutil.copyfileobj(r, out)
+                os.replace(tmp, dest)
+            except OSError:
+                try:
+                    os.remove(tmp)
+                except OSError:
+                    pass
+                continue
+            have.add(name)
+            added.add(name)
+        if added:
+            sc_tlm_stats.save_index(root, idx)
+    return len(added)
+
+
+def import_zip_file(path, root=None, archive_file=None, merge=True):
+    """Merge a CSR backup zip. Returns {"added", "total", "telemetry"}. Only members shaped
+    `CSR-archive-*.json` and `telemetry/<channel>/<file>.jsonl.gz` are read."""
+    root = root or sc_tlm_stats.tlm_dir(app_dir())
+    with zipfile.ZipFile(path) as z:
+        arch = [i for i in z.infolist() if _ARCHIVE_MEMBER_RE.match(i.filename)]
+        if not arch:
+            raise ValueError("no CSR archive in that zip")
+        if arch[0].file_size > 1024 ** 3:
+            raise ValueError("archive file too large")
+        text = z.read(arch[0]).decode("utf-8", "replace")
+        files = {}
+        for i in z.infolist():
+            parts = i.filename.split("/")
+            if (len(parts) == 3 and parts[0] == "telemetry" and not i.is_dir()
+                    and _TLM_CHANNEL_RE.match(parts[1]) and _TLM_FILE_RE.match(parts[2])):
+                files["%s/%s" % (parts[1], parts[2])] = (
+                    lambda n=i.filename: z.open(n))
+        try:
+            entries = json.loads(text).get("telemetry")
+        except Exception:
+            raise ValueError("that archive can't be read")
+        n = import_telemetry(entries, files, root=root)
+    added, total = import_archive_file(text) if merge else (0, 0)
+    return {"added": added, "total": total, "telemetry": n}
+
+
 def import_log_folder(path):
     """Merge a folder of raw Game.log files copied from another PC.
 
@@ -8701,6 +8837,7 @@ nav a::after{background:var(--menu-bg);border-color:var(--glass-line);box-shadow
       <div class="dcard">
         <div class="dct" data-ic="export">Export backup</div>
         <div class="dcd">Save your whole career as a single file — keep it safe, or move it to another PC.</div>
+        <label class="tlmchk" style="display:block;margin:0 0 8px;font-size:12px"><input type="checkbox" id="dmExportTlm"> <span id="dmExportTlmLbl">Include telemetry recordings</span></label>
         <button class="mbtn go" id="dmExport">Download archive</button>
       </div>
       <div class="dcard">
@@ -8720,9 +8857,9 @@ nav a::after{background:var(--menu-bg);border-color:var(--glass-line);box-shadow
       </div>
       <div class="dcard">
         <div class="dct" data-ic="import">Import backup</div>
-        <div class="dcd">Load <b>.json</b> backups exported from CSR. Pick one or several.</div>
+        <div class="dcd">Load <b>.json</b> or <b>.zip</b> backups exported from CSR. Pick one or several.</div>
         <button class="mbtn ghost" id="dmImportBtn">Choose backup file(s)…</button>
-        <input type="file" id="dmFile" accept=".json,.csr,application/json" multiple style="display:none">
+        <input type="file" id="dmFile" accept=".json,.zip,.csr,application/json,application/zip" multiple style="display:none">
       </div>
     </div>
     <div class="mb dmnote">Everything merges and de-duplicates by session, so importing twice never double-counts.</div>
@@ -11978,6 +12115,7 @@ function tlmRender(st){
 function tlmLive(st){
   $('#tlmRec').textContent=tlmRecText(st.recorder);
   $('#tlmDisk').textContent='Recordings use '+tlmMB(st.disk||0)+'.';
+  $('#dmExportTlmLbl').textContent='Include telemetry recordings ('+tlmMB(st.disk||0)+')';
   const u=st.unmatched||[], box=$('#tlmUnmatched');
   if(u.length){
     box.style.display='';
@@ -12018,7 +12156,11 @@ function tlmOpen(on){
   },4000);
 }
 
-$('#dmExport').onclick=()=>{ window.location='/api/export'; $('#dmMsg').innerHTML='<span style="color:var(--cyan)">Downloading your archive…</span>'; };
+$('#dmExport').onclick=()=>{
+  const z=$('#dmExportTlm').checked;
+  window.location='/api/export'+(z?'?tlm=1':'');
+  $('#dmMsg').innerHTML='<span style="color:var(--cyan)">'+(z?'Preparing your backup…':'Downloading your archive…')+'</span>';
+};
 // The three card titles carried emoji: ⬇ and ⬆ rendered as plain glyphs in the text
 // colour, but 📁 came out as a full-colour emoji — one yellow icon in a row of white
 // ones. Swap all three for the HUD set so they match each other and the rest of the UI.
@@ -12029,17 +12171,24 @@ $('#dmImportBtn').onclick=()=>$('#dmFile').click();
 $('#dmFile').onchange=e=>{
   const files=[...e.target.files]; e.target.value=''; if(!files.length) return;
   modal('dataModal',false); CSRTerm.start();
-  // read every chosen backup, combine their sessions into one payload, import once
-  Promise.all(files.map(f=>f.text())).then(texts=>{
-    let sessions=[], bad=0;
-    texts.forEach(t=>{ try{ const d=JSON.parse(t); if(d&&Array.isArray(d.sessions)) sessions=sessions.concat(d.sessions); else bad++; }catch(_){ bad++; } });
-    if(!sessions.length){ CSRTerm.fail(bad?'those files aren’t CSR backups':'nothing to import'); return; }
-    return fetch('/api/import',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessions})})
-      .then(r=>r.json()).then(res=>{
-        if(res.ok){ CSRTerm.finish(()=>location.reload()); }
-        else{ CSRTerm.fail('import failed: '+(res.error||'bad file')); }
-      });
-  }).catch(()=>{ CSRTerm.fail('is the CSR app still running?'); });
+  const zips=files.filter(f=>/\.zip$/i.test(f.name)), jsons=files.filter(f=>!/\.zip$/i.test(f.name));
+  // zips go up one at a time as raw bytes, the JSON backups are combined and imported once
+  const sendZips=()=>zips.reduce((p,f)=>p.then(()=>fetch('/api/import-zip',{method:'POST',
+      headers:{'Content-Type':'application/zip'},body:f}).then(r=>r.json()).then(res=>{
+        if(!res.ok) throw new Error(res.error||'bad file'); })), Promise.resolve());
+  Promise.all(jsons.map(f=>f.text())).then(texts=>{
+    let sessions=[], telemetry=[], bad=0;
+    texts.forEach(t=>{ try{ const d=JSON.parse(t); if(d&&Array.isArray(d.sessions)){ sessions=sessions.concat(d.sessions); if(Array.isArray(d.telemetry)) telemetry=telemetry.concat(d.telemetry); } else bad++; }catch(_){ bad++; } });
+    if(!sessions.length&&!zips.length){ CSRTerm.fail(bad?'those files aren’t CSR backups':'nothing to import'); return; }
+    return sendZips().then(()=>{
+      if(!sessions.length){ CSRTerm.finish(()=>location.reload()); return; }
+      return fetch('/api/import',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessions,telemetry})})
+        .then(r=>r.json()).then(res=>{
+          if(res.ok){ CSRTerm.finish(()=>location.reload()); }
+          else{ CSRTerm.fail('import failed: '+(res.error||'bad file')); }
+        });
+    });
+  }).catch(e=>{ CSRTerm.fail(e&&e.message?'import failed: '+e.message:'is the CSR app still running?'); });
 };
 // Escape hatch for the native dialog. It shares runImportFolder() with the picker, so
 // both routes go through exactly the same import — only the way the path is obtained
@@ -12936,14 +13085,17 @@ def serve(out_path, port=7878, explicit_logs=None, open_browser=True,
                 self._send(200, body)
             elif p == "/api/export":
                 # hand over the accumulated archive as a downloadable backup
+                want_zip = "tlm=1" in (self.path.split("?", 1)[1] if "?" in self.path else "")
                 try:
-                    raw = open(archive_path(), "rb").read()
-                except Exception:
-                    save_archive([])
-                    raw = open(archive_path(), "rb").read()
-                stamp = datetime.now().strftime("%Y-%m-%d")
-                self._send(200, raw, "application/json",
-                           extra={"Content-Disposition": f'attachment; filename="CSR-archive-{stamp}.json"'})
+                    if want_zip:
+                        self._send_zip()
+                        return
+                    raw, ctype, fname = export_payload(False, root=tlm_root)
+                except Exception as e:
+                    self._send(500, json.dumps({"ok": False, "error": str(e)}))
+                    return
+                self._send(200, raw, ctype,
+                           extra={"Content-Disposition": f'attachment; filename="{fname}"'})
             else:
                 self._send(404, "{}")
 
@@ -12967,6 +13119,47 @@ def serve(out_path, port=7878, explicit_logs=None, open_browser=True,
                 return
             state["live_path"] = path
             self._send(200, json.dumps({"ok": True, "path": path}))
+
+        def _send_zip(self):
+            tmp, fname = export_zip_file(tlm_root)
+            try:
+                with open(tmp, "rb") as f:
+                    size = os.fstat(f.fileno()).st_size
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/zip")
+                    self.send_header("Content-Length", str(size))
+                    self.send_header("Cache-Control", "no-store")
+                    self.send_header("Content-Disposition", f'attachment; filename="{fname}"')
+                    self.end_headers()
+                    try:
+                        shutil.copyfileobj(f, self.wfile, 1024 * 1024)
+                    except Exception:
+                        pass
+            finally:
+                os.remove(tmp)
+
+        def _body_to_file(self, limit):
+            """Read the request body into a temp file. Returns its path, None when over limit."""
+            n = int(self.headers.get("Content-Length", 0) or 0)
+            if n <= 0 or n > limit:
+                self.close_connection = True
+                return None
+            fd, tmp = tempfile.mkstemp(suffix=".zip", prefix="csr-import-")
+            try:
+                with os.fdopen(fd, "wb") as out:
+                    left = n
+                    while left > 0:
+                        chunk = self.rfile.read(min(1024 * 1024, left))
+                        if not chunk:
+                            break
+                        out.write(chunk)
+                        left -= len(chunk)
+                if left:
+                    raise OSError("upload cut short")
+            except Exception:
+                os.remove(tmp)
+                raise
+            return tmp
 
         def _body(self):
             n = int(self.headers.get("Content-Length", 0) or 0)
@@ -13005,12 +13198,42 @@ def serve(out_path, port=7878, explicit_logs=None, open_browser=True,
                     return
                 try:
                     added, total = import_archive_file(body)
+                    try:
+                        tl = json.loads(body).get("telemetry")
+                    except Exception:
+                        tl = None
+                    n = import_telemetry(tl, {}, root=tlm_root)
+                    if n:
+                        sc_tlm_stats.refresh_index(tlm_root, skip=tlm_skip())
                 except Exception as e:
                     self._send(200, json.dumps({"ok": False, "error": str(e)}))
                     return
                 do_generate()                      # rebuild the dashboard from the merged archive
                 self._send(200, json.dumps({"ok": True, "added": added, "total": total,
+                                            "telemetry": n,
                                             "log_count": state["log_count"]}))
+            elif p == "/api/import-zip":           # backup zip with recordings
+                try:
+                    tmp = self._body_to_file(IMPORT_ZIP_MAX)
+                except Exception as e:
+                    self._send(200, json.dumps({"ok": False, "error": str(e)}))
+                    return
+                if tmp is None:
+                    self._send(200, json.dumps({"ok": False, "error": "file is empty or over 2 GB"}))
+                    return
+                try:
+                    res = import_zip_file(tmp, root=tlm_root)
+                    sc_tlm_stats.refresh_index(tlm_root, skip=tlm_skip())
+                except zipfile.BadZipFile:
+                    self._send(200, json.dumps({"ok": False, "error": "not a zip file"}))
+                    return
+                except Exception as e:
+                    self._send(200, json.dumps({"ok": False, "error": str(e)}))
+                    return
+                finally:
+                    os.remove(tmp)
+                do_generate()
+                self._send(200, json.dumps({"ok": True, **res, "log_count": state["log_count"]}))
             elif p == "/api/console":
                 try:
                     want = bool(json.loads(self._body() or "{}").get("show"))
