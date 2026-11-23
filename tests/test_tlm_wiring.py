@@ -45,6 +45,35 @@ class ConfigTests(_TmpDir):
         self.assertEqual(out, {"a": 1, "b": 3, "c": 4})
         self.assertEqual(sc_stats.load_config(), {"a": 1, "b": 3, "c": 4})
 
+    def _raw(self):
+        with open(sc_stats.config_path(), "rb") as fh:
+            return fh.read()
+
+    def test_update_config_refuses_corrupt(self):
+        for bad in (b'{"live_path": "C:/x", "tlm": {"phone_key": "abc"', b"[1, 2]"):
+            with open(sc_stats.config_path(), "wb") as fh:
+                fh.write(bad)
+            self.assertIsNone(sc_stats.update_config(live_path="C:/y"))
+            self.assertIsNone(sc_stats.remember_folder("C:/y"))
+            self.assertIsNone(sc_stats.save_tlm_settings({"detail": "light"}))
+            self.assertEqual(self._raw(), bad)
+            self.assertEqual(sc_stats.load_config(), {} if bad.startswith(b"{") else [1, 2])
+
+    def test_update_config_creates_missing(self):
+        self.assertEqual(sc_stats.update_config(a=1), {"a": 1})
+        self.assertEqual(sc_stats.load_config(), {"a": 1})
+
+    def test_save_config_atomic(self):
+        self._write_cfg({"keep": 1})
+        self.assertTrue(sc_stats.save_config({"keep": 2}))
+        self.assertEqual(sc_stats.load_config(), {"keep": 2})
+        self.assertEqual(os.listdir(self.tmp), [sc_stats.CONFIG_NAME])
+        with mock.patch.object(sc_stats.os, "replace", side_effect=OSError("locked")):
+            self.assertFalse(sc_stats.save_config({"keep": 3}))
+            self.assertIsNone(sc_stats.update_config(keep=4))
+        self.assertEqual(sc_stats.load_config(), {"keep": 2})
+        self.assertEqual(os.listdir(self.tmp), [sc_stats.CONFIG_NAME])
+
     def test_tlm_settings_defaults(self):
         s = sc_stats.tlm_settings()
         self.assertEqual(s["record"], True)
@@ -100,6 +129,36 @@ class UserCfgTests(_TmpDir):
         self._log("x\n" * 300 + "GRPC_CLIENT_SERVER_ENABLED\n")
         self.assertFalse(sc_stats.user_cfg_state(self.tmp)["applied"])
 
+    def test_user_cfg_state_applied_needs_newer_log(self):
+        self._log("<boot>\nCVar GRPC_CLIENT_SERVER_ENABLED set\n")
+        self._cfg(LINE + "\r\n")
+        cfg, log = os.path.join(self.tmp, "user.cfg"), os.path.join(self.tmp, "Game.log")
+        t = time.time()
+        os.utime(log, (t - 600, t - 600))       # log from a launch before the edit
+        os.utime(cfg, (t - 60, t - 60))
+        self.assertEqual(sc_stats.user_cfg_state(self.tmp), {"line": True, "applied": False})
+        os.utime(log, (t, t))                   # game launched after the edit
+        self.assertEqual(sc_stats.user_cfg_state(self.tmp), {"line": True, "applied": True})
+
+    def test_user_cfg_state_bom(self):
+        with open(os.path.join(self.tmp, "user.cfg"), "wb") as fh:
+            fh.write(b"\xef\xbb\xbf" + LINE.encode() + b"\r\n")
+        self.assertTrue(sc_stats.user_cfg_state(self.tmp)["line"])
+        ok, _ = sc_stats.enable_user_cfg(self.tmp)
+        self.assertTrue(ok)
+        self.assertFalse(os.path.exists(os.path.join(self.tmp, "user.cfg.csr-bak")))
+
+    def test_enable_user_cfg_keeps_first_backup(self):
+        bak = os.path.join(self.tmp, "user.cfg.csr-bak")
+        with open(bak, "wb") as fh:
+            fh.write(b"first\r\n")
+        with open(os.path.join(self.tmp, "user.cfg"), "wb") as fh:
+            fh.write(b"g_language = english\r\n")
+        ok, _ = sc_stats.enable_user_cfg(self.tmp)
+        self.assertTrue(ok)
+        with open(bak, "rb") as fh:
+            self.assertEqual(fh.read(), b"first\r\n")
+
     def test_enable_user_cfg(self):
         original = b"g_language = english\r\n"
         with open(os.path.join(self.tmp, "user.cfg"), "wb") as fh:
@@ -151,6 +210,11 @@ class ValidationTests(unittest.TestCase):
             ok, err = sc_stats.validate_tlm_settings(body)
             self.assertFalse(ok, body)
             self.assertIsInstance(err, str)
+
+    def test_settings_validation_empty_groups(self):
+        ok, err = sc_stats.validate_tlm_settings({"groups": []})
+        self.assertFalse(ok)
+        self.assertEqual(err, "Pick at least one group, or turn recording off.")
 
     def test_settings_validation_types(self):
         for body in ({"record": "yes"}, {"phone": 1}, {"keep_days": True}, {"keep_days": "30"},

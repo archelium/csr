@@ -474,25 +474,53 @@ def load_config():
 
 
 def save_config(cfg):
+    """Write the config through a temp file and os.replace, so a crash or a failed write
+    never leaves a half-written file. Returns True when saved."""
+    path = config_path()
+    tmp = "%s.%d.%d.tmp" % (path, os.getpid(), threading.get_ident())
     try:
-        with open(config_path(), "w", encoding="utf-8") as fh:
+        with open(tmp, "w", encoding="utf-8") as fh:
             json.dump(cfg, fh, indent=2)
+        os.replace(tmp, path)
+        return True
     except Exception as e:
         cerr(f"could not save config: {e}")
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        return False
 
 
 #: request threads and the telemetry recorder read and write the config concurrently
 _CONFIG_LOCK = threading.RLock()
 
 
+def _config_for_update():
+    """The saved config for a read-modify-write: {} when there is no file, None when the
+    file is there but can't be read as a JSON object. Saving over that would wipe it."""
+    path = config_path()
+    if not os.path.exists(path):
+        return {}
+    try:
+        with open(path, encoding="utf-8") as fh:
+            cfg = json.load(fh)
+    except Exception:
+        return None
+    return cfg if isinstance(cfg, dict) else None
+
+
 def update_config(**kv):
     """Merge top-level keys into the saved config and save it. Keys not named are kept.
-    Returns the saved config."""
+    Returns the saved config, or None when nothing was saved (unreadable file, failed
+    write)."""
     with _CONFIG_LOCK:
-        cfg = load_config()
+        cfg = _config_for_update()
+        if cfg is None:
+            cerr("csr_config.json is unreadable. Not overwriting it.")
+            return None
         cfg.update(kv)
-        save_config(cfg)
-        return cfg
+        return cfg if save_config(cfg) else None
 
 
 def remember_folder(path):
@@ -517,9 +545,14 @@ def tlm_settings():
 
 
 def save_tlm_settings(changes):
-    """Merge `changes` into config "tlm" and save. Other keys are kept."""
+    """Merge `changes` into config "tlm" and save. Other keys are kept. Returns the saved
+    config, or None when nothing was saved."""
     with _CONFIG_LOCK:
-        cur = load_config().get("tlm")
+        cfg = _config_for_update()
+        if cfg is None:
+            cerr("csr_config.json is unreadable. Not overwriting it.")
+            return None
+        cur = cfg.get("tlm")
         cur = cur if isinstance(cur, dict) else {}
         return update_config(tlm={**cur, **changes})
 
@@ -548,6 +581,8 @@ def validate_tlm_settings(body):
         g = body["groups"]
         if not isinstance(g, list) or not all(isinstance(x, str) for x in g):
             return False, "groups must be a list of names."
+        if not g:
+            return False, "Pick at least one group, or turn recording off."
         bad = [x for x in g if x not in TLM_GROUP_NAMES]
         if bad:
             return False, f"Unknown group: {bad[0]}"
@@ -863,22 +898,29 @@ def tlm_channel_now():
 
 def _user_cfg_has_line(path):
     try:
-        with open(path, encoding="utf-8", errors="replace") as fh:
+        with open(path, encoding="utf-8-sig", errors="replace") as fh:
             return any(_TLM_CFG_RE.match(ln) for ln in fh)
     except OSError:
         return False
 
 
 def user_cfg_state(channel_dir):
-    """{"line": user.cfg turns the telemetry port on, "applied": the running game's
-    Game.log names the setting in its first lines}."""
+    """{"line": user.cfg turns the telemetry port on, "applied": the game launched after
+    user.cfg last changed and its Game.log names the setting in its first lines}."""
     out = {"line": False, "applied": False}
     if not channel_dir:
         return out
-    out["line"] = _user_cfg_has_line(os.path.join(channel_dir, "user.cfg"))
+    cfg = os.path.join(channel_dir, "user.cfg")
+    log = os.path.join(channel_dir, "Game.log")
+    out["line"] = _user_cfg_has_line(cfg)
     try:
-        with open(os.path.join(channel_dir, "Game.log"), encoding="utf-8",
-                  errors="replace") as fh:
+        cfg_mt = os.path.getmtime(cfg)
+    except OSError:
+        cfg_mt = 0.0
+    try:
+        if os.path.getmtime(log) <= cfg_mt:
+            return out                      # a log from before the last user.cfg edit
+        with open(log, encoding="utf-8", errors="replace") as fh:
             for i, ln in enumerate(fh):
                 if i >= _TLM_APPLIED_LINES:
                     break
@@ -892,7 +934,8 @@ def user_cfg_state(channel_dir):
 
 def enable_user_cfg(channel_dir):
     """Append the telemetry line to the channel's user.cfg. Every other line is kept and
-    the old file is copied to user.cfg.csr-bak first. The game reads user.cfg only at
+    the old file is copied to user.cfg.csr-bak first. An existing backup is kept, so it
+    always holds the file from before CSR first touched it. The game reads user.cfg only at
     launch, so this is safe while it runs. Returns (ok, message)."""
     if not channel_dir or not os.path.isdir(channel_dir):
         return False, "No folder for that channel."
@@ -904,7 +947,8 @@ def enable_user_cfg(channel_dir):
         if os.path.isfile(path):
             with open(path, "rb") as fh:
                 data = fh.read()
-            shutil.copy2(path, path + ".csr-bak")
+            if not os.path.exists(path + ".csr-bak"):
+                shutil.copy2(path, path + ".csr-bak")
         add = (TLM_CFG_LINE + "\r\n").encode("utf-8")
         if data and not data.endswith(b"\n"):
             add = b"\r\n" + add
@@ -12044,10 +12088,14 @@ def serve(out_path, port=7878, explicit_logs=None, open_browser=True,
                     "session_live": _WATCH["live"],
                     "watch": watch_status(),
                     "tlm": recorder.status()}))
-            elif p == "/api/telemetry/live":
-                self._send(200, json.dumps(_json_safe(recorder.live()), default=str))
-            elif p == "/api/telemetry/status":
-                self._send(200, json.dumps(_json_safe(tlm_status()), default=str))
+            elif p in ("/api/telemetry/live", "/api/telemetry/status"):
+                try:
+                    data = recorder.live() if p.endswith("/live") else tlm_status()
+                    body = json.dumps(_json_safe(data), default=str)
+                except Exception as e:
+                    self._send(200, json.dumps({"ok": False, "error": str(e)}))
+                    return
+                self._send(200, body)
             elif p == "/api/export":
                 # hand over the accumulated archive as a downloadable backup
                 try:
@@ -12075,8 +12123,11 @@ def serve(out_path, port=7878, explicit_logs=None, open_browser=True,
                     "error": "That doesn't look right — pick your StarCitizen folder (the "
                              "one containing LIVE / PTU), or a LIVE folder directly."}))
                 return
+            if remember_folder(path) is None:
+                self._send(200, json.dumps({"ok": False, "error":
+                    "Could not save csr_config.json. Folder not saved."}))
+                return
             state["live_path"] = path
-            remember_folder(path)
             self._send(200, json.dumps({"ok": True, "path": path}))
 
         def _body(self):
@@ -12241,7 +12292,10 @@ def serve(out_path, port=7878, explicit_logs=None, open_browser=True,
                 if not ok:
                     self._send(200, json.dumps({"ok": False, "error": res}))
                     return
-                save_tlm_settings(res)
+                if save_tlm_settings(res) is None:
+                    self._send(200, json.dumps({"ok": False, "error":
+                        "Could not save csr_config.json. Settings not changed."}))
+                    return
                 if "keep_days" in res:
                     tlm_wake.set()             # apply the new retention off this thread
                 self._send(200, json.dumps(_json_safe({"ok": True, **tlm_status()}),
