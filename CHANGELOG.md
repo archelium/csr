@@ -64,6 +64,10 @@ uses [Semantic Versioning](https://semver.org/) (MAJOR.MINOR.PATCH).
   XenoThreat rewards did.
 
 ### Changed
+- **Pins and your main account are saved in CSR's data folder** (`csr_prefs.json`),
+  not the browser. They survive a new browser, a different port and a reinstall, and
+  Backup & Transfer carries them. Import adds the backup's pins to yours and keeps your
+  main account. Whatever an older CSR saved in the browser moves over on first start.
 - Titles and menus are in title case. Small words (a, and, of, to, per, with…) stay
   lowercase.
 - Page banners are shorter.

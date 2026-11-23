@@ -22,6 +22,8 @@ csr_icon.png
 # Per-user runtime data & caches
 CSR-data/
 csr_config.json
+# your pinned blueprints and main accounts
+csr_prefs.json
 # each user's accumulated session archive — personal play history
 csr_archive.json
 # each user's own ship/gun art cache (~9 MB, fetched per install)

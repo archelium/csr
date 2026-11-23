@@ -477,6 +477,54 @@ def save_config(cfg):
         cerr(f"could not save config: {e}")
 
 
+# What you choose in the page that should outlive the browser: pinned blueprints (per
+# account) and your main account (per channel). Kept apart from csr_config.json, which
+# a folder change rewrites whole.
+PREFS_NAME = "csr_prefs.json"
+PREF_KEYS = ("pins", "main")
+
+
+def prefs_path():
+    return os.path.join(app_dir(), PREFS_NAME)
+
+
+def load_prefs():
+    try:
+        d = json.load(open(prefs_path(), encoding="utf-8"))
+    except Exception:
+        d = {}
+    return {k: d.get(k) if isinstance(d.get(k), dict) else {} for k in PREF_KEYS}
+
+
+def save_prefs(prefs):
+    try:
+        json.dump({k: prefs.get(k) or {} for k in PREF_KEYS}, open(prefs_path(), "w", encoding="utf-8"), indent=2)
+        return True
+    except Exception as e:
+        cerr(f"could not save preferences: {e}")
+        return False
+
+
+def merge_prefs(base, incoming):
+    """Fold another set of prefs into base: pins are added per account, existing order
+    first. A channel's main account is only taken when base has none."""
+    out = {k: dict(base.get(k) or {}) for k in PREF_KEYS}
+    for acct, keys in ((incoming or {}).get("pins") or {}).items():
+        if not isinstance(keys, list):
+            continue
+        have = list(out["pins"].get(acct) or [])
+        out["pins"][acct] = have + [k for k in keys if isinstance(k, str) and k not in have]
+    for ch, acct in ((incoming or {}).get("main") or {}).items():
+        if isinstance(acct, str) and acct and not out["main"].get(ch):
+            out["main"][ch] = acct
+    return out
+
+
+def prefs_script(prefs):
+    """The prefs as a JS literal, safe inside a <script>."""
+    return json.dumps(prefs, ensure_ascii=False).replace("</", "<\\/")
+
+
 def _cache_fetched(path):
     """The "fetched" date of a JSON catalogue, or "" for a legacy bare-list file —
     cheap to read, and what decides whether a bundled copy should replace it."""
@@ -8740,6 +8788,35 @@ nav a::after{background:var(--menu-bg);border-color:var(--glass-line);box-shadow
 
 <script>
 const DATA = /*__DATA__*/;
+// Pins and your main account, saved in CSR's data folder by the app. They survive a new
+// browser, a port change and Backup & Transfer. The standalone file has no app to save
+// through and keeps them in this browser.
+const PREFS = null/*__PREFS__*/;
+function prefGet(k, lsKey){
+  if(PREFS) return PREFS[k]||(PREFS[k]={});
+  try{ return JSON.parse(localStorage.getItem(lsKey)||'{}')||{}; }catch(e){ return {}; }
+}
+function prefSet(k, lsKey, val){
+  if(PREFS){ PREFS[k]=val;
+    fetch('/api/prefs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({[k]:val})}).catch(()=>{});
+    return; }
+  try{ localStorage.setItem(lsKey, JSON.stringify(val)); }catch(e){}
+}
+// once: what an older CSR kept in this browser moves into the data folder
+(function(){
+  if(!PREFS) return;
+  try{
+    if(localStorage.getItem('csr_prefs_moved')==='1') return;
+    const pins=JSON.parse(localStorage.getItem('csr_bp_pins')||'{}')||{}, main=JSON.parse(localStorage.getItem('csr_main_acct')||'{}')||{};
+    let changed=false;
+    const P=PREFS.pins||(PREFS.pins={}), M=PREFS.main||(PREFS.main={});
+    Object.entries(pins).forEach(([a,ks])=>{ if(!Array.isArray(ks)) return; const have=P[a]||[];
+      const add=ks.filter(k=>typeof k==='string'&&!have.includes(k)); if(add.length){ P[a]=have.concat(add); changed=true; } });
+    Object.entries(main).forEach(([ch,a])=>{ if(a&&!M[ch]){ M[ch]=a; changed=true; } });
+    if(changed) fetch('/api/prefs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pins:P, main:M})}).catch(()=>{});
+    localStorage.setItem('csr_prefs_moved','1');
+  }catch(e){}
+})();
 // every picture is stored once in DATA.ART; views carry a tag in its place
 (function unpackArt(){
   const S=DATA.ART||[], T='\u0001art:', n=T.length;
@@ -8812,17 +8889,17 @@ const C = () => DATA.ch[currentChannel] || {primary:'Citizen',accounts:[],acct:{
 // ---- main account -------------------------------------------------------- //
 // CSR guesses your main by session count, which is wrong for anyone whose alt has
 // more hours (a fresh reinstall, an org alt, a shared PC). You can pin the real one;
-// the choice is stored per channel in this browser and wins over the guess.
+// the choice is stored per channel in CSR's data folder and wins over the guess.
 const MAIN_KEY='csr_main_acct';
-function mainMap(){ try{ return JSON.parse(localStorage.getItem(MAIN_KEY)||'{}'); }catch(e){ return {}; } }
+function mainMap(){ return prefGet('main', MAIN_KEY); }
 function savedMain(ch){
   const h=mainMap()[ch];
   return (h && C().acct && C().acct[h]) ? h : null;   // ignore a handle that's gone
 }
 function setMain(ch,handle){
-  const m=mainMap();
+  const m={...mainMap()};
   if(handle) m[ch]=handle; else delete m[ch];
-  try{ localStorage.setItem(MAIN_KEY,JSON.stringify(m)); }catch(e){}
+  prefSet('main', MAIN_KEY, m);
 }
 // One-time prompt so multi-account users learn the ★ exists instead of silently
 // getting whichever handle happened to have the most sessions.
@@ -9847,14 +9924,14 @@ function bpPathHTML(row){
       return `<div class="dr-m"><div class="dr-m1">${nm}${st}</div>${bits?`<div class="dr-m2">${bits}</div>`:''}</div>`; }).join('')+`</div>`; }).join('');
   return head+sum+body+goneH;
 }
-// ---- pinned blueprints: kept in this browser, per account, like your main account
+// ---- pinned blueprints: kept in CSR's data folder, per account, like your main account
 const BP_PIN_KEY='csr_bp_pins';
-function bpPinMap(){ try{ return JSON.parse(localStorage.getItem(BP_PIN_KEY)||'{}')||{}; }catch(e){ return {}; } }
+function bpPinMap(){ return prefGet('pins', BP_PIN_KEY); }
 function bpPins(){ return bpPinMap()[currentAccount]||[]; }
 function bpTogglePin(k){
   const m=bpPinMap(), l=(m[currentAccount]||[]).filter(x=>x!==k);
   if(l.length===(m[currentAccount]||[]).length) l.unshift(k);
-  m[currentAccount]=l; try{ localStorage.setItem(BP_PIN_KEY, JSON.stringify(m)); }catch(e){}
+  m[currentAccount]=l; prefSet('pins', BP_PIN_KEY, m);
 }
 // a labelled button everywhere: small in lists and on cards, full size where a blueprint is opened
 const bpPinFace=on=>on?'\u2605 Pinned':'\u2606 Pin';
@@ -12105,10 +12182,12 @@ $('#dmFile').onchange=e=>{
   modal('dataModal',false); CSRTerm.start();
   // read every chosen backup, combine their sessions into one payload, import once
   Promise.all(files.map(f=>f.text())).then(texts=>{
-    let sessions=[], bad=0;
-    texts.forEach(t=>{ try{ const d=JSON.parse(t); if(d&&Array.isArray(d.sessions)) sessions=sessions.concat(d.sessions); else bad++; }catch(_){ bad++; } });
+    let sessions=[], bad=0, prefs={pins:{}, main:{}};
+    texts.forEach(t=>{ try{ const d=JSON.parse(t); if(d&&Array.isArray(d.sessions)) sessions=sessions.concat(d.sessions); else bad++;
+      const q=d&&d.prefs; if(q){ Object.entries(q.pins||{}).forEach(([a,ks])=>{ prefs.pins[a]=[...new Set((prefs.pins[a]||[]).concat(ks||[]))]; });
+        Object.entries(q.main||{}).forEach(([c,a])=>{ if(!prefs.main[c]) prefs.main[c]=a; }); } }catch(_){ bad++; } });
     if(!sessions.length){ CSRTerm.fail(bad?'those files aren’t CSR backups':'nothing to import'); return; }
-    return fetch('/api/import',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessions})})
+    return fetch('/api/import',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessions, prefs})})
       .then(r=>r.json()).then(res=>{
         if(res.ok){ CSRTerm.finish(()=>location.reload()); }
         else{ CSRTerm.fail('import failed: '+(res.error||'bad file')); }
@@ -12690,7 +12769,8 @@ def serve(out_path, port=7878, explicit_logs=None, open_browser=True,
             p = self.path.split("?")[0]
             if p in ("/", "/index.html", "/CSR.html", "/sc_stats.html"):
                 if state["configured"] and state["html"]:
-                    self._send(200, state["html"], "text/html; charset=utf-8")
+                    html = state["html"].replace("null/*__PREFS__*/", prefs_script(load_prefs()), 1)
+                    self._send(200, html, "text/html; charset=utf-8")
                 elif state["busy"] or state["has_work"]:
                     self._send(200, BOOT_HTML(), "text/html; charset=utf-8")   # scanning → terminal
                 else:
@@ -12717,6 +12797,12 @@ def serve(out_path, port=7878, explicit_logs=None, open_browser=True,
                 except Exception:
                     save_archive([])
                     raw = open(archive_path(), "rb").read()
+                try:                               # pins and main accounts ride along
+                    d = json.loads(raw)
+                    d["prefs"] = load_prefs()
+                    raw = json.dumps(d, default=_json_default).encode("utf-8")
+                except Exception:
+                    pass
                 stamp = datetime.now().strftime("%Y-%m-%d")
                 self._send(200, raw, "application/json",
                            extra={"Content-Disposition": f'attachment; filename="CSR-archive-{stamp}.json"'})
@@ -12771,6 +12857,17 @@ def serve(out_path, port=7878, explicit_logs=None, open_browser=True,
                 except Exception:
                     path = ""
                 self._accept_folder(path)
+            elif p == "/api/prefs":                # pins / main account from the page
+                try:
+                    inc = json.loads(self._body() or "{}")
+                except Exception:
+                    inc = {}
+                cur = load_prefs()
+                for k in PREF_KEYS:
+                    if isinstance(inc.get(k), dict):
+                        cur[k] = inc[k]
+                ok = save_prefs(cur)
+                self._send(200, json.dumps({"ok": ok}))
             elif p == "/api/import":               # merge another PC's archive
                 body = self._body()
                 if not body.strip():
@@ -12781,6 +12878,12 @@ def serve(out_path, port=7878, explicit_logs=None, open_browser=True,
                 except Exception as e:
                     self._send(200, json.dumps({"ok": False, "error": str(e)}))
                     return
+                try:                               # the backup's pins and main accounts
+                    inc = json.loads(body).get("prefs")
+                    if isinstance(inc, dict):
+                        save_prefs(merge_prefs(load_prefs(), inc))
+                except Exception:
+                    pass
                 do_generate()                      # rebuild the dashboard from the merged archive
                 self._send(200, json.dumps({"ok": True, "added": added, "total": total,
                                             "log_count": state["log_count"]}))
