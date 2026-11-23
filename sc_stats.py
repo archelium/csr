@@ -4697,19 +4697,53 @@ def _loading_summary(agg):
     }
 
 
+INV_PART_DAYS = 7        # a reading is judged against the week either side of it
+INV_SERIES = 80          # sessions in the per-session chart
+
+
+def _inv_when(st):
+    try:
+        return datetime.fromisoformat(st[:19]) if st else None
+    except ValueError:
+        return None
+
+
+def inv_partial_flags(reads):
+    """reads: [(datetime or None, used)] in time order -> [bool], True for a partial load.
+
+    The game logs an inventory's used capacity only when you move an item, and only what
+    the client has loaded by then. Some sessions load part of it, so the reading dips far
+    below the real figure. A reading is partial when the highest reading in the week before
+    it and the highest in the week after are both at least twice as big. A reading with
+    nothing in the week after is judged on the reading just before it. A real clear-out
+    stays low afterwards and isn't flagged."""
+    w = timedelta(days=INV_PART_DAYS)
+    out = []
+    for i, (t, u) in enumerate(reads):
+        if t is None:
+            out.append(False)
+            continue
+        prior = [x for tt, x in reads[:i] if tt and timedelta(0) <= t - tt <= w]
+        after = [x for tt, x in reads[i + 1:] if tt and timedelta(0) <= tt - t <= w]
+        before = (max(prior) if after else prior[-1]) if prior else 0
+        out.append(before > 0 and before >= 2 * u and (not after or max(after) >= 2 * u))
+    return out
+
+
 def _inventory_summary(agg):
     """The home inventory: the location read in the most sessions. A session's figure is
-    its maximum reading, since an inventory dips while its pages load. None when no
+    its maximum reading, since an inventory dips while its pages load. Sessions that
+    loaded only part of it are flagged and skipped for the headline. None when no
     session logged an inventory line."""
     rows = sorted(agg["inv"], key=lambda r: r[1])
     if not rows:
         return None
-    seen, codes, latest = Counter(), defaultdict(Counter), {}
-    for d, _st, inv in rows:
+    seen, codes, reads = Counter(), defaultdict(Counter), defaultdict(list)
+    for d, st, inv in rows:
         for loc, (used, cap, code) in inv["locs"].items():
             if cap > 0:
                 seen[loc] += 1
-                latest[loc] = (d, used, cap)
+                reads[loc].append((_inv_when(st), d, used, cap))
                 if code:
                     codes[loc][code] += 1
 
@@ -4718,14 +4752,22 @@ def _inventory_summary(agg):
 
     home = home_loc = None
     if seen:
-        loc = home_loc = max(seen, key=lambda k: (seen[k], latest[k][0] or "", k))
-        d, used, cap = latest[loc]
+        loc = home_loc = max(seen, key=lambda k: (seen[k], reads[k][-1][1] or "", k))
+        rs = reads[loc]
+        part = inv_partial_flags([(t, u) for t, _d, u, _c in rs])
+        full = [r for r, p in zip(rs, part) if not p] or rs
+        _t, d, used, cap = full[-1]
+        last = rs[-1]
+        latest = ({"used": round(last[2] / 1e6), "pct": round(100 * last[2] / last[3], 1), "date": last[1]}
+                  if part[-1] else None)
         months = {}
-        for rd, _st, inv in rows:
-            r = inv["locs"].get(loc)
-            if rd and r and r[1] > 0:
+        for (_t, rd, u, c), p in zip(rs, part):
+            if rd and not p:
                 ym = rd[:7]
-                months[ym] = max(months.get(ym, 0), 100 * r[0] / r[1])
+                months[ym] = max(months.get(ym, 0), 100 * u / c)
+        series = [[rd, round(100 * u / c, 1), round(u / 1e6), 1 if p else 0]
+                  for (_t, rd, u, c), p in zip(rs, part)][-INV_SERIES:]
+        flagged = [r[1] for r, p in zip(rs, part) if p]
         ok = fail = 0
         for _d, _st, inv in rows:
             tally = inv["sorts"].get(loc)
@@ -4734,8 +4776,9 @@ def _inventory_summary(agg):
                 fail += tally[1]
         home = {"name": label(loc), "used": round(used / 1e6), "cap": round(cap / 1e6),
                 "pct": round(100 * used / cap, 1), "date": d, "sessions": seen[loc],
+                "latest": latest, "partial": [len(flagged), len(rs), flagged[-1] if flagged else None],
                 "months": [[k, round(v, 1)] for k, v in sorted(months.items())],
-                "sorts": [ok, fail]}
+                "series": series, "sorts": [ok, fail]}
     req = None
     for d, _st, inv in reversed(rows):
         if inv["budget"]:
@@ -4743,8 +4786,16 @@ def _inventory_summary(agg):
             req = {"kb": round(size / 1000), "pct": round(100 * size / INV_CAP_BYTES, 1), "date": d}
             break
     hard = [d for d, _st, inv in rows for b in inv["budget"] if b[1]]
-    others = [[label(k), round(100 * u / c, 1), d] for k, (d, u, c) in latest.items()
-              if k != home_loc]
+    # other places: the highest reading in the week up to the last one, so one partial
+    # load doesn't stand for the whole place
+    others = []
+    for k, rs in reads.items():
+        if k == home_loc:
+            continue
+        t_last = rs[-1][0]
+        recent = [r for r in rs if t_last is None or (r[0] and t_last - r[0] <= timedelta(days=INV_PART_DAYS))] or rs[-1:]
+        _t, d, u, c = max(recent, key=lambda r: r[2] / r[3])
+        others.append([label(k), round(100 * u / c, 1), d])
     others.sort(key=lambda r: (-r[1], r[0]))
     return {"home": home, "req": req, "hard": [len(hard), hard[-1] if hard else None],
             "rewards": sum(inv["rewards"] for _d, _st, inv in rows), "others": others[:5]}
@@ -8232,6 +8283,7 @@ nav a::after{background:var(--menu-bg);border-color:var(--glass-line);box-shadow
 .lstrip .slight .sm{font-size:0;line-height:1}
 .lstrip .slight .sm b{font-size:11px}
 .stov{align-items:start}
+.invpart{color:var(--amber)}
 #bugMsg{font-size:13px;line-height:1.55;color:var(--muted)}
 .sp-h .vt{margin-left:auto;display:flex;border:1px solid var(--line);border-radius:7px;overflow:hidden;align-self:center}
 .sp-h .vt button{all:unset;cursor:pointer;padding:5px 14px;font-family:var(--font-mono);font-size:11px;color:var(--muted)}
@@ -10801,8 +10853,11 @@ function inventoryHTML(v){
   if(!i) return `<div class="card"><div class="empty">No inventory readings in this scope.</div></div>`;
   const h=i.home, rq=i.req, hd=i.hard;
   const hp = h ? Math.round(h.pct) : 0;
+  // the headline is the last full load. A newer session that loaded only part of it is
+  // named under it
   const pctTile = h ? [icon('cargo'), hp+'%', 'Home inventory full',
-      `${fmt(h.used)} of ${fmt(h.cap)} SCU · ${esc(h.name)}${h.date?' · '+ddmm(h.date):''}`, invCls(hp)]
+      `${fmt(h.used)} of ${fmt(h.cap)} SCU · ${esc(h.name)}${h.date?' · '+ddmm(h.date):''}`+
+      (h.latest?`<br><span class="invpart">${h.latest.date?ddmm(h.latest.date)+' ':''}loaded only ${fmt(h.latest.used)} SCU</span>`:''), invCls(hp)]
     : [icon('cargo'), 'N/A', 'Home inventory full', 'no capacity reading here', 'na'];
   const sorts = h ? h.sorts : [0,0];
   const sortTile = [icon('transfer'), fmt(sorts[1]), 'Failed sorts', `${fmt(sorts[0])} worked`,
@@ -10812,17 +10867,22 @@ function inventoryHTML(v){
     : [icon('system'), 'N/A', 'Largest inventory request', 'none over budget here', 'na'];
   const hardTile = [icon('warning'), fmt(hd[0]), 'Operations dropped over 1 MB',
     hd[0] ? `last ${ddmm(hd[1])}` : 'none dropped', hd[0] ? 'bad' : ''];
-  return kpiRow([pctTile, sortTile, reqTile, hardTile])+
+  const pt = h && h.partial;
+  const partTile = pt ? [icon('pulse'), fmt(pt[0]), 'Partial loads',
+      pt[0] ? `${fmt(pt[0])} of ${fmt(pt[1])} sessions · last ${ddmm(pt[2])}` : `none in ${fmt(pt[1])} sessions`, pt[0] ? 'warn' : '']
+    : [icon('pulse'), 'N/A', 'Partial loads', 'no capacity reading here', 'na'];
+  return kpiRow([pctTile, partTile, sortTile, reqTile, hardTile])+
     callout(icon('cargo'),
       `Over <b>100%</b> the game counts the inventory as overloaded. Sort sends the whole inventory in one request `+
       `and fails once that request is too big. Anything over 1 MB is dropped.`+
       (i.rewards ? ` Reward items announced in this scope: <b>${fmt(i.rewards)}</b>.` : ''))+
-    `<div class="grid2">`+
-    (h && h.months.length ? cardHTML('Home inventory by month','highest % full per month','invByMonth')
+    (h && h.series.length ? cardHTML('Home inventory per session',
+        `% full, last ${fmt(h.series.length)} sessions that read it · grey: partial load`,'invBySession')+
+        noteFold(`The game logs your home inventory only when you move an item, and only what it has loaded by then. Sometimes that's part of it. Partial loads are grey and skipped.`,
+          `A reading counts as partial when the highest reading in the week before it and the highest in the week after are both at least twice as big. The newest reading has no week after yet and is judged on the one before it. A real clear-out stays low afterwards and isn't flagged.`)
       : '<div class="card"><div class="empty">No capacity readings in this scope.</div></div>')+
-    (i.others.length ? barsCard('Other locations','latest % full','invOthers')
-      : '<div class="card"><div class="empty">No other inventories read.</div></div>')+
-    `</div>`;
+    (i.others.length ? barsCard('Other locations','highest % full in the last week each was read','invOthers')
+      : '<div class="card"><div class="empty">No other inventories read.</div></div>');
 }
 // Loading screens: the game logs how long each one stayed up. PU = Stanton, Pyro, Nyx.
 const loadSecs=x=>x===null||x===undefined ? '—'
@@ -11114,12 +11174,14 @@ function secSystem(v, STAB){
     }
   }
   if(STAB && v.inventory){
-    const i=v.inventory, im=$('#invByMonth');
+    const i=v.inventory, im=$('#invBySession');
     if(im && i.home){
-      const lbl=k=>{ const p=k.split('-'); return MON[+p[1]-1]+' '+p[0].slice(2); };
-      vbars(im, i.home.months.map(([k,p])=>({label:lbl(k), value:p, disp:Math.round(p)+'%',
-          full:`${lbl(k)} — up to ${Math.round(p)}% full`, color:invColor(p)})),
-        {h:230, w:Math.max(460, i.home.months.length*60), maxbw:44, fmtY:x=>Math.round(x)+'%'});
+      // one bar per session, a date under every few. Partial loads grey
+      const se=i.home.series, every=Math.max(1, Math.ceil(se.length/14));
+      const lbl=d=>d?ddmm(d).slice(0,6):'';
+      vbars(im, se.map(([d,p,u,part],k)=>({label:k%every===0?lbl(d):'', value:p, disp:Math.round(p)+'%',
+          full:`${d?ddmm(d):''} — ${fmt(u)} SCU${part?', partial load':''}`, color:part?'#5f6b7d':invColor(p)})),
+        {h:240, w:Math.max(640, se.length*13), maxbw:10, fmtY:x=>Math.round(x)+'%'});
     }
     const io=$('#invOthers');
     if(io) hbars(io, i.others.map(([n,p,d])=>({label:n, value:p, disp:Math.round(p)+'%', color:invColor(p),

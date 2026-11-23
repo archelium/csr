@@ -55,6 +55,12 @@ uses [Semantic Versioning](https://semver.org/) (MAJOR.MINOR.PATCH).
   battery and the Raider Camo Palatino pieces now match.
 
 ### Fixed
+- **Home inventory showed 1% after a session that loaded only part of it.** The game
+  logs your home inventory only when you move an item, and only what it has loaded by
+  then. A reading under half of the ones around it is now a partial load. The headline
+  uses the last full load and names a newer partial one under it. A **Partial loads**
+  tile counts them. The chart is one bar per session, partial loads in grey. Other
+  locations show their highest reading in the last week each was read.
 - Notes and callouts use the full width of their box.
 - Crash rows are one line. The stock "fault inside Star Citizen" sentence is gone from
   each row. A sentence about that crash still shows after the place.
