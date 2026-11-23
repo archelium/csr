@@ -253,6 +253,21 @@ class ReaderTests(unittest.TestCase):
         self.assertEqual(states[1][1], {SPEED: None})
         self.assertEqual(states[2][1], {SPEED: None, NAME: "A"})
 
+    def test_single_sided_peak_defaults_to_current(self):
+        rows = [{"t": 0.0, SPEED: 1}, {"t": 1.0, SPEED: 5, SPEED + "^": 9},
+                {"t": 2.0, SPEED: 6, SPEED + "_": 2}]
+        states = list(tlm.iter_states(rows))
+        self.assertEqual(states[1][3], {SPEED: (5, 9)})
+        self.assertEqual(states[2][3], {SPEED: (2, 6)})
+
+    def test_removed_then_returned_path(self):
+        rows = [{"t": 0.0, NAME: "A", SPEED: 1}, {"t": 1.0, "-": [SPEED]},
+                {"t": 2.0, SPEED: 1}, {"t": 3.0, NAME: "B"}]
+        states = list(tlm.iter_states(rows))
+        self.assertEqual(states[1][1], {NAME: "A"})
+        self.assertEqual(states[2][1], {NAME: "A", SPEED: 1})
+        self.assertEqual(states[3][1], {NAME: "B", SPEED: 1})
+
     def test_states_are_independent_copies(self):
         rows = [{"t": 0.0, NAME: "A"}, {"t": 1.0, NAME: "B"}]
         states = list(tlm.iter_states(rows))
