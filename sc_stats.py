@@ -604,7 +604,7 @@ PHONE_PORTS = range(7890, 7900)
 PHONE_COOKIE = "csrk"
 _PHONE = {"srv": None, "port": None, "key": None, "live": None, "on_seen": None,
           "qr": (None, None)}
-_PHONE_LOCK = threading.Lock()
+_PHONE_LOCK = threading.RLock()
 
 
 def lan_ip():
@@ -635,6 +635,7 @@ class _PhoneServer(http.server.ThreadingHTTPServer):
 
 class _PhoneHandler(http.server.BaseHTTPRequestHandler):
     """Live view only: /live and /api/telemetry/live. Everything else is 404."""
+    timeout = 10          # a silent connection can't hold a thread forever
 
     def _send(self, code, body, ctype="application/json; charset=utf-8", extra=None):
         b = body.encode("utf-8") if isinstance(body, str) else body
@@ -759,15 +760,35 @@ def new_phone_key():
 
 def sync_phone_server(live=None, on_seen=None, host="0.0.0.0", port_range=PHONE_PORTS):
     """Match the listener to the saved "phone" setting. On: makes a key if there is
-    none and starts. Off: stops. Returns the port, or None when not listening."""
-    s = tlm_settings()
-    if not s.get("phone"):
-        stop_phone_server()
+    none and starts. Off: stops. Returns the port, or None when not listening. When it
+    returns None with the setting on, _PHONE["why"] is "ports" or "config"."""
+    with _PHONE_LOCK:                 # one sync at a time, listener and key stay in step
+        _PHONE["why"] = None
+        s = tlm_settings()
+        if not s.get("phone"):
+            stop_phone_server()
+            return None
+        key = s.get("phone_key") or new_phone_key()
+        if not key:
+            _PHONE["why"] = "config"
+            return None
+        port = start_phone_server(port_range, key=key, live=live, on_seen=on_seen, host=host)
+        if port is None:
+            _PHONE["why"] = "ports"
+        return port
+
+
+def phone_sync_error(port_range=PHONE_PORTS, **kw):
+    """Run sync_phone_server. Returns None when fine, else a message naming the cause."""
+    try:
+        port = sync_phone_server(port_range=port_range, **kw)
+    except Exception as e:
+        return f"phone view error: {e}"
+    if port is not None or not tlm_settings().get("phone"):
         return None
-    key = s.get("phone_key") or new_phone_key()
-    if not key:
-        return None
-    return start_phone_server(port_range, key=key, live=live, on_seen=on_seen, host=host)
+    if _PHONE.get("why") == "config":
+        return "phone view: couldn't save the link key to csr_config.json."
+    return f"phone view: no free port in {port_range.start}-{port_range.stop - 1}."
 
 
 def phone_status():
@@ -7823,6 +7844,20 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
   /* three transfer routes (export / import logs / import backup) need more room */
   .modal.data:has(.datarow.three){max-width:760px}
   .dmnote{font-size:11.5px;color:var(--dim);margin:2px 0 0}
+  .modal.data{max-height:92vh;overflow-y:auto}
+  .tlmcard{text-align:left;margin-top:14px;border:1px solid var(--line);border-radius:12px;padding:14px 16px}
+  .tlmcard .ol-t{margin-bottom:8px}
+  .tlmrow{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:8px 0;font-size:13px;color:var(--muted)}
+  .tlmrow>label,.tlmrow>.tlml{min-width:120px;color:var(--txt)}
+  .tlmrow select{background:var(--panel2);color:var(--txt);border:1px solid var(--line);border-radius:8px;padding:5px 8px}
+  .tlmgroups{display:flex;flex-wrap:wrap;gap:6px 16px}
+  .tlmgroups label{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--muted)}
+  .tlmqr{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+  .tlmqr svg{width:132px;height:132px;background:#fff;border-radius:8px;padding:6px}
+  .tlmqr .tlmurl{word-break:break-all;font-size:12px;color:var(--txt)}
+  .tlmcard .tlmbtn{font-size:12px;padding:6px 12px}
+  .tlmcard .mbtn.danger{border-color:rgba(235,110,110,.45);color:#eb6e6e}
+  .tlmerr{color:#ff5468;font-size:12px;min-height:16px}
   .onlinebar{display:flex;align-items:center;gap:14px;text-align:left;margin-top:14px;
     padding:12px 14px;border:1px solid var(--line);border-radius:11px;background:var(--panel2)}
   .onlinebar .ol-t{font-weight:700;font-size:13px}
@@ -8688,6 +8723,40 @@ nav a::after{background:var(--menu-bg);border-color:var(--glass-line);box-shadow
           is one call per blueprint. <span id="olWhen"></span></div>
       </div>
       <button class="mbtn ghost" id="olBtn">Update now</button>
+    </div>
+    <div class="tlmcard" id="tlmCard">
+      <div class="ol-t">Telemetry</div>
+      <div id="tlmChannels"></div>
+      <div class="tlmrow"><span class="tlml">Recorder</span><span id="tlmRec">—</span></div>
+      <div class="tlmrow"><label for="tlmRecord">Record telemetry</label>
+        <input type="checkbox" id="tlmRecord"></div>
+      <div class="tlmrow"><label for="tlmDetail">Detail</label>
+        <select id="tlmDetail">
+          <option value="full">Full · 1.7 MB per hour</option>
+          <option value="normal">Normal · 0.4 MB per hour</option>
+          <option value="light">Light · 0.1 MB per hour</option>
+        </select></div>
+      <div class="tlmrow"><label for="tlmKeep">Keep recordings</label>
+        <select id="tlmKeep">
+          <option value="">Forever</option>
+          <option value="365">1 year</option>
+          <option value="90">3 months</option>
+          <option value="30">1 month</option>
+        </select></div>
+      <div class="tlmrow"><span class="tlml">Groups</span><div class="tlmgroups" id="tlmGroups"></div></div>
+      <div class="tlmrow"><span id="tlmDisk">—</span>
+        <button class="mbtn ghost tlmbtn" id="tlmDeleteAll">Delete all recordings</button></div>
+      <div class="tlmrow" id="tlmUnmatched" style="display:none"></div>
+      <div class="tlmrow"><label for="tlmPhone">Phone access</label>
+        <input type="checkbox" id="tlmPhone"></div>
+      <div class="tlmrow" id="tlmPhoneBox" style="display:none">
+        <div class="tlmqr"><div id="tlmQr"></div>
+          <div><div class="tlmurl" id="tlmUrl"></div>
+            <button class="mbtn ghost tlmbtn" id="tlmNewLink" style="margin-top:8px">New link</button>
+            <div class="dmnote">Windows will ask to allow CSR on your network. Allow it on private networks.</div></div></div>
+      </div>
+      <div class="tlmerr" id="tlmErr"></div>
+      <div class="dmnote">Changes apply to the next recording.</div>
     </div>
     <div class="mb" id="dmMsg" style="min-height:18px;margin-top:4px"></div>
     <div class="mactions"><button class="mbtn ghost" id="dmClose">Close</button></div>
@@ -10484,8 +10553,17 @@ function navLive(w){
   const on=!!(SERVED && w && w.on);
   d.classList.toggle('on', on);
   d.classList.toggle('hot', !!(on && w.live));
-  if(on) d.title = w.live ? 'Session live — checking every '+w.poll+'s'
-                          : 'Watching your logs — checking every '+w.poll+'s';
+  if(on) d.title = (w.live ? 'Session live — checking every '+w.poll+'s'
+                          : 'Watching your logs — checking every '+w.poll+'s')+
+                   (TLM_LINE?'\nTelemetry: '+TLM_LINE:'');
+}
+let TLM_LINE='';
+function tlmLine(t){
+  if(!t||t.state==='idle') return '';
+  if(t.state==='live') return 'recording';
+  if(t.state==='waiting') return 'waiting for the game';
+  if(t.state==='off') return t.reason==='schema'?'no schema':'off in the game';
+  return '';
 }
 function renderWatch(w){
   navLive(w);
@@ -10537,7 +10615,8 @@ function renderWatch(w){
     `<div class="wbar"><span>Poll <b>${w.poll}s</b></span>`+
     (w.ago!=null?`<span>All channels <b>${esc(seen(w.ago))}</b></span>`:'')+
     `<span>Events raised <b>${fmt(w.raised)}</b></span>`+
-    `<span>Watching for <b>${ago(w.uptime)}</b></span></div>`;
+    `<span>Watching for <b>${ago(w.uptime)}</b></span>`+
+    (TLM_LINE?`<span>Telemetry: <b>${esc(TLM_LINE)}</b></span>`:'')+`</div>`;
 }
 // ---- inline confirmation ----
 // The button arms into its own confirm rather than opening a modal, so destructive
@@ -11546,6 +11625,7 @@ function pollStatus(){
     .then(s=>{ if(s&&s.online){ONLINE=s.online; olWhen();}
                if(s){CSR_CONSOLE={hidden:!!s.console_hidden,supported:!!s.console_supported};}
                if(s&&s.events) s.events.forEach(showAlert);
+               if(s) TLM_LINE=tlmLine(s.tlm);
                if(s&&s.watch) renderWatch(s.watch);
                // check in more often while Star Citizen is actually writing its log,
                // so a crash surfaces in ~5s instead of ~8s; back off when it isn't
@@ -11619,8 +11699,114 @@ $('#olBtn').onclick=()=>{
 };
 
 // ---- data / backup modal: export + import the session archive ----
-$('#dataBtn').onclick=()=>{ $('#dmMsg').textContent=''; olWhen(); modal('dataModal',true); };
-$('#dmClose').onclick=()=>modal('dataModal',false);
+$('#dataBtn').onclick=()=>{ $('#dmMsg').textContent=''; olWhen(); modal('dataModal',true); tlmOpen(true); };
+$('#dmClose').onclick=()=>{ modal('dataModal',false); tlmOpen(false); };
+// ---- telemetry card (in the Backup & transfer modal) ----
+const TLM_GROUP_LABELS=[['wallet','Wallet'],['vitals','Vitals'],['surroundings','Surroundings'],
+  ['you','You'],['events','Events'],['flight','Flight'],['ship','Ship systems'],
+  ['weapons','Weapons'],['settings','Settings'],['turret','Turret'],
+  ['force_feedback','Force feedback'],['other','Other']];
+const tlmMB=b=>(b/1048576).toFixed(b>=104857600?0:1)+' MB';
+function tlmRecText(r){
+  r=r||{};
+  if(r.state==='live') return 'Recording · '+tlmMB(r.bytes||0);
+  if(r.state==='waiting') return 'Waiting for the game';
+  if(r.state==='off' && r.reason==='port') return 'Telemetry off in the game';
+  return 'Not running';
+}
+function tlmErr(t){ const e=$('#tlmErr'); if(e) e.textContent=t||''; }
+function tlmPost(path,body){
+  return fetch(path,{method:'POST',body:JSON.stringify(body||{})}).then(r=>r.json());
+}
+function tlmSave(change){
+  tlmErr('');
+  return tlmPost('/api/telemetry/settings',change).then(res=>{
+    if(!res.ok){ tlmErr(res.error||'Could not save.'); }
+    tlmLoad();
+  }).catch(()=>{ tlmErr('Lost contact with CSR.'); tlmLoad(); });
+}
+function tlmRenderChannels(chs){
+  const box=$('#tlmChannels'); if(!box) return;
+  box.innerHTML=Object.keys(chs||{}).map(lab=>{
+    const c=chs[lab]||{};
+    const t=c.applied?'On in the game':(c.line?'Line added. Takes effect next launch.':'Off in the game');
+    return `<div class="tlmrow"><span class="tlml">${esc(lab)}</span><span>${esc(t)}</span>`+
+      (c.line?'':`<button class="mbtn ghost tlmbtn" id="tlmEnable-${esc(lab)}" data-ch="${esc(lab)}">Turn on</button>`)+
+      `</div>`;
+  }).join('');
+  box.querySelectorAll('button[data-ch]').forEach(b=>{
+    b.onclick=()=>confirmBtn(b,'Confirm',()=>{
+      tlmErr('');
+      tlmPost('/api/telemetry/enable',{channel:b.dataset.ch}).then(res=>{
+        if(!res.ok) tlmErr(res.msg||'Could not change user.cfg.');
+        tlmLoad();
+      }).catch(()=>tlmErr('Lost contact with CSR.'));
+    });
+  });
+}
+function tlmRender(st){
+  const s=st.settings||{};
+  tlmRenderChannels(st.channels);
+  $('#tlmRecord').checked=!!s.record;
+  $('#tlmDetail').value=s.detail||'normal';
+  $('#tlmKeep').value=s.keep_days==null?'':String(s.keep_days);
+  const on=new Set(s.groups||[]);
+  $('#tlmGroups').innerHTML=TLM_GROUP_LABELS.map(([k,l])=>
+    `<label><input type="checkbox" data-g="${k}"${on.has(k)?' checked':''}>${esc(l)}</label>`).join('');
+  $('#tlmGroups').querySelectorAll('input').forEach(i=>{
+    i.onchange=()=>{
+      const g=[...$('#tlmGroups').querySelectorAll('input:checked')].map(x=>x.dataset.g);
+      tlmSave({groups:g});
+    };
+  });
+  $('#tlmPhone').checked=!!s.phone;
+  const ph=st.phone||{};
+  $('#tlmPhoneBox').style.display=(s.phone&&ph.url)?'':'none';
+  $('#tlmQr').innerHTML=ph.qr_svg||'';
+  $('#tlmUrl').textContent=ph.url||'';
+  if(s.phone&&!ph.url) tlmErr('Phone view is not running. Check the CSR console.');
+  tlmLive(st);
+}
+// the parts that change while the game runs
+function tlmLive(st){
+  $('#tlmRec').textContent=tlmRecText(st.recorder);
+  $('#tlmDisk').textContent='Recordings use '+tlmMB(st.disk||0)+'.';
+  const u=st.unmatched||[], box=$('#tlmUnmatched');
+  if(u.length){
+    box.style.display='';
+    box.textContent=u.length+' unmatched recording'+(u.length===1?'':'s')+': '+
+      u.map(e=>typeof e==='string'?e:(e&&(e.file||e.name))||'').filter(Boolean).join(', ');
+  }else box.style.display='none';
+}
+function tlmLoad(){
+  return fetch('/api/telemetry/status',{cache:'no-store'}).then(r=>r.json()).then(st=>{
+    if(st&&st.settings) tlmRender(st);
+  }).catch(()=>{});
+}
+$('#tlmRecord').onchange=e=>tlmSave({record:e.target.checked});
+$('#tlmDetail').onchange=e=>tlmSave({detail:e.target.value});
+$('#tlmKeep').onchange=e=>tlmSave({keep_days:e.target.value===''?null:+e.target.value});
+$('#tlmPhone').onchange=e=>tlmSave({phone:e.target.checked});
+$('#tlmNewLink').onclick=()=>{
+  tlmPost('/api/telemetry/new-link').then(res=>{ if(!res.ok) tlmErr(res.error); tlmLoad(); });
+};
+$('#tlmDeleteAll').onclick=()=>confirmBtn($('#tlmDeleteAll'),'Confirm. Deletes every recording. Career stats stay.',()=>{
+  tlmPost('/api/telemetry/delete-all').then(()=>tlmLoad());
+});
+let tlmTimer=null;
+function tlmOpen(on){
+  clearInterval(tlmTimer);
+  if(!on) return;
+  tlmLoad();
+  tlmTimer=setInterval(()=>{
+    if(!$('#dataModal').classList.contains('on')){ clearInterval(tlmTimer); return; }
+    if($('#tlmCard .danger')) return;
+    fetch('/api/telemetry/status',{cache:'no-store'}).then(r=>r.json()).then(st=>{
+      if(st&&st.settings) tlmLive(st);
+    }).catch(()=>{});
+  },4000);
+}
+
 $('#dmExport').onclick=()=>{ window.location='/api/export'; $('#dmMsg').innerHTML='<span style="color:var(--cyan)">Downloading your archive…</span>'; };
 // The three card titles carried emoji: ⬇ and ⬆ rendered as plain glyphs in the text
 // colour, but 📁 came out as a full-colour emoji — one yellow icon in a row of white
@@ -12476,11 +12662,9 @@ def serve(out_path, port=7878, explicit_logs=None, open_browser=True,
         state["seen"] = time.time()          # a phone watching the live view counts
 
     def phone_sync():
-        try:
-            if sync_phone_server(live=recorder.live, on_seen=phone_seen) is None                     and tlm_settings().get("phone"):
-                cerr(f"phone view: no free port in {PHONE_PORTS.start}-{PHONE_PORTS.stop - 1}.")
-        except Exception as e:
-            cerr(f"phone view error: {e}")
+        err = phone_sync_error(live=recorder.live, on_seen=phone_seen)
+        if err:
+            cerr(err)
 
     csr_banner()
     # scanning runs in the BACKGROUND so the browser can open onto the animated

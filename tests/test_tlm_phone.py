@@ -188,6 +188,35 @@ class PhoneConfigTests(_PhoneBase):
         self.assertIsNone(self.sync())
         self.assertIsNone(sc_stats.phone_url())
 
+    def test_error_names_busy_ports(self):
+        import socket
+        blocker = socket.socket()
+        blocker.bind(("0.0.0.0", 0))
+        busy = blocker.getsockname()[1]
+        try:
+            sc_stats.save_tlm_settings({"phone": True})
+            sc_stats.new_phone_key()
+            msg = sc_stats.phone_sync_error(port_range=range(busy, busy + 1),
+                                            live=lambda: LIVE, on_seen=lambda: None,
+                                            host="0.0.0.0")
+        finally:
+            blocker.close()
+        self.assertIn("no free port", msg)
+        self.assertIn(str(busy), msg)
+
+    def test_error_names_unreadable_config(self):
+        sc_stats.save_tlm_settings({"phone": True})
+        with mock.patch.object(sc_stats, "save_tlm_settings", return_value=None):
+            msg = sc_stats.phone_sync_error(live=lambda: LIVE, on_seen=lambda: None,
+                                            host="127.0.0.1", port_range=[0])
+        self.assertIn("csr_config.json", msg)
+
+    def test_no_error_when_off(self):
+        self.assertIsNone(sc_stats.phone_sync_error(port_range=[0]))
+
+    def test_handler_timeout(self):
+        self.assertEqual(sc_stats._PhoneHandler.timeout, 10)
+
     def test_new_link(self):
         sc_stats.save_tlm_settings({"phone": True})
         self.port = self.sync()
