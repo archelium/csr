@@ -2252,10 +2252,10 @@ def _purchase_category(cls):
 # HUD's display strings, matched back to item ids through the wiki item index; about
 # nine in ten resolve, and the id then decides the category (an id is immune to a
 # weapon maker called "…Arms"). The rest are judged from the name.
-_BP_COMP_A = re.compile(r'^(MIL|IND|CIV|STL|CMP)-(\d)([A-D])\s+"(.+)"\s*$', re.I)   # MIL-2A "JS-400"
-_BP_COMP_B = re.compile(r'^(Mil|Ind|Civ|Stl|Cmp)/(\d)/([A-D])\s+(.+?)\s*$', re.I)    # Mil/2/A FR-76
+_BP_COMP_A = re.compile(r'^(MIL|IND|CIV|STL|STH|CMP)-(\d)([A-D])\s+"(.+)"\s*$', re.I)   # MIL-2A "JS-400"
+_BP_COMP_B = re.compile(r'^(Mil|Ind|Civ|Stl|Sth|Cmp)/(\d)/([A-D])\s+(.+?)\s*$', re.I)    # Mil/2/A FR-76, Sth/2/A Umbra
 _BP_CLASS = {"mil": "Military", "ind": "Industrial", "civ": "Civilian",
-             "stl": "Stealth", "cmp": "Competition"}
+             "stl": "Stealth", "sth": "Stealth", "cmp": "Competition"}
 _BP_COMP_KIND = (("cool_", "Cooler"), ("shld_", "Shield generator"), ("powr_", "Power plant"),
                  ("radr_", "Radar"), ("qdrv_", "Quantum drive"), ("fuel_", "Fuel nozzle"),
                  ("qtank", "Quantum fuel tank"), ("fueltank", "Fuel tank"))
@@ -2713,8 +2713,18 @@ def _bp_catalog_payload():
             i = idx.get((dbg or "").lower())
             un.append([i if i is not None else title, chance])
         rows.append([r["k"], r["n"], r["c"], cat, kind, 1 if r["d"] else 0, r["m"], un])
+    # per blueprint, from the item catalogue: [class, grade, maker] and where its picture lives
+    meta, img = {}, {}
+    if ITEMS.ok:
+        for r in rows:
+            c = (r[2] or "").lower()
+            if ITEMS.meta.get(c):
+                meta[r[0]] = ITEMS.meta[c]
+            d = art_src(ITEMS.imgs.get(c))
+            if d:
+                img[r[0]] = d
     return {"version": BPS.version, "n": len(rows), "rows": rows,
-            "sets": _bp_sets(rows), "fams": _bp_families(rows)}
+            "sets": _bp_sets(rows), "fams": _bp_families(rows), "meta": meta, "img": img}
 
 
 def _pretty_shop(name, cats=None):
@@ -8106,6 +8116,53 @@ nav a::after{background:var(--menu-bg);border-color:var(--glass-line);box-shadow
   background-color:#0b1520;border:1px solid rgba(91,209,230,.16)}
 :root[data-theme="light"] .bgi.ph,:root[data-theme="light"] .bthumb.ph,:root[data-theme="light"] .bxth.ph{
   color:rgba(14,147,168,.5);background:repeating-linear-gradient(135deg,#e7edf4 0 6px,#eef3f8 6px 12px)}
+/* ---- Blueprints collection: totals, every category in the armour-set row style, album */
+.bxtot{margin-bottom:20px}
+.bxr{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}
+.bxr-c{background:var(--tile);border:1px solid var(--line);border-radius:8px;padding:10px 12px;min-width:0}
+.bxr-n{font-family:var(--font-mono);font-size:var(--fs-xs,11px);letter-spacing:.1em;text-transform:uppercase;color:var(--muted);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bxr-v{display:flex;align-items:baseline;gap:4px;margin-top:4px}
+.bxr-v b{font-size:22px;color:var(--txt);font-weight:600;font-variant-numeric:tabular-nums}
+.bxr-v span{color:var(--dim);font-family:var(--font-mono)}
+.bxr-v em{margin-left:auto;font-style:normal;font-family:var(--font-mono);color:var(--cyan);font-size:var(--fs-sm,13px)}
+.bxr-b{height:4px;background:var(--track);border-radius:2px;margin-top:8px;overflow:hidden}
+.bxr-b i{display:block;height:100%;background:var(--cyan)}
+#bpBoard>.bxboard,#bpBoard>.bxalb{margin-top:20px}
+.bxboard .bsl{flex-wrap:wrap;justify-content:flex-end}
+.bxboard .bset .bsn{min-width:170px}
+.bxboard.one .bpbar + .bsets{columns:1}
+.bxboard.one .bset .bsn{flex:0 0 190px}
+.bxboard.one .bsl{flex:1;flex-wrap:nowrap;justify-content:flex-start;overflow:hidden}
+.bxboard.one .bsgo{width:90px}
+.bxboard.one .bsq{width:18px;height:18px;font-size:10px;border-radius:4px}
+.ccol{display:inline-flex;gap:3px;flex:none;margin-right:10px}
+.chead{border-bottom:1px solid var(--line)!important;padding-top:0!important}
+.chead .ccol{font-family:var(--font-mono);font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.bsq.on.new{background:var(--amber);border-color:var(--amber)}
+.alb{display:grid;grid-template-columns:repeat(auto-fill,minmax(168px,1fr));gap:10px}
+.ac{position:relative;background:var(--tile);border:1px solid var(--track-line);border-radius:8px;overflow:hidden;display:flex;flex-direction:column;min-width:0}
+.ac .pic{position:relative;aspect-ratio:16/10;display:grid;place-items:center;color:rgba(91,209,230,.35);
+  background:repeating-linear-gradient(135deg,#0b1520 0 6px,#0d1926 6px 12px)}
+.ac .pic .csr-ic{width:28px;height:28px}
+.ac .pic img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+.ac:not(.on) .pic img{filter:grayscale(1) brightness(.55)}
+.ac .st{position:absolute;right:7px;top:7px;font-family:var(--font-mono);font-size:10.5px;padding:1px 6px;border-radius:4px;
+  background:rgba(7,11,17,.82);color:#8fa7bd;border:1px solid rgba(91,209,230,.2)}
+.ac.on{border-color:rgba(91,209,230,.45)} .ac.on .st{color:#5bd1e6;border-color:rgba(91,209,230,.5)}
+.ac.new{border-color:rgba(244,169,42,.6)} .ac.new .st{color:#f4a92a;border-color:rgba(244,169,42,.6)}
+.ac .bd{padding:8px 10px 10px;display:flex;flex-direction:column;gap:5px;min-width:0}
+.ac .nm{font-size:13px;font-weight:600;color:var(--txt);line-height:1.2;overflow-wrap:anywhere}
+.ac:not(.on) .nm{color:var(--muted)}
+.ac .cp{display:flex;flex-wrap:wrap;gap:4px}
+.ac .cp i{font-style:normal;font-family:var(--font-mono);font-size:10.5px;padding:1px 5px;border-radius:3px;border:1px solid var(--line);color:var(--muted)}
+.ac .cp i.gA{color:var(--amber);border-color:var(--amber)}
+.agh{display:flex;align-items:baseline;gap:10px;margin:18px 0 10px}
+.agh b{font-family:var(--font-display);font-size:15px;color:var(--txt)}
+.agh span{font-family:var(--font-mono);font-size:12px;color:var(--dim)}
+.bxalb .bpq{margin-left:auto}
+:root[data-theme="light"] .ac .pic{background:repeating-linear-gradient(135deg,#e7edf4 0 6px,#eef3f8 6px 12px);color:rgba(14,147,168,.45)}
+@media(max-width:900px){ .bxboard.one .bsl{overflow-x:auto} .bxboard.one .bset .bsn{flex-basis:130px} }
 @media(max-width:760px){ .bgal{grid-template-columns:1fr 1fr} .bgal .bgt:nth-child(3){display:none}
   .phero{height:auto;min-height:300px} .phero.nok{min-height:200px}
   .phero .ph-tx{left:20px;right:20px;top:20px;max-width:none}
@@ -9258,6 +9315,13 @@ function bpListHTML(v){
 // page only decides which squares are filled. Singles are not sets and stay in the list.
 let bpSetTab='partial', bpSetAll=false, bpFamAll=false;
 let bpLead=null;
+const BPB={comp:{tab:'all',all:false}, fps:{tab:'all',all:false}, gear:{tab:'all',all:false}};
+const BPA={cat:'Ship components', mode:'all', q:'', n:48};
+const BP_CLASSES=['Military','Civilian','Industrial','Stealth','Competition',''];
+const BP_CLS_SHORT={Military:'MIL', Civilian:'CIV', Industrial:'IND', Stealth:'STL', Competition:'CMP', '':'Other'};
+const BP_CATS=['Armor','Ship components','FPS weapons','Ship weapons','Flight suits','Magazines & batteries','Mining & salvage','Clothing','Flair & decor'];
+// when each blueprint first arrived, by catalogue key and by name
+function bpRecv(){ const m={}; ((A().career||{}).blueprints||[]).forEach(r=>{ if(r[6]) m[r[6]]=r[3]; m['n:'+r[0].toLowerCase()]=r[3]; }); return m; }
 // ---- the planner ----
 // A blueprint drops from missions; a mission needs a standing with a faction; a
 // standing is reputation, which the game never writes to the log. So the planner shows
@@ -9352,18 +9416,110 @@ function bpBoardHTML(catalog){
   const ladCard=`<div class="card"><h3>Ship weapons by size <span class="u">— one family per row, S1 to S${maxS}</span></h3>`+
     `<div class="bsets">${started.map(lad).join('')||'<div class="empty">No ladder started yet.</div>'}${restH}</div>`+
     (singles.length?`<div class="bph" style="margin-top:10px">+ ${fmt(singles.length)} one-size weapons, ${fmt(singlesOwned)} owned</div>`:'')+`</div>`;
-  // --- component grid
-  const cell={}, types={}, sizes=new Set();
-  catalog.rows.forEach(r=>{ if(r[3]!=='Ship components') return;
-    const parts=(r[4]||'').split(' \u00b7 '); const typ=parts[0]||'Other'; const sz=parts.slice(1).find(p=>/^S\d+$/.test(p))||'\u2014';
-    sizes.add(sz); const c=cell[typ+'|'+sz]=cell[typ+'|'+sz]||{o:0,t:0}; c.t++; if(has(r[0],r[1])) c.o++; types[typ]=(types[typ]||0)+1; });
-  const cols=[...sizes].sort((a,b)=>a==='\u2014'?1:b==='\u2014'?-1:+a.slice(1)-+b.slice(1));
-  const trows=Object.entries(types).sort((a,b)=>b[1]-a[1]).map(([typ])=>`<tr><th>${esc(typ)}</th>`+cols.map(s=>{ const c=cell[typ+'|'+s];
-    if(!c) return `<td class="na"></td>`;
-    return `<td style="--f:${(c.o/c.t).toFixed(2)}" class="${c.o===c.t?'full':''}" title="${esc(typ)} ${s}: ${c.o} of ${c.t} owned"><b>${c.o}</b><span>/${c.t}</span></td>`; }).join('')+'</tr>').join('');
-  const gridCard=`<div class="card"><h3>Ship components <span class="u">— owned / in the catalogue, by type and size</span></h3>`+
-    `<div class="bgrid-wrap"><table class="bgrid"><thead><tr><th></th>${cols.map(s=>`<th>${s}</th>`).join('')}</tr></thead><tbody>${trows}</tbody></table></div></div>`;
-  return setsCard+`<div class="grid2">${ladCard}${gridCard}</div>`;
+  // --- every other blueprint, in the same row style as the armour sets
+  const meta=r=>(catalog.meta||{})[r[0]]||[], typeOf=r=>(r[4]||'').split(' \u00b7 ')[0];
+  const sizeOf=r=>{ const m=(r[4]||'').match(/\bS(\d+)\b/); return m?+m[1]:null; };
+  const recv=bpRecv(), cut=Date.now()-30*864e5;
+  const on=r=>has(r[0],r[1]), fresh=r=>{ const d=recv[r[0]]||recv['n:'+r[1].toLowerCase()]; return d && Date.parse(d)>=cut; };
+  const sq=(r,label)=>{ const m=meta(r), o=on(r);
+    const t=[r[1], m[0]&&m[0]+(m[1]?' grade '+m[1]:''), m[2]].filter(Boolean).join(' \u00b7 ')+(o?' \u2014 owned':' \u2014 missing');
+    return `<i class="bsq ${o?(fresh(r)?'on new':'on'):''}" title="${esc(t)}">${esc(label||'')}</i>`; };
+  const pic=rs=>{ const img=catalog.img||{}, r=rs.find(x=>on(x)&&img[x[0]])||rs.find(x=>img[x[0]]);
+    return `<span class="bxth ph">${ICON.blueprints}${r?artImg(artUrls(img[r[0]],0)):''}</span>`; };
+  const status=rs=>{ const o=rs.filter(on).length; return o===rs.length?'complete':o?'partial':'untouched'; };
+  const row=(name,sub,rs,squares)=>{ const o=rs.filter(on).length, t=rs.length;
+    const tail = o===t ? `<span class="bsgo done">complete</span>` : o ? `<span class="bsgo">${t-o} to go</span>` : `<span class="bsgo dim">${t} to find</span>`;
+    return {st:status(rs), o, html:`<div class="bset"><span class="bsn bxa">${pic(rs)}<span>${esc(name)}${sub?`<span class="bpk">${esc(sub)}</span>`:''}</span></span>`+
+      `<span class="bsl">${squares}</span><span class="bsc">${o}<span class="u">/${t}</span></span>${tail}</div>`}; };
+  const ORDER={partial:0, complete:1, untouched:2};
+  const board=(id,title,sub,rows,opt={})=>{ const B=BPB[id];
+    if(B.tab!=='all' && !rows.some(x=>x.st===B.tab)) B.tab='all';
+    const shown=rows.filter(x=>B.tab==='all'||x.st===B.tab), lim=opt.lim||999, cut2=B.all?shown:shown.slice(0,lim);
+    const n=k=>rows.filter(x=>k==='all'||x.st===k).length;
+    const tabs=[['all','All'],['partial','Started'],['complete','Complete'],['untouched','Untouched']].filter(([k])=>k==='all'||n(k))
+      .map(([k,l])=>`<button class="vpill sm ${B.tab===k?'on':''}" data-bpb="${id}:${k}">${l} <span class="vc">${fmt(n(k))}</span></button>`).join('');
+    const more=shown.length>lim?`<button class="foot-link" data-bpb="${id}:+">${B.all?'Show fewer':`Show all ${fmt(shown.length)}`}</button>`:'';
+    return `<div class="card bxboard${opt.one?' one':''}"><h3>${title} <span class="u">\u2014 ${sub}</span></h3><div class="bpbar">${tabs}</div>`+
+      `<div class="bsets">${opt.head||''}${cut2.map(x=>x.html).join('')||'<div class="empty">Nothing here.</div>'}${more}</div></div>`; };
+  const byCat={}; catalog.rows.forEach(r=>(byCat[r[3]]=byCat[r[3]]||[]).push(r));
+  const cnt=c=>{ const rs=byCat[c]||[]; return {o:rs.filter(on).length, t:rs.length}; };
+  // collection totals
+  const totals=`<div class="card bxtot"><h3>Collection <span class="u">\u2014 every blueprint in the game, ${fmt(catalog.rows.length)} in all</span></h3><div class="bxr">`+
+    BP_CATS.filter(c=>byCat[c]).map(c=>{ const k=cnt(c), p=k.t?Math.round(100*k.o/k.t):0;
+      return `<div class="bxr-c"><div class="bxr-n">${esc(c)}</div><div class="bxr-v"><b>${fmt(k.o)}</b><span>/${fmt(k.t)}</span><em>${p}%</em></div>`+
+        `<div class="bxr-b"><i style="width:${Math.max(p,1)}%"></i></div></div>`; }).join('')+`</div></div>`;
+  // ship components: a row per type and size, a fixed column per class, the grade on each square
+  const comps=byCat['Ship components']||[], runs=[];
+  [...new Set(comps.map(typeOf))].forEach(t=>{ const rt=comps.filter(r=>typeOf(r)===t);
+    [...new Set(rt.map(sizeOf))].sort((a,b)=>(a??99)-(b??99)).forEach(z=>runs.push([t,z,rt.filter(r=>sizeOf(r)===z)])); });
+  const CW={}; BP_CLASSES.forEach(c=>{ CW[c]=Math.max(0,...runs.map(([,,rs])=>rs.filter(r=>(meta(r)[0]||'')===c).length)); });
+  const cols=BP_CLASSES.filter(c=>CW[c]), colW=c=>CW[c]*21-3;
+  const compRows=runs.map(([t,z,rs])=>row(t, z!=null?'S'+z:'', rs, cols.map(c=>`<span class="ccol" style="width:${colW(c)}px">`+
+    rs.filter(r=>(meta(r)[0]||'')===c).sort((a,b)=>(meta(a)[1]||'Z').localeCompare(meta(b)[1]||'Z')).map(r=>sq(r, meta(r)[1]||'')).join('')+`</span>`).join('')));
+  const compHead=`<div class="bset chead"><span class="bsn"></span><span class="bsl">`+cols.map(c=>`<span class="ccol" style="width:${colW(c)}px" title="${c||'No class'}">${CW[c]>4?(c||'Other'):BP_CLS_SHORT[c]}</span>`).join('')+
+    `</span><span class="bsc"></span><span class="bsgo dim">letter = grade</span></div>`;
+  const compCard=board('comp','Ship components', `${fmt(cnt('Ship components').o)} of ${fmt(comps.length)} \u00b7 every component by size, class and grade`, compRows, {one:true, head:compHead});
+  // FPS weapons: a row per gun, the base gun first (\u25c6), then its variants
+  const fam={}; (byCat['FPS weapons']||[]).forEach(r=>{ const f=r[1].replace(/\s*["\u201c][^"\u201d]*["\u201d]\s*/g,' ').replace(/\s+/g,' ').trim(); (fam[f]=fam[f]||[]).push(r); });
+  const fpsRows=Object.entries(fam).map(([f,rs])=>{ rs.sort((a,b)=>(a[1].length-b[1].length)||a[1].localeCompare(b[1]));
+    return row(f, rs[0][4], rs, rs.map((r,i)=>sq(r, i?'':'\u25c6')).join('')); })
+    .sort((a,b)=>ORDER[a.st]-ORDER[b.st]||b.o-a.o);
+  if(BPB.fps.tab==='all' && !BPB.fps.set){ BPB.fps.tab=fpsRows.some(x=>x.st==='partial')?'partial':'all'; BPB.fps.set=1; }
+  const fpsCard=board('fps','FPS weapons', `${fmt(cnt('FPS weapons').o)} of ${fmt(cnt('FPS weapons').t)} \u00b7 a row per gun, \u25c6 the base gun, then its variants`, fpsRows, {lim:16});
+  // everything else, so every blueprint has a row: magazines by maker, mining by maker, the
+  // one-size ship weapons, armour and flight-suit pieces outside a set, clothing, decor
+  const inSet=new Set((catalog.sets||[]).flatMap(st=>st[3].map(p=>p[1])));
+  const inLad=new Set(ladders.flatMap(f=>f.sz.map(p=>p.key)));
+  const gear=[];
+  const add=(name,sub,rs)=>{ if(rs.length) gear.push(row(name,sub,rs,rs.map(r=>sq(r,'')).join(''))); };
+  const by=(rs,f)=>{ const g={}; rs.forEach(r=>{ const k=f(r); (g[k]=g[k]||[]).push(r); }); return Object.entries(g).sort((a,b)=>a[0].localeCompare(b[0])); };
+  by(byCat['Magazines & batteries']||[], r=>(r[4]||'Magazine')+'|'+(meta(r)[2]||'Other makers')).forEach(([k,rs])=>{ const [kind,mk]=k.split('|'); add(mk, kind, rs); });
+  by(byCat['Mining & salvage']||[], r=>(r[4]||'Mining')+'|'+(r[4]==='Mining laser'?(meta(r)[2]||'Other makers'):'')).forEach(([k,rs])=>{ const [kind,mk]=k.split('|'); add(mk||kind, mk?kind:'Mining & salvage', rs); });
+  add('One-size weapons', 'Ship weapons', (byCat['Ship weapons']||[]).filter(r=>!inLad.has(r[0])));
+  by((byCat['Armor']||[]).filter(r=>!inSet.has(r[0])), r=>(r[4]||'Armour').split(' \u00b7 ').pop()).forEach(([k,rs])=>add(k, 'Armour, no set', rs));
+  by((byCat['Flight suits']||[]).filter(r=>!inSet.has(r[0])), r=>r[4]||'Flight suit').forEach(([k,rs])=>add(k, 'Flight suit, no set', rs));
+  ['Clothing','Flair & decor'].forEach(c=>add(c, '', byCat[c]||[]));
+  Object.keys(byCat).filter(c=>!BP_CATS.includes(c)).forEach(c=>add(c, '', byCat[c]));
+  const gearCard=board('gear','Magazines, mining &amp; more', 'every blueprint not on another board', gear, {lim:14});
+  return totals+setsCard+compCard+`<div class="grid2">${ladCard}${gearCard}</div>`+fpsCard+
+    `<div class="card bxalb" id="bpAlbum">${bpAlbumHTML(catalog)}</div>`;
+}
+// the album: one category at a time, every blueprint a card with its picture
+function bpAlbumHTML(catalog){
+  const byCat={}; catalog.rows.forEach(r=>(byCat[r[3]]=byCat[r[3]]||[]).push(r));
+  if(!byCat[BPA.cat]) BPA.cat=BP_CATS.find(c=>byCat[c])||Object.keys(byCat)[0];
+  const own=bpOwnedKeys(), on=r=>own.has(r[0])||own.has('n:'+r[1].toLowerCase());
+  const tabs=BP_CATS.filter(c=>byCat[c]).map(c=>`<button class="vpill sm ${c===BPA.cat?'on':''}" data-bpac="${esc(c)}">${esc(c)} <span class="vc">${fmt(byCat[c].filter(on).length)}/${fmt(byCat[c].length)}</span></button>`).join('');
+  const modes=[['all','All'],['owned','Owned'],['missing','Missing']].map(([k,l])=>`<button class="vpill sm ${BPA.mode===k?'on':''}" data-bpam="${k}">${l}</button>`).join('');
+  return `<h3>Album <span class="u">\u2014 every blueprint as a card \u00b7 pick a category</span></h3><div class="bpbar">${tabs}</div>`+
+    `<div class="bpbar">${modes}<input class="bpq" id="bpAlbQ" type="search" placeholder="Search ${esc(BPA.cat.toLowerCase())}\u2026" value="${esc(BPA.q)}" spellcheck="false" autocomplete="off"></div>`+
+    `<div id="bpAlbList">${bpAlbumList(catalog)}</div>`;
+}
+function bpAlbumList(catalog){
+  const own=bpOwnedKeys(), recv=bpRecv(), cut=Date.now()-30*864e5;
+  const meta=r=>(catalog.meta||{})[r[0]]||[], img=catalog.img||{};
+  const on=r=>own.has(r[0])||own.has('n:'+r[1].toLowerCase());
+  const q=BPA.q.trim().toLowerCase();
+  const sizeOf=r=>{ const m=(r[4]||'').match(/\bS(\d+)\b/); return m?+m[1]:null; };
+  let rs=catalog.rows.filter(r=>r[3]===BPA.cat);
+  if(BPA.mode!=='all') rs=rs.filter(r=>on(r)===(BPA.mode==='owned'));
+  if(q) rs=rs.filter(r=>[r[1], r[4], ...meta(r)].join(' ').toLowerCase().includes(q));
+  const grp=r=>(r[4]||BPA.cat).split(' \u00b7 ')[0];
+  rs.sort((a,b)=>grp(a).localeCompare(grp(b))||(sizeOf(a)??99)-(sizeOf(b)??99)||(on(b)-on(a))||
+    (BP_CLASSES.indexOf(meta(a)[0]||'')-BP_CLASSES.indexOf(meta(b)[0]||''))||(meta(a)[1]||'Z').localeCompare(meta(b)[1]||'Z')||a[1].localeCompare(b[1]));
+  if(!rs.length) return `<div class="empty">${q?'Nothing matches that.':'Nothing here.'}</div>`;
+  const shown=rs.slice(0,BPA.n); let out='', last=null;
+  shown.forEach(r=>{ const g=grp(r);
+    if(g!==last){ if(last!==null) out+='</div>'; const all=rs.filter(x=>grp(x)===g);
+      out+=`<div class="agh"><b>${esc(g)}</b><span>${fmt(all.filter(on).length)} of ${fmt(all.length)}</span></div><div class="alb">`; last=g; }
+    const m=meta(r), o=on(r), d=recv[r[0]]||recv['n:'+r[1].toLowerCase()], nw=o&&d&&Date.parse(d)>=cut, z=sizeOf(r);
+    const st = o ? (nw?'NEW \u00b7 '+ddmm(d).slice(0,6):'OWNED') : r[5] ? 'default' : (r[6]?fmt(r[6])+(r[6]===1?' mission':' missions'):'missing');
+    out+=`<div class="ac ${o?'on':''} ${nw?'new':''}" title="${esc(r[1])}"><div class="pic">${ICON.blueprints}${img[r[0]]?artImg(artUrls(img[r[0]],1)):''}<span class="st">${st}</span></div>`+
+      `<div class="bd"><div class="nm">${esc(r[1])}</div><div class="cp">${z!=null?`<i>S${z}</i>`:''}${m[0]?`<i>${BP_CLS_SHORT[m[0]]||esc(m[0])}</i>`:''}`+
+      `${m[1]?`<i class="g${esc(m[1])}">${esc(m[1])}</i>`:''}${m[2]?`<i>${esc(m[2])}</i>`:''}</div></div></div>`; });
+  out+='</div>';
+  if(rs.length>shown.length) out+=`<button class="foot-link" data-bpan="1" style="margin-top:12px">Show ${fmt(Math.min(48, rs.length-shown.length))} more \u00b7 ${fmt(rs.length-shown.length)} left</button>`;
+  return out;
 }
 // owned / total per category, on one shared scale so the bars are comparable
 function bpProgressHTML(ownedCats, totalCats){
@@ -9450,6 +9606,17 @@ function secBlueprints(v){
     document.querySelectorAll('#bpBoard [data-bpst]').forEach(b=>b.onclick=()=>{ bpSetTab=b.dataset.bpst; bpSetAll=false; board(); });
     document.querySelectorAll('#bpBoard [data-bpsa]').forEach(b=>b.onclick=()=>{ bpSetAll=!bpSetAll; board(); });
     document.querySelectorAll('#bpBoard [data-bpfa]').forEach(b=>b.onclick=()=>{ bpFamAll=!bpFamAll; board(); });
+    document.querySelectorAll('#bpBoard [data-bpb]').forEach(b=>b.onclick=()=>{ const [id,k]=b.dataset.bpb.split(':');
+      if(k==='+') BPB[id].all=!BPB[id].all; else { BPB[id].tab=k; BPB[id].all=false; } board(); });
+    wireAlbum();
+  };
+  const album=()=>{ const el=$('#bpAlbum'); if(!el||!catalog) return; el.innerHTML=bpAlbumHTML(catalog); wireAlbum(); };
+  const wireAlbum=()=>{
+    document.querySelectorAll('#bpAlbum [data-bpac]').forEach(b=>b.onclick=()=>{ BPA.cat=b.dataset.bpac; BPA.q=''; BPA.n=48; album(); });
+    document.querySelectorAll('#bpAlbum [data-bpam]').forEach(b=>b.onclick=()=>{ BPA.mode=b.dataset.bpam; BPA.n=48; album(); });
+    const more=()=>document.querySelectorAll('#bpAlbum [data-bpan]').forEach(b=>b.onclick=()=>{ BPA.n+=48; const l=$('#bpAlbList'); if(l){ l.innerHTML=bpAlbumList(catalog); more(); } });
+    more();
+    const q=$('#bpAlbQ'); if(q) q.oninput=()=>{ BPA.q=q.value; BPA.n=48; const l=$('#bpAlbList'); if(l){ l.innerHTML=bpAlbumList(catalog); more(); } };
   };
   wireBoard();
   if(bpLead) mountHero('bp', bpLead.name, bpLead.o===bpLead.t?'Complete armour set':'Closest armour set',

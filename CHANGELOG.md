@@ -5,6 +5,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and CSR
 uses [Semantic Versioning](https://semver.org/) (MAJOR.MINOR.PATCH).
 
 
+## [Unreleased]
+
+### Added
+- **Every blueprint has a row on Blueprints.** Totals per category on top, then the
+  armour sets, then the same rows for everything else, a square per blueprint.
+  - **Ship components**: a row per type and size, a column per class (Military,
+    Civilian, Industrial, Stealth, Competition), the grade on each square.
+  - **FPS weapons**: a row per gun, the base gun first, then its variants.
+  - **Magazines, mining & more**: magazines and mining lasers by maker, one-size ship
+    weapons, armour and flight-suit pieces outside a set, clothing and decor.
+  - Hover a square for its name, class, grade and maker. Amber: received in the last
+    30 days. Started, Complete and Untouched tabs on every board.
+- **Album** under the boards: every blueprint as a card with its picture, size, class,
+  grade and maker. One category at a time, owned or missing, search. A missing card
+  says how many missions drop it.
+
+### Changed
+- **Crafting catalogue updated to 4.10.3**: 1,628 blueprints. The Skarnov rifle and its
+  battery and the Raider Camo Palatino pieces now match.
+
+### Fixed
+- **Stealth components showed as "Sth/2/A Umbra" under Other.** The game writes stealth
+  as "Sth". They now read Umbra, Shimmer and Veil, under ship components.
+
 ## [1.10.0] — 2026-11-23
 
 ### Added
