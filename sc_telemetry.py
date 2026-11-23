@@ -526,6 +526,7 @@ class RecordingWriter:
         self._last = {}      # path -> last written value
         self._smooth = {}    # path -> [last_sample_t, hi, lo]
         self._flushed_t = None
+        self._t = 0.0
         self._path = path
         self._fh = gzip.open(path, "wt", encoding="utf-8")
         head = dict(header)
@@ -541,20 +542,23 @@ class RecordingWriter:
         except OSError:
             return 0
 
-    def _sync(self):
-        self._fh.flush()
-        self._fh.buffer.flush(zlib.Z_SYNC_FLUSH)
+    def _sync(self, fh=None):
+        fh = fh or self._fh
+        fh.flush()
+        fh.buffer.flush(zlib.Z_SYNC_FLUSH)
 
     def add(self, t, flat, events):
         line = {}
+        self._t = t
         cur = {p: v for p, v in flat.items() if group_of(p) in self._wanted}
         for path, v in cur.items():
             st = self._smooth.get(path)
             if self.detail != "full" and is_smooth(path) and _number(v):
                 if st is None:
-                    self._smooth[path] = [t, None, None]
+                    self._smooth[path] = [t, None, None, v]
                     self._put(line, path, v)
                     continue
+                st[3] = v
                 st[1] = v if st[1] is None else max(st[1], v)
                 st[2] = v if st[2] is None else min(st[2], v)
                 if t - st[0] < self._every:
@@ -576,7 +580,7 @@ class RecordingWriter:
             self._smooth.pop(p, None)
         if gone:
             line["-"] = gone
-        if events:
+        if events and "events" in self._wanted:
             line["ev"] = list(events)
         if line:
             out = {"t": round(t, 2)}
@@ -593,7 +597,22 @@ class RecordingWriter:
         self._last[path] = v
 
     def close(self):
-        if self._fh is not None:
-            self._sync()
-            self._fh.close()
-            self._fh = None
+        if self._fh is None:
+            return
+        fh, self._fh = self._fh, None
+        try:
+            line = {}
+            for path, (_, hi, lo, v) in self._smooth.items():
+                if not _same(v, self._last.get(path)):
+                    line[path] = v
+                if hi is not None and hi != v:
+                    line[path + "^"] = hi
+                if lo is not None and lo != v:
+                    line[path + "_"] = lo
+            if line:
+                out = {"t": round(self._t, 2)}
+                out.update(line)
+                fh.write(json.dumps(out, separators=(",", ":")) + "\n")
+            self._sync(fh)
+        finally:
+            fh.close()

@@ -5,6 +5,8 @@ import os
 import sys
 import tempfile
 import unittest
+import zlib
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import sc_telemetry as tlm  # noqa: E402
@@ -166,13 +168,56 @@ class WriterTests(unittest.TestCase):
         self.assertEqual(read_lines(self.path)[2:], [{"t": 2.0, "ev": ["ACTOR_DEAD"]},
                                                      {"t": 3.0, "ev": ["ACTOR_DEAD"]}])
 
+    def _raw_text(self):
+        with open(self.path, "rb") as fh:
+            raw = fh.read()
+        d = zlib.decompressobj(31)
+        try:
+            return d.decompress(raw).decode("utf-8")
+        except zlib.error:
+            return ""
+
     def test_periodic_flush_readable_before_close(self):
         w = self.writer()
         w.add(0.0, {NAME: "A"}, [])
-        w.add(5.0, {NAME: "B"}, [])
-        size = os.path.getsize(self.path)
-        self.assertGreater(size, 20)
+        w.add(1.0, {NAME: "B"}, [])
+        self.assertNotIn('"t":1.0', self._raw_text())
+        w.add(5.0, {NAME: "C"}, [])
+        self.assertIn('"t":5.0', self._raw_text())
         w.close()
+
+    def test_events_group_gates_ev(self):
+        groups = [g for g in tlm.DEFAULT_GROUPS if g != "events"]
+        w = self.writer(groups=groups)
+        w.add(0.0, {NAME: "A"}, ["ACTOR_DEAD"])
+        w.add(1.0, {NAME: "A"}, ["ACTOR_DEAD"])
+        w.close()
+        self.assertEqual(read_lines(self.path)[1:], [{"t": 0.0, NAME: "A"}])
+
+    def test_close_writes_pending_smooth_and_peaks(self):
+        w = self.writer("light")
+        w.add(0.0, {SPEED: 10}, [])
+        w.add(1.0, {SPEED: 90}, [])
+        w.add(2.0, {SPEED: 20}, [])
+        w.close()
+        self.assertEqual(read_lines(self.path)[2:],
+                         [{"t": 2.0, SPEED: 20, SPEED + "^": 90}])
+
+    def test_close_idempotent_and_quiet_when_nothing_pending(self):
+        w = self.writer()
+        w.add(0.0, {SPEED: 10}, [])
+        w.close()
+        w.close()
+        self.assertEqual(len(read_lines(self.path)), 2)
+
+    def test_close_closes_file_when_sync_fails(self):
+        w = self.writer()
+        fh = w._fh
+        with mock.patch.object(w, "_sync", side_effect=OSError("x")):
+            with self.assertRaises(OSError):
+                w.close()
+        w.close()
+        self.assertTrue(fh.closed)
 
 
 if __name__ == "__main__":
