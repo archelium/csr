@@ -8346,6 +8346,7 @@ nav a::after{background:var(--menu-bg);border-color:var(--glass-line);box-shadow
       <a data-sec="activity" data-label="Activity"><span>📆</span> Activity</a>
       <a data-sec="system" data-label="Your Machine"><span>🖥️</span> Your Machine</a>
       <a data-sec="stability" data-label="Stability &amp; Crashes"><span>🩺</span> Stability<i class="navlive" id="navLive" title="CSR is watching your logs"></i></a>
+      <a href="/live" target="_blank" id="navLiveView" data-label="Live view"><span>📡</span> Live view</a>
       <a data-sec="orgs" data-label="Orgs &amp; Profile"><span>🪪</span> Orgs &amp; Profile</a>
     </nav>
     <div class="side-toc" id="sideToc" aria-label="On this page" hidden></div>
@@ -10984,6 +10985,7 @@ document.addEventListener('keydown',e=>{
 });
 
 document.querySelectorAll('#nav a').forEach(a=>{
+  if(!a.dataset.sec) return;   // plain links (Live view) open as-is
   const s=a.querySelector('span'); if(s&&ICON[a.dataset.sec]) s.innerHTML=ICON[a.dataset.sec];  // swap emoji → HUD glyph
   a.onclick=(e)=>{ e.preventDefault();
     section=a.dataset.sec; document.querySelectorAll('#nav a').forEach(x=>x.classList.toggle('active',x===a)); render();
@@ -11652,6 +11654,244 @@ def ONBOARD_HTML():
             .replace("__CSR_CONTACT__", CSR_CONTACT))
 
 
+LIVE_TEMPLATE = r"""<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CSR · Live</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 90 110'><polygon points='45,4 86,58 68,58 45,30 22,58 4,58' fill='%235bd1e6'/><polygon points='45,44 70,78 52,78 45,68 38,78 20,78' fill='%23e7edf2' opacity='0.85'/><line x1='45' y1='90' x2='45' y2='104' stroke='%235bd1e6' stroke-width='3' stroke-linecap='round'/></svg>">
+<style>
+/*__FONTS__*/
+  :root{
+    --font-display:'Chakra Petch','Segoe UI',system-ui,sans-serif;
+    --font-mono:'Share Tech Mono',ui-monospace,Consolas,monospace;
+    --bg:#070b11; --bg2:#0b1119; --panel:#111a26; --panel2:#0d1622;
+    --line:#1d2c3d; --txt:#dbe7f4; --muted:#8fa7bd; --dim:#7d93a9;
+    --amber:#f4a92a; --cyan:#5bd1e6; --green:#4ade80; --red:#ff5468;
+    --track:#0a121c; --track-line:#16222f;
+  }
+  :root[data-theme="light"]{
+    --bg:#eef2f7; --bg2:#e4eaf1; --panel:#ffffff; --panel2:#f4f8fc;
+    --line:#d3dde8; --txt:#17232f; --muted:#5a6b7d; --dim:#586a7d;
+    --amber:#9a6206; --cyan:#0b7d90; --green:#1f8a4a; --red:#c8303f;
+    --track:#e7edf4; --track-line:#d3dde8;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0}
+  body{font-family:var(--font-display);color:var(--txt);background:var(--bg);
+    letter-spacing:.2px;min-height:100vh;padding:20px 16px 40px;font-size:14px}
+  .wrap{max-width:1000px;margin:0 auto}
+  header{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px}
+  h1{font-size:18px;letter-spacing:4px;margin:0;font-weight:700}
+  .pill{font-family:var(--font-mono);font-size:12px;padding:3px 10px;border:1px solid var(--line);
+    border-radius:999px;color:var(--muted);text-transform:uppercase;letter-spacing:1px}
+  .pill.live{color:var(--green);border-color:var(--green)}
+  #tlmState{margin:0 0 16px;padding:16px;border:1px solid var(--line);border-radius:14px;
+    background:var(--panel);color:var(--muted)}
+  #tlmState[hidden]{display:none}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;align-items:start}
+  .grid[hidden]{display:none}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px 16px}
+  .card h2{margin:0 0 10px;font-size:12px;letter-spacing:2px;text-transform:uppercase;color:var(--muted);font-weight:600}
+  .card[hidden]{display:none}
+  .row{display:flex;justify-content:space-between;align-items:baseline;gap:12px;padding:3px 0}
+  .row .k{color:var(--muted);font-size:13px}
+  .row .v{font-family:var(--font-mono);font-size:15px;text-align:right}
+  .big{font-family:var(--font-mono);font-size:26px;margin-bottom:6px}
+  .big small{font-size:13px;color:var(--muted)}
+  .bar{height:8px;border-radius:4px;background:var(--track);border:1px solid var(--track-line);overflow:hidden;margin:2px 0 6px}
+  .bar i{display:block;height:100%;background:var(--cyan)}
+  .bar.warn i{background:var(--amber)}
+  .bar.crit i{background:var(--red)}
+  .flag{font-family:var(--font-mono);font-size:11px;color:var(--red);border:1px solid var(--red);
+    border-radius:4px;padding:0 5px;margin-left:6px}
+  .chips{display:flex;flex-wrap:wrap;gap:6px}
+  .chip{font-family:var(--font-mono);font-size:12px;padding:3px 9px;border-radius:999px;border:1px solid var(--line)}
+  .chip.on{color:var(--green);border-color:var(--green)}
+  .chip.off{color:var(--dim)}
+  .chip.minor{color:var(--amber);border-color:var(--amber)}
+  .chip.major{color:var(--red);border-color:var(--red)}
+  .none{color:var(--dim);font-size:13px}
+  #tlmEvents ul{list-style:none;margin:0;padding:0}
+  #tlmEvents li{display:flex;justify-content:space-between;gap:12px;font-family:var(--font-mono);font-size:12px;padding:2px 0}
+  #tlmEvents li span:last-child{color:var(--dim)}
+  @media (max-width:599px){
+    body{padding:14px 16px 32px}
+    .grid{grid-template-columns:1fr}
+    #tlmWallet{order:-2}
+    #tlmWarn{order:-1}
+  }
+</style></head><body>
+<div class="wrap">
+  <header><h1>CSR LIVE</h1><span class="pill" id="tlmPill">idle</span></header>
+  <p id="tlmState">Star Citizen isn't running.</p>
+  <div class="grid" id="tlmGrid" hidden>
+    <section class="card" id="tlmShip"></section>
+    <section class="card" id="tlmFlight"></section>
+    <section class="card" id="tlmWarn"></section>
+    <section class="card" id="tlmPower"></section>
+    <section class="card" id="tlmVitals"></section>
+    <section class="card" id="tlmWallet"></section>
+    <section class="card" id="tlmEvents"></section>
+  </div>
+</div>
+<script>
+(function(){
+  try{ document.documentElement.setAttribute('data-theme', localStorage.getItem('sc_theme') || 'dark'); }catch(e){}
+  var LIVE_URL = new URL('/api/telemetry/live', location.href).href;
+  var STATUS_URL = new URL('/api/telemetry/status', location.href).href;
+  var $ = function(id){ return document.getElementById(id); };
+  var WARN = {pwr:'Power',wpn:'Weapons',thr:'Thrusters',shld:'Shields',cool:'Cooling',
+              qdrv:'Quantum',radr:'Radar',prox:'Proximity',hit:'Hit',misl:'Missile'};
+  var POWER = {powerplants:'Powerplants',engines:'Engines',weapons:'Weapons',coolers:'Coolers',
+               life_support:'Life support',sensors:'Sensors',shield_generators:'Shield generators',
+               shield_emitters:'Shield emitters'};
+  var reason = '', reasonAt = 0;
+
+  function esc(s){ return String(s).replace(/[&<>"]/g, function(c){
+    return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
+  function num(x){ return typeof x === 'number' && isFinite(x) ? x : 0; }
+  function fmt(x, d){ return num(x).toFixed(d); }
+  function pct(x){ return Math.round(Math.max(0, Math.min(1, num(x))) * 100); }
+  function row(k, v){ return '<div class="row"><span class="k">' + esc(k) + '</span><span class="v">' + v + '</span></div>'; }
+  function bar(label, frac, cls, extra){
+    return row(label, pct(frac) + '%' + (extra || '')) +
+      '<div class="bar ' + (cls || '') + '"><i style="width:' + pct(frac) + '%"></i></div>';
+  }
+  function pctOf(o){ return o && num(o.max) > 0 ? num(o.current) / num(o.max) : 0; }
+  function role(r){ r = String(r || '').toLowerCase().replace(/_/g, ' '); return r ? r.charAt(0).toUpperCase() + r.slice(1) : ''; }
+
+  function render(d){
+    var st = d.state || 'idle';
+    var snap = d.snapshot || {};
+    var veh = (snap.vehicle || {}).state || null;
+    var actor = snap.actor || {};
+    var vit = actor.vitals || {};
+    var ast = actor.state || {};
+    var pill = $('tlmPill');
+    pill.textContent = st;
+    pill.className = 'pill' + (st === 'live' ? ' live' : '');
+
+    var msg = '';
+    if(st === 'idle') msg = "Star Citizen isn't running.";
+    else if(st === 'waiting') msg = 'Game is starting. Waiting for telemetry.';
+    else if(st === 'off') msg = reason === 'schema' ? 'No telemetry schema for this game build.'
+      : "Telemetry is off in the game. Turn it on in CSR's Telemetry settings.";
+    $('tlmState').hidden = !msg;
+    $('tlmState').textContent = msg;
+    $('tlmGrid').hidden = st !== 'live';
+    if(st !== 'live') return;
+
+    // ship
+    var sh = $('tlmShip');
+    if(veh){
+      sh.innerHTML = '<h2>Ship</h2>' + row('Ship', esc(veh.class_name || veh.name || '')) +
+        row('Seat', esc(role(ast.crew_role) || role(ast.locomotion)));
+    } else {
+      sh.innerHTML = '<h2>Ship</h2><div class="none">Not in a ship.</div>';
+    }
+    sh.hidden = false;
+
+    // flight
+    var fl = $('tlmFlight');
+    var ins = veh && veh.flight && veh.flight.instruments;
+    if(ins){
+      var g = ins.g_meter || {}, b = ins.boost || {};
+      var h = '<h2>Flight</h2><div class="big">' + fmt(ins.speed, 0) + ' <small>m/s</small></div>' +
+        row('G', fmt(g.current, 1) + ' / ' + fmt(g.max, 1));
+      if(typeof ins.altitude === 'number' && ins.altitude < 1e38) h += row('Altitude', fmt(ins.altitude, 0) + ' m');
+      h += bar('Hydrogen', ins.hydrogen_fuel, num(ins.hydrogen_fuel) < .15 ? 'warn' : '');
+      h += bar('Quantum fuel', ins.quantum_fuel, num(ins.quantum_fuel) < .15 ? 'warn' : '');
+      h += bar('Boost reserves', b.reserves, b.critical ? 'crit' : '',
+               b.critical ? '<span class="flag">CRITICAL</span>' : '');
+      fl.innerHTML = h; fl.hidden = false;
+    } else { fl.hidden = true; }
+
+    // warnings
+    var wa = $('tlmWarn');
+    var ann = (veh && veh.annunciators) || null;
+    if(ann){
+      var chips = '';
+      Object.keys(WARN).forEach(function(k){
+        var s = ann[k];
+        if(!s || s === 'NOMINAL' || s === 'OFF') return;
+        var cls = /^MAJOR/.test(s) ? 'major' : 'minor';
+        chips += '<span class="chip ' + cls + '">' + WARN[k] + '</span>';
+      });
+      wa.innerHTML = '<h2>Warnings</h2>' + (chips ? '<div class="chips">' + chips + '</div>' : '<div class="none">None</div>');
+      wa.hidden = false;
+    } else { wa.hidden = true; }
+
+    // power
+    var pw = $('tlmPower');
+    var pwr = veh && veh.power;
+    if(veh){
+      var pc = '';
+      Object.keys(POWER).forEach(function(k){
+        pc += '<span class="chip ' + (pwr && pwr[k] ? 'on' : 'off') + '">' + POWER[k] + '</span>';
+      });
+      pw.innerHTML = '<h2>Power</h2><div class="chips">' + pc + '</div>';
+      pw.hidden = false;
+    } else { pw.hidden = true; }
+
+    // vitals
+    var vi = '<h2>Vitals</h2>';
+    vi += bar('Health', pctOf(vit.health), pctOf(vit.health) < .3 ? 'crit' : '');
+    vi += bar('Oxygen', pctOf(vit.oxygen), pctOf(vit.oxygen) < .3 ? 'crit' : '');
+    vi += bar('Hunger', pctOf(vit.hunger), pctOf(vit.hunger) < .2 ? 'warn' : '');
+    vi += bar('Thirst', pctOf(vit.thirst), pctOf(vit.thirst) < .2 ? 'warn' : '');
+    vi += row('Heart rate', fmt(vit.heart_rate, 0) + ' bpm');
+    vi += row('Body temperature', fmt((vit.body_temperature || {}).current, 1) + ' °C');
+    $('tlmVitals').innerHTML = vi;
+
+    // wallet
+    $('tlmWallet').innerHTML = '<h2>Wallet</h2><div class="big">' +
+      Math.round(num(ast.uec_balance)).toLocaleString('en-US') + ' <small>aUEC</small></div>';
+
+    // events
+    var ev = (d.events || []).slice(-10).reverse();
+    var li = ev.map(function(e){
+      var t = new Date(num(e.t) * 1000).toLocaleTimeString([], {hour12:false});
+      return '<li><span>' + esc(String(e.type || '').toLowerCase().replace(/_/g, ' ')) + '</span><span>' + t + '</span></li>';
+    }).join('');
+    $('tlmEvents').innerHTML = '<h2>Events</h2>' + (li ? '<ul>' + li + '</ul>' : '<div class="none">None yet.</div>');
+  }
+
+  function getReason(){
+    var now = Date.now();
+    if(now - reasonAt < 5000) return Promise.resolve();
+    reasonAt = now;
+    return fetch(STATUS_URL, {cache:'no-store'}).then(function(r){ return r.json(); })
+      .then(function(s){ reason = ((s || {}).recorder || {}).reason || ''; })
+      .catch(function(){});
+  }
+
+  var busy = false;
+  function tick(){
+    if(!busy){
+      busy = true;
+      fetch(LIVE_URL, {cache:'no-store'}).then(function(r){ return r.json(); })
+        .then(function(d){
+          d = d || {};
+          if(d.state && d.state !== 'live' && d.state !== 'idle') return getReason().then(function(){ render(d); });
+          render(d);
+        })
+        .catch(function(){ render({state:'idle'}); })
+        .then(function(){ busy = false; });
+    }
+    setTimeout(tick, document.visibilityState === 'visible' ? 250 : 2000);
+  }
+  tick();
+})();
+</script>
+</body></html>
+"""
+
+
+def LIVE_HTML():
+    return LIVE_TEMPLATE.replace(
+        "/*__FONTS__*/", sc_names.fetch_google_fonts_embed(cache_file("sc_fonts_embed.css")))
+
+
 _RESOLVERS_LOADED = False
 
 
@@ -12072,6 +12312,8 @@ def serve(out_path, port=7878, explicit_logs=None, open_browser=True,
                     self._send(200, BOOT_HTML(), "text/html; charset=utf-8")   # scanning → terminal
                 else:
                     self._send(200, ONBOARD_HTML(), "text/html; charset=utf-8")
+            elif p == "/live":
+                self._send(200, LIVE_HTML(), "text/html; charset=utf-8")
             elif p == "/api/status":
                 state["seen"] = time.time()    # heartbeat — see the watchdog in serve()
                 self._send(200, json.dumps({
