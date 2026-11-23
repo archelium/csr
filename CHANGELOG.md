@@ -65,6 +65,8 @@ uses [Semantic Versioning](https://semver.org/) (MAJOR.MINOR.PATCH).
 - Phones and tablets: the top bar scrolls away and the page menu takes the top of the
   screen. Menus that don't fit scroll sideways with a fade at the edge. Headline tiles
   sit two to a row, and the banner shows figures only.
+- The top bar on a phone is two rows: page title with pins, alerts and status, then the
+  account picker with backup, refresh and theme. The scope line under it is one line.
 - **Crafting catalogue updated to 4.10.3**: 1,628 blueprints. The Skarnov rifle and its
   battery and the Raider Camo Palatino pieces now match.
 

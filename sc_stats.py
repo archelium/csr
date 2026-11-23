@@ -8376,6 +8376,31 @@ nav a::after{background:var(--menu-bg);border-color:var(--glass-line);box-shadow
 /* phones and tablets: the top bar scrolls away so the menu gets the top of the screen */
 @media(max-width:760px){
   .topbar{position:relative}
+  /* two rows: the page title with pins, alerts and status, then the scope picker with
+     backup, refresh and theme. The handle, scope badge and patch arrows are already in
+     the picker */
+  .topbar{display:grid;grid-template-columns:minmax(0,1fr) auto auto auto;
+    grid-template-areas:"title pin bell status" "scope data refresh theme";
+    align-items:center;column-gap:2px;row-gap:8px;padding:10px 12px 8px}
+  .tb-title{grid-area:title;min-width:0}
+  .tb-titlerow{flex-wrap:nowrap;min-width:0}
+  #secTitle{font-size:21px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+  #secScope,.tb-sub,.tb-sep,#patchPrev,#patchNext{display:none!important}
+  .tb-controls{display:contents}
+  #pinWrap{grid-area:pin} .bellwrap{grid-area:bell} .statuswrap{grid-area:status}
+  #dataBtn{grid-area:data} #refreshBtn{grid-area:refresh} #themeBtn{grid-area:theme}
+  .tb-scope{grid-area:scope;order:0;width:auto;min-width:0;margin-right:6px}
+  .scopewrap{flex:1;min-width:0}
+  .scopepill{width:100%;height:36px;padding:0 12px;gap:7px;min-width:0}
+  .scopepill .sp-acct{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .iconbtn,.statusbtn{width:36px;height:36px}
+  #pinBtn.pinlbl{padding:0 9px}
+  .statusbtn .st-tx{display:none}
+  /* the scope line on one line, swipe for the rest */
+  .patch-meta{white-space:nowrap;overflow-x:auto;scrollbar-width:none;margin-bottom:12px}
+  .patch-meta::-webkit-scrollbar{display:none}
+  .patch-meta{-webkit-mask-image:linear-gradient(90deg,#000 calc(100% - 36px),transparent);mask-image:linear-gradient(90deg,#000 calc(100% - 36px),transparent)}
+
   .snav{border-radius:0;border-left:0;border-right:0;margin-left:-14px;margin-right:-14px;padding:4px 8px}
   .snav-b{padding:7px 11px;font-size:13px;gap:7px}
   .snav-cap{margin:8px 2px 12px;font-size:13px}
@@ -8394,6 +8419,8 @@ nav a::after{background:var(--menu-bg);border-color:var(--glass-line);box-shadow
   .kpi{padding:12px 14px}
   .kpi .v{font-size:26px}
 }
+/* narrow phones: the picker keeps channel and handle. The scope line under it names the patch */
+@media(max-width:440px){ #spPatch,.scopepill i.sp-dot:nth-of-type(2){display:none} }
 .ac[data-bpplan]:hover{border-color:var(--cyan)}
 .alb{display:grid;grid-template-columns:repeat(auto-fill,minmax(168px,1fr));gap:10px}
 .ac{position:relative;background:var(--tile);border:1px solid var(--track-line);border-radius:8px;overflow:hidden;display:flex;flex-direction:column;min-width:0}
