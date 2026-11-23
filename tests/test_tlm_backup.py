@@ -185,13 +185,12 @@ class Import(BackupBase):
         self.assertEqual(sc_stats.import_telemetry(es, {}, root=self.root_b), 1)
 
     def test_trailing_newline_rejected(self):
+        nl = chr(10)
         self.assertEqual(sc_stats.import_telemetry(
-            [{"file": "20260501-100000.jsonl.gz
-"}, {"file": "20260502-100000.jsonl.gz", "channel": "LIVE
-"}],
-            {"LIVE
-/a.jsonl.gz": b"x", "LIVE/b.jsonl.gz
-": b"x"}, root=self.root_b), 0)
+            [{"file": "20260501-100000.jsonl.gz" + nl},
+             {"file": "20260502-100000.jsonl.gz", "channel": "LIVE" + nl}],
+            {"LIVE" + nl + "/a.jsonl.gz": b"x", "LIVE/b.jsonl.gz" + nl: b"x"},
+            root=self.root_b), 0)
 
     def test_big_sum_rejected(self):
         e = {"file": "20260501-100000.jsonl.gz", "sum": {"a": "x" * 300000}}
