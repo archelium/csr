@@ -9377,8 +9377,15 @@ function placesHTML(v){
 // From recordings matched to sessions (v.tlm). A stat a recording didn't have is absent:
 // its tile is left out, never shown as 0. Coverage is counted per stat.
 const tlmStats = v => (v.tlm && v.tlm.stats) || {};
+const tlmOn = v => !!(v.tlm && v.tlm.n_tlm);
 const tlmSess = n => `${fmt(n)} ${n===1?'session':'sessions'}`;
-const tlmTanks = x => (!x ? '0' : x>=10 ? fmt(Math.round(x)) : x>=1 ? x.toFixed(1) : x.toFixed(2))+' tanks';
+// whole tanks without ".0", two decimals below 1
+const tlmTanks = x => {
+  if(!x) return '0 tanks';
+  if(x<0.01) return '<0.01 tanks';
+  const s = x>=1 ? (Number.isInteger(+x.toFixed(1)) ? fmt(Math.round(x)) : x.toFixed(1)) : x.toFixed(2);
+  return s+(s==='1'?' tank':' tanks');
+};
 const tlmNum = x => fmt(+x.toFixed(2));
 // tiles: {k: key or [keys], ic, label, f(values...)}. opts.keys: stats used by opts.body.
 function tlmCard(title, sub, tiles, v, opts={}){
@@ -9454,10 +9461,10 @@ function tlmWallet(v){
   ], v, {id:'tlm-wallet', keys:['uec_end'], body:`<div id="tlmWalletChart"></div>`});
 }
 function tlmWalletMount(v){ stepLine($('#tlmWalletChart'), (v.tlm||{}).wallet_series||[]); }
-const IFCS_NAMES={ifcs_esp:'ESP', ifcs_g_safe:'G-safe', ifcs_g_safe_disabled_by_boost:'G-safe off on boost',
-  ifcs_core:'IFCS core', advanced_hud_enabled_scm:'Advanced HUD (SCM)', advanced_hud_enabled_nav:'Advanced HUD (NAV)',
-  ifcs_spacebreak_enables_boost:'Spacebrake boost'};
-const ifcsName=k=>IFCS_NAMES[k] || (s=>s.charAt(0).toUpperCase()+s.slice(1))(k.replace(/^ifcs_/,'').replace(/_/g,' '));
+// the settings a player toggles, in card order. The rest stay recorded, not shown.
+const IFCS_SHOWN=[['ifcs_coupled','Coupled'], ['ifcs_esp','ESP'], ['ifcs_g_safe','G-safe'],
+  ['ifcs_cruise_mode','Cruise'], ['ifcs_speed_limiter','Speed limiter'], ['ifcs_proximity_assist','Proximity assist'],
+  ['ifcs_gravity_compensation','Gravity compensation'], ['flight_light_amplification','Light amplification']];
 function tlmFlightCards(v){
   const km=m=>(m>=100000 ? fmt(Math.round(m/1000)) : (m/1000).toFixed(1))+' km';
   const rec=tlmCard('Flight records', '', [
@@ -9486,9 +9493,10 @@ function tlmFlightMount(v){
   const fi=$('#tlmIfcs');
   if(fi && st.t_ifcs){
     const den=(st.t_flying_ifcs||{}).v||0;
-    hbars(fi, Object.entries(st.t_ifcs.v).filter(([,s])=>s>0).sort((a,b)=>b[1]-a[1]).map(([k,s])=>{
-      const pct=den ? Math.min(100, Math.round(100*s/den)) : 0;
-      return {label:ifcsName(k), value:pct, disp:pct+'%', title:loadSecs(s)};
+    const t=st.t_ifcs.v;
+    hbars(fi, IFCS_SHOWN.filter(([k])=>t[k]>0).map(([k,name])=>{
+      const pct=den ? Math.min(100, Math.round(100*t[k]/den)) : 0;
+      return {label:name, value:pct, disp:pct+'%', title:loadSecs(t[k])};
     }));
   }
   const pr=$('#tlmPresets');
@@ -9571,8 +9579,9 @@ function secFlight(v){
       ])+
       barsCard('Systems visited','sessions with location activity there','sysBars')+
       noteFold(
-        `Systems come from location names in the log. Fuel and distance aren't logged.`,
-        `Stanton, Pyro and Nyx are the only live systems; a session counts for one if any location there shows up. Refuelling is a server-side transaction and the client only logs an error with no amount, so fuel used and refuel spend can't be shown. Fuel pods bought at a shop count under Economy — that's a purchase, not a refuel.`)
+        `Systems come from location names in the log. `+(tlmOn(v) ? `Fuel and distance aren't in the game log. Flight records come from telemetry.`
+          : `Fuel and distance aren't logged. Turn on telemetry in Backup &amp; transfer to record them.`),
+        `Stanton, Pyro and Nyx are the only live systems; a session counts for one if any location there shows up. Refuelling is a server-side transaction and the client only logs an error with no amount`+(tlmOn(v) ? `. Fuel used comes from telemetry, refuel spend isn't recorded.` : `, so fuel used and refuel spend can't be shown.`)+` Fuel pods bought at a shop count under Economy — that's a purchase, not a refuel.`)
     )+
     group(3,'planet','Where you\u2019ve been','Jurisdictions, armistice zones and hangar requests from the HUD, plus the places you landed',
       (v.hud_known ? kpiRow([
@@ -9839,7 +9848,8 @@ function secEconomy(v){
       barsCard('What you buy','purchases by item category','catBars')+`</div>`)+commRow+
     tlmGroup(3,'credits',tlmWallet(v))+
     noteFold(
-      `Spend is real — the log carries the price of every purchase. Balance, earnings and sales aren't logged.`,
+      `Spend is real — the log carries the price of every purchase. `+(tlmOn(v) ? `Balance, earnings and sales aren't in the game log. Wallet is from telemetry.`
+        : `Balance, earnings and sales aren't logged. Turn on telemetry in Backup &amp; transfer to record them.`),
       `Purchases are grouped by item category rather than store; the shop codes in the log aren't reliable brand names. Fleet size is your ASOP list read at a terminal, so it includes ships bought with aUEC as well as pledges.`);
   const bought=(v.top_items||[]).map(([n,amt,q])=>({label:n, value:amt, disp:auec(amt)+' · ×'+fmt(q), href:wikiURL(n),
     ak: lart('ship', n) ? 'ship' : 'item'}));
