@@ -176,7 +176,7 @@ Patch* to filter to that patch (and *↩ View career* to reset).
   Commander toggle) — the only builds that still logged combat client-side
 - **Missions** — outcomes, completion rate, mission types, contracts by name (4.5+), and cargo hauling: SCU delivered by commodity and destination
 - **Economy** — **real aUEC spent**, top items bought, what you buy, cargo & commodities
-- **Blueprints** — every crafting blueprint the game has handed you (4.7+), searchable, plus what you're still missing against the full ~1,600-blueprint catalogue; armour as sets (which one is a piece from complete), ship weapons as S1–S6 ladders, components as a type × size grid; and a **planner**: which missions drop a blueprint, what faction standing they need, and the reputation floor your completed contracts put you at
+- **Blueprints** — every crafting blueprint the game has handed you (4.7+), searchable, plus what you're still missing against the full ~1,600-blueprint catalogue; its own menu of pages: armour as sets (which one is a piece from complete), ship weapons as S1–S6 ladders, components as a type × size grid, every blueprint as a card, search and pins. Click any blueprint for the missions that drop it, the faction standing they need, and the reputation floor your completed contracts put you at
 - **Activity** — playtime by month, where your hours go (starting up, loading screens,
   main menu, aboard a ship, on foot), weekday×hour heatmap, session-length mix, streaks
 - **Your Machine** — the rig you played on (CPU, GPU + VRAM, memory, driver, renderer,
@@ -210,7 +210,7 @@ Patch* to filter to that patch (and *↩ View career* to reset).
   the dashboard within seconds of a crash, a lost player or a genuine disconnect, saying what broke and
   whether it was your PC or CIG's servers. Routine disconnect chatter is filtered out.
   A **🔔 bell in the top bar** carries a badge and keeps every alert raised while the page
-  has been open; *Stability → Live monitoring* shows the watcher's status lights. CSR also checks whether
+  has been open; the line at the top of every *Stability* page shows the watcher's status lights. CSR also checks whether
   `StarCitizen.exe` is running, so it knows the difference between a log being written
   because you're playing and one being written as the game shuts down — it reads only the
   process *name*, the same thing Task Manager lists, and never opens a handle to the game

@@ -8,29 +8,40 @@ uses [Semantic Versioning](https://semver.org/) (MAJOR.MINOR.PATCH).
 ## [Unreleased]
 
 ### Added
-- **Every blueprint has a row on Blueprints.** Totals per category on top, then the
-  armour sets, then the same rows for everything else, a square per blueprint.
+- **Blueprints has its own menu.** A menu down the left of the page: Overview, Find,
+  Pinned, one page per collection (Armour, Ship components, Ship weapons, FPS weapons,
+  Magazines & gear) with your count on each, Standing, Your library and Unlock history.
+  One page on screen at a time. CSR remembers the page you were on.
+- **Stability has the same menu.** Overview, Crashes, Back to the menu, Lost your
+  player, Session outcomes, Servers and Home inventory, each with its number in the
+  menu. The Overview has the four headline numbers, your last crash, rough sessions by
+  patch and what has crashed you. Clicking a cause opens Crashes filtered to it.
+- **Live monitoring is one line** at the top of every Stability page: game state and
+  each channel's idle time.
+- **Every blueprint has a row.** Each collection page lists its blueprints as rows, a
+  square per blueprint.
   - **Ship components**: a row per type and size, a column per class (Military,
     Civilian, Industrial, Stealth, Competition), the grade on each square.
   - **FPS weapons**: a row per gun, the base gun first, then its variants.
-  - **Magazines, mining & more**: magazines and mining lasers by maker, one-size ship
-    weapons, armour and flight-suit pieces outside a set, clothing and decor.
+  - **Magazines & gear**: magazines and mining lasers by maker, clothing and decor.
+  - **Armour** adds the pieces outside a set. **Ship weapons** adds the one-size weapons.
   - Hover a square for its name, class, grade and maker. Amber: received in the last
     30 days. Started, Complete and Untouched tabs on every board.
-- **Album** under the boards: every blueprint as a card with its picture, size, class,
-  grade and maker. One category at a time, owned or missing, search. A missing card
-  says how many missions drop it.
-- **Click any blueprint for its missions.** Every square, set piece, ladder dot and album
-  card opens the planner on it: the missions that drop it, the standing each needs, the
-  drop chance and a wiki link per mission.
+- **Cards view.** Each collection page switches between Rows and Cards: every blueprint
+  as a card with its picture, size, class, grade and maker. Owned or missing, search. A
+  missing card says how many missions drop it.
+- **Click any blueprint for its missions.** Every square, set piece, ladder dot, card,
+  search result and latest unlock opens a panel on the right: picture, owned or missing,
+  pin, the missions that drop it, the standing each needs, the drop chance and a wiki
+  link per mission. Esc closes it.
 - **Find a blueprint.** A search at the top of Blueprints: name, maker, class or grade.
   Each result says owned or missing and the next step: "open now" with the mission, or
-  how much rep you're short and with whom. Open a result for every mission that drops it.
-- **Pinned blueprints.** Pin with ☆ in search, the album, or the Pin button in the
-  planner. The ★ next to save lists your pins from any page with each one's next step,
-  and counts the ones still to get. Click one to open it in the planner. Pins are saved
+  how much rep you're short and with whom. The search box in the menu goes straight to it.
+- **Pinned blueprints.** Every blueprint has a ☆ Pin button. Pinned ones turn amber and
+  read ★ Pinned. **Pinned** in the top bar lists your pins from any page with each one's
+  next step, and counts the ones still to get. Click one for its missions. Pins are saved
   in your browser, per account.
-- **Album pages.** The album pages through 48 cards at a time.
+- **Card pages.** Cards page through 48 at a time.
 - **Retired or unknown missions are folded** under a line you can open, below the
   missions you can run.
 - **Blueprints with no known source are marked.** The catalogue lists every craftable
@@ -44,6 +55,9 @@ uses [Semantic Versioning](https://semver.org/) (MAJOR.MINOR.PATCH).
   battery and the Raider Camo Palatino pieces now match.
 
 ### Fixed
+- Notes and callouts use the full width of their box.
+- Crash rows are one line. The stock "fault inside Star Citizen" sentence is gone from
+  each row. A sentence about that crash still shows after the place.
 - **Every web link opens in a new tab**, including any built without one.
 - **Stealth components showed as "Sth/2/A Umbra" under Other.** The game writes stealth
   as "Sth". They now read Umbra, Shimmer and Veil, under ship components.

@@ -6866,6 +6866,9 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
   /* fixed stamp column: line 2 and the details indent to exactly where line 1's text starts */
   .crow .td{flex:none;width:120px;min-width:120px}
   .crow .cl2{align-items:center;min-height:24px;padding-left:var(--cin)}
+  .crow .cl1{align-items:center}
+  .crow .cl1 .tw .cs{color:var(--dim)}
+  .crow .cl1 .tv{flex:none;white-space:nowrap}
   .crow .cl1 .tw{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted)}
   .crow .cs{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
     font-size:12px;color:var(--dim)}
@@ -7983,12 +7986,6 @@ nav a::after{background:var(--menu-bg);border-color:var(--glass-line);box-shadow
 :root[data-theme="light"] .bgrid td.full b,:root[data-theme="light"] .bgrid td.full span{color:#fff}
 .bgrid td.na{border-color:transparent}
 
-/* 4. Planner: "Plan a blueprint" no longer stretches to the height of Standing floors
-      (it was ~600px of empty card before a search). */
-.grid2:has(#bpPlan){align-items:start}
-/* ...and stays in view (sticky under the topbar) while you scroll Standing floors */
-.grid2:has(#bpPlan)>.card:first-child{position:sticky;top:104px}
-#bpPlanQ{width:100%}
 .bppl{font-size:11px}
 
 /* 5. Library list: date column, name and category align on one baseline grid */
@@ -7997,14 +7994,12 @@ nav a::after{background:var(--menu-bg);border-color:var(--glass-line);box-shadow
 #bpList .tev .tv{margin-left:0}
 
 /* ==== spec 6: HUD polish (Nov 2026) ==== */
-/* type baseline: one scale, nothing under 12px, mono for numbers and labels only,
-   notes wrap at a readable width on any window */
+/* type baseline: one scale, nothing under 12px, mono for numbers and labels only */
 :root{--fs-xs:12px;--fs-sm:13px;--fs-md:14px}
 .kpi .l{font-size:var(--fs-xs);letter-spacing:.08em}
 .kpi .s,.gs,.card h3 .u{font-family:var(--font-display);font-size:var(--fs-sm);letter-spacing:0;
   text-transform:none;color:var(--muted)}
 .callout{font-size:var(--fs-md);line-height:1.6}
-.callout>div{max-width:82ch}
 .patch-meta,.foot-disc,.side-foot,.bppl{font-size:var(--fs-xs)}
 .bar-row .nm{font-size:var(--fs-md)}
 .bar-row .vv{font-size:var(--fs-sm)}
@@ -8159,7 +8154,12 @@ nav a::after{background:var(--menu-bg);border-color:var(--glass-line);box-shadow
 .pinwrap .iconbtn{position:relative;overflow:visible}
 .pinwrap .iconbtn svg{width:18px;height:18px;display:block}
 .pinwrap.has .iconbtn{color:var(--amber);border-color:rgba(244,169,42,.5)}
-.pbadge{background:var(--amber);color:#06121f}
+#pinBtn.pinlbl{width:auto;padding:0 10px 0 9px;gap:7px;display:inline-flex;align-items:center}
+#pinBtn.pinlbl .pl-t{font-family:var(--font-mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase}
+#pinBtn.pinlbl .pl-n{display:none;background:var(--amber);color:#06121f;font-family:var(--font-mono);font-size:11px;font-weight:700;
+  border-radius:8px;padding:0 6px;line-height:17px}
+#pinBtn.pinlbl .pl-n.on{display:inline-block}
+@media(max-width:760px){ #pinBtn.pinlbl .pl-t{display:none} }
 .pinmenu{width:380px}
 .pm-it{display:flex;align-items:center;gap:10px;padding:10px 13px;border-bottom:1px solid var(--line);cursor:pointer}
 .pm-it:last-child{border-bottom:0}
@@ -8170,15 +8170,18 @@ nav a::after{background:var(--menu-bg);border-color:var(--glass-line);box-shadow
 .pm-tx span{font-size:11.5px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .pm-tx .bpst{margin:0 5px 0 0}
 .pm-empty{padding:14px 13px;font-size:13px;color:var(--muted)}
-.bpin.lbl{width:auto;padding:0 9px;height:26px;margin-left:auto;font-size:12px;font-family:var(--font-mono);letter-spacing:.04em;
-  border:1px solid var(--line);color:var(--muted)}
-.bpin.lbl.on{border-color:var(--amber);color:var(--amber)}
+.bpin.lbl{width:auto;padding:0 12px;height:30px;margin-left:auto;font-size:12.5px;font-family:var(--font-mono);letter-spacing:.04em;
+  border:1px solid var(--amber);color:var(--amber);white-space:nowrap}
+.bpin.lbl.sm{height:24px;padding:0 8px;font-size:11px;margin-left:0;border-color:var(--line);color:var(--muted)}
+.bpin.lbl:hover{border-color:var(--amber);color:var(--amber)}
+.bpin.lbl.on,.bpin.lbl.sm.on{background:var(--amber);border-color:var(--amber);color:#06121f}
+.ac .pic .bpin.lbl.sm{background:rgba(7,11,17,.8);color:#cfe3f3;border-color:rgba(91,209,230,.35)}
+.ac .pic .bpin.lbl.sm.on{background:var(--amber);color:#06121f;border-color:var(--amber)}
 .bpret{margin-top:8px}
 .bpret summary{cursor:pointer;font-family:var(--font-mono);font-size:11px;letter-spacing:.06em;color:var(--dim);padding:4px 2px}
 .bpret summary:hover{color:var(--muted)}
-.bph-x .bpph .bpin{display:none}
 .bph-c{flex:none;width:14px;height:14px;display:grid;place-items:center;color:var(--dim)}
-.bph-c::before{content:'';width:6px;height:6px;border-right:1.5px solid currentColor;border-bottom:1.5px solid currentColor;transform:translateY(-2px) rotate(45deg)}
+.bph-c::before{content:'';width:6px;height:6px;border-right:1.5px solid currentColor;border-bottom:1.5px solid currentColor;transform:translateX(-2px) rotate(-45deg)}
 .bphit.open .bph-c::before{transform:translateY(2px) rotate(-135deg)}
 .bph-x{padding:4px 0 12px 76px}
 .bpin{all:unset;box-sizing:border-box;flex:none;cursor:pointer;width:24px;height:24px;display:inline-grid;place-items:center;border-radius:5px;
@@ -8199,6 +8202,74 @@ nav a::after{background:var(--menu-bg);border-color:var(--glass-line);box-shadow
 .bxtot .bxkey span{display:inline-flex;align-items:center;gap:6px}
 .bxtot .bxkey .bsq{width:14px;height:14px;cursor:default;border-radius:3px}
 .bsq[data-bpplan]:hover,.bdot[data-bpplan]:hover{outline:2px solid var(--cyan);outline-offset:1px}
+/* an in-page app: a menu down the left, one page at a time on the right. Blueprints and Stability */
+.sapp{display:grid;grid-template-columns:220px minmax(0,1fr);gap:20px;align-items:start}
+.stree{position:sticky;top:96px;display:flex;flex-direction:column;border:1px solid var(--line);border-radius:12px;background:var(--tile);padding:10px}
+.stree .t-h{font-family:var(--font-mono);font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--dim);padding:12px 9px 5px}
+.stree button{all:unset;box-sizing:border-box;display:flex;align-items:center;gap:8px;padding:7px 9px;border-radius:7px;font-size:13px;color:var(--muted);cursor:pointer}
+.stree button span{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.stree button b{font-family:var(--font-mono);font-size:11px;font-weight:400;color:var(--dim)}
+.stree button b.warn{color:var(--amber)} .stree button b.bad{color:var(--red)} .stree button b.ok{color:var(--green)}
+.stree button:hover{color:var(--txt);background:rgba(255,255,255,.03)}
+.stree button.on{background:var(--tint-cyan);color:var(--cyan)}
+.stree button:focus-visible{outline:2px solid var(--cyan)}
+.stree button.sub{padding-left:20px;font-size:12.5px}
+.stree .t-q{width:100%;box-sizing:border-box;margin-bottom:4px;background:var(--panel2);border:1px solid var(--line);border-radius:7px;padding:7px 9px;color:var(--txt);font:inherit;font-size:12.5px}
+.smain{min-width:0;display:flex;flex-direction:column;gap:20px}
+.smain>*{margin-top:0!important}
+.smain>.phero{margin-bottom:0}
+.sp-h{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap}
+.sp-h h2{margin:0;font-family:var(--font-display);font-size:20px;letter-spacing:.06em;text-transform:uppercase;color:var(--txt)}
+.sp-h>span{font-size:13px;color:var(--muted)}
+/* Stability: the live watcher as one line on every page */
+.lstrip>.card{padding:10px 14px;margin:0}
+.lstrip #watchBody{display:flex;align-items:center;gap:10px 16px;flex-wrap:wrap}
+.lstrip .wscan{flex:1 1 320px;min-width:0;padding:0;border:0;background:none;margin:0;box-shadow:none}
+.lstrip .wscan-top{margin:0}
+.lstrip .wtrack,.lstrip .wbar{display:none}
+.lstrip .slights{display:flex;gap:8px;margin:0;flex-wrap:wrap}
+.lstrip .slight{padding:4px 10px;min-height:0;gap:8px}
+.lstrip .slight .sm{font-size:0;line-height:1}
+.lstrip .slight .sm b{font-size:11px}
+.stov{align-items:start}
+#bugMsg{font-size:13px;line-height:1.55;color:var(--muted)}
+.sp-h .vt{margin-left:auto;display:flex;border:1px solid var(--line);border-radius:7px;overflow:hidden;align-self:center}
+.sp-h .vt button{all:unset;cursor:pointer;padding:5px 14px;font-family:var(--font-mono);font-size:11px;color:var(--muted)}
+.sp-h .vt button.on{background:var(--cyan);color:#06121f}
+.sp-h .vt button:focus-visible{outline:2px solid var(--cyan)}
+#bpBoard{display:flex;flex-direction:column;gap:20px}
+#bpBoard>*{margin-top:0!important}
+.bpov{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1fr);gap:20px;align-items:start}
+.bpov-c{display:flex;flex-direction:column;gap:20px;min-width:0}
+.bpov-c>.card{margin:0}
+.bprec .tev[data-bpplan]{cursor:pointer}
+.bprec .tev[data-bpplan]:hover .tw{color:var(--cyan)}
+.bxr-c[data-bpv]{cursor:pointer}
+.bxr-c[data-bpv]:hover{border-color:var(--cyan)}
+.bph-r[data-bpplan]{cursor:pointer}
+.bpdr{position:fixed;top:0;right:0;bottom:0;width:min(470px,100vw);z-index:90;box-sizing:border-box;padding:18px 20px 28px;overflow:auto;
+  background:linear-gradient(180deg,var(--panel),var(--panel2));border-left:1px solid var(--line);box-shadow:-18px 0 48px rgba(0,0,0,.5);
+  transform:translateX(105%);transition:transform .18s ease;visibility:hidden}
+.bpdr.on{transform:none;visibility:visible}
+@media (prefers-reduced-motion:reduce){ .bpdr{transition:none} }
+.bpdr .dr-h{display:flex;align-items:center;gap:10px;margin-bottom:12px}
+.bpdr .dr-x{all:unset;cursor:pointer;margin-left:auto;font-family:var(--font-mono);font-size:12px;color:var(--dim);border:1px solid var(--line);border-radius:6px;padding:3px 9px}
+.bpdr .dr-x:hover{color:var(--txt)}
+.bpdr .dr-x:focus-visible{outline:2px solid var(--cyan)}
+.bpdr .dr-pic{position:relative;aspect-ratio:16/9;border-radius:8px;overflow:hidden;margin-bottom:12px;background:#0b1520;display:grid;place-items:center;color:var(--dim)}
+.bpdr .dr-pic>svg{width:36px;height:36px}
+.bpdr .dr-pic img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+.bpdr .bpph{flex-wrap:wrap;row-gap:8px}
+.bpdr .bpph .bpin.lbl{margin-left:0}
+.bpdr .tline .tev{display:grid;grid-template-columns:84px minmax(0,1fr);column-gap:12px;row-gap:3px}
+.bpdr .tline .tev .tv{grid-column:2;margin-left:0;text-align:left;white-space:normal;display:flex;flex-wrap:wrap;gap:4px 8px}
+@media(max-width:1100px){ .bpov{grid-template-columns:1fr} }
+@media(max-width:900px){
+  .sapp{grid-template-columns:1fr}
+  .stree{position:static;flex-direction:row;overflow-x:auto;gap:4px;padding:6px}
+  .stree .t-h,.stree .t-q{display:none}
+  .stree button,.stree button.sub{padding:7px 10px;flex:none}
+}
 .ac[data-bpplan]:hover{border-color:var(--cyan)}
 .alb{display:grid;grid-template-columns:repeat(auto-fill,minmax(168px,1fr));gap:10px}
 .ac{position:relative;background:var(--tile);border:1px solid var(--track-line);border-radius:8px;overflow:hidden;display:flex;flex-direction:column;min-width:0}
@@ -9385,7 +9456,16 @@ function bpListHTML(v){
 // page only decides which squares are filled. Singles are not sets and stay in the list.
 let bpSetTab='partial', bpSetAll=false, bpFamAll=false;
 let bpLead=null;
-const BPB={comp:{tab:'all',all:false}, fps:{tab:'all',all:false}, gear:{tab:'all',all:false}};
+const BPB={comp:{tab:'all',all:false}, fps:{tab:'all',all:false}, gear:{tab:'all',all:false}, arm:{tab:'all',all:false}};
+// the collection's five pages and the catalogue categories on each
+const BP_GROUPS=[['armour','Armour',['Armor','Flight suits']], ['comp','Ship components',['Ship components']],
+  ['sw','Ship weapons',['Ship weapons']], ['fps','FPS weapons',['FPS weapons']],
+  ['gear','Magazines & gear',['Magazines & batteries','Mining & salvage','Clothing','Flair & decor']]];
+function bpGroupOf(cat){ const g=BP_GROUPS.find(x=>x[2].includes(cat)); return g?g[0]:'gear'; }
+// which Blueprints page is open, kept in this browser
+const BPV=(()=>{ let o={}; try{ o=JSON.parse(localStorage.getItem('csr_bp_view')||'{}')||{}; }catch(e){}
+  return {page:o.page||'overview', grp:o.grp||'comp', view:o.view||'rows'}; })();
+function bpSaveView(){ try{ localStorage.setItem('csr_bp_view', JSON.stringify(BPV)); }catch(e){} }
 const BPA={cat:'Ship components', mode:'all', q:'', page:0};
 const BP_CLASSES=['Military','Civilian','Industrial','Stealth','Competition',''];
 const BP_CLS_SHORT={Military:'MIL', Civilian:'CIV', Industrial:'IND', Stealth:'STL', Competition:'CMP', '':'Other'};
@@ -9402,7 +9482,6 @@ function bpRecv(){ const m={}; ((A().career||{}).blueprints||[]).forEach(r=>{ if
 // standing is reputation, which the game never writes to the log. So the planner shows
 // the gate from the SC-Wiki's mission data and, against it, the reputation your
 // MATCHED completions alone would have earned — a floor, never your standing.
-let bpPlanKey='', bpPlanQ='';
 const MIS_F = {DBG:0, TITLE:1, FAC:2, RANK:3, STAND:4, THR:5, REP:6, GAINS:7, HASBP:8, SYS:9, URL:10};
 function bpFloorOf(fac){ const r=((A().career||{}).rep_floor||[]).find(x=>x[0]===fac); return r ? r[1] : 0; }
 function bpRankAt(fac, rep){ const lad=((DATA.missions||{}).factions||{})[fac]; if(!lad) return ''; let now=''; (lad.l||[]).forEach(([n,t])=>{ if(rep>=t) now=n; }); return now; }
@@ -9453,19 +9532,6 @@ function bpPathHTML(row){
       `<span class="tw">${m[MIS_F.URL]?link(m[MIS_F.URL],esc(m[MIS_F.TITLE]),'lk'):esc(m[MIS_F.TITLE])}<span class="bpk">${esc(p.fac||'')}${m[MIS_F.REP]?` \u00b7 +${fmt(m[MIS_F.REP])} rep`:''}${done?` \u00b7 done \u00d7${fmt(done)}`:''}</span></span>`+
       `<span class="tv">${gate} ${st}</span></div>`; }).join('')+`</div>`+goneH;
 }
-function bpPlanHTML(){
-  const M=DATA.missions, cat=DATA.bp_catalog; if(!M||!cat) return '';
-  const q=bpPlanQ.trim().toLowerCase();
-  const hits=q ? cat.rows.filter(r=>r[1].toLowerCase().includes(q)).slice(0,8) : [];
-  const hitsH=hits.map(r=>`<button class="vpill sm ${bpPlanKey===r[0]?'on':''}" data-bpplan="${esc(r[0])}">${esc(r[1])}${r[7]&&r[7].length?'':' <span class="vc">no mission</span>'}</button>`).join('');
-  const row=bpPlanKey ? cat.rows.find(r=>r[0]===bpPlanKey) : null;
-  let out='';
-  if(row) out=bpPathHTML(row);
-  else if(q && !hits.length) out=`<div class="empty">Nothing in the catalogue matches that.</div>`;
-  else if(!q) out=`<div class="empty">Type a blueprint name, or click any blueprint on the page.</div>`;
-  return `<div class="bpbar"><input class="bpq" id="bpPlanQ" type="search" placeholder="Which blueprint?" value="${esc(bpPlanQ)}" spellcheck="false" autocomplete="off"></div>`+
-    (hitsH?`<div class="bpbar" style="margin-top:-4px">${hitsH}</div>`:'')+`<div id="bpPlanOut">${out}</div>`;
-}
 // ---- pinned blueprints: kept in this browser, per account, like your main account
 const BP_PIN_KEY='csr_bp_pins';
 function bpPinMap(){ try{ return JSON.parse(localStorage.getItem(BP_PIN_KEY)||'{}')||{}; }catch(e){ return {}; } }
@@ -9475,15 +9541,18 @@ function bpTogglePin(k){
   if(l.length===(m[currentAccount]||[]).length) l.unshift(k);
   m[currentAccount]=l; try{ localStorage.setItem(BP_PIN_KEY, JSON.stringify(m)); }catch(e){}
 }
-// the star alone in lists and on cards; a labelled button where a blueprint is opened
-const bpPinFace=(on, lbl)=>(on?'\u2605':'\u2606')+(lbl?(on?' Pinned':' Pin'):'');
-function bpPinBtn(k, lbl){ const on=bpPins().includes(k);
-  return `<button type="button" class="bpin${lbl?' lbl':''} ${on?'on':''}" data-bppin="${esc(k)}"${lbl?' data-lbl="1"':''} aria-pressed="${on}" title="${on?'Unpin':'Pin it to track it'}">${bpPinFace(on, lbl)}</button>`; }
+// a labelled button everywhere: small in lists and on cards, full size where a blueprint is opened
+const bpPinFace=on=>on?'\u2605 Pinned':'\u2606 Pin';
+function bpPinBtn(k, big){ const on=bpPins().includes(k);
+  return `<button type="button" class="bpin lbl${big?'':' sm'} ${on?'on':''}" data-bppin="${esc(k)}" aria-pressed="${on}" title="${on?'Unpin':'Pin it to track it'}">${bpPinFace(on)}</button>`; }
+// pinned and still to get
+function bpPinTodo(){ const cat=DATA.bp_catalog; if(!cat) return 0; const by={}; cat.rows.forEach(r=>{ by[r[0]]=r; });
+  return bpPins().map(k=>by[k]).filter(r=>r&&!bpOwnedRow(r)).length; }
 function bpPinsChanged(){
-  const c=$('#content');
-  if(c) c.querySelectorAll('[data-bppin]').forEach(x=>{ const on=bpPins().includes(x.dataset.bppin);
-    x.classList.toggle('on',on); x.textContent=bpPinFace(on, x.dataset.lbl); x.setAttribute('aria-pressed',on); x.title=on?'Unpin':'Pin it to track it'; });
+  document.querySelectorAll('#content [data-bppin], #bpDrawer [data-bppin]').forEach(x=>{ const on=bpPins().includes(x.dataset.bppin);
+    x.classList.toggle('on',on); x.textContent=bpPinFace(on); x.setAttribute('aria-pressed',on); x.title=on?'Unpin':'Pin it to track it'; });
   const pc=$('#bpPinned'); if(pc) pc.innerHTML=bpPinnedHTML();
+  const tp=$('#bptPin'); if(tp) tp.textContent=bpPins().length?fmt(bpPinTodo()):'';
   renderPinMenu();
 }
 // the top-bar pin menu: every pin with its next step, from any page. The badge counts
@@ -9496,38 +9565,53 @@ function renderPinMenu(){
   const b=$('#pinBadge'); if(b){ b.textContent=todo.length; b.classList.toggle('on', todo.length>0); }
   w.classList.toggle('has', todo.length>0);
   const l=$('#pinList'); if(!l) return;
-  if(!rows.length){ l.innerHTML=`<div class="pm-empty">Nothing pinned. Pin a blueprint with \u2606 on the Blueprints page and it shows here with its next step.</div>`; return; }
+  if(!rows.length){ l.innerHTML=`<div class="pm-empty">Nothing pinned. Pin a blueprint on the Blueprints page and it shows here with its next step.</div>`; return; }
   const recv=bpRecv();
   l.innerHTML=todo.concat(got).map(r=>{ const o=bpOwnedRow(r), d=recv[r[0]]||recv['n:'+r[1].toLowerCase()];
     const st=o?['ok','OWNED']:r[5]?['ok','DEFAULT']:bpNoSource(r)?['ns','MISSING']:['no','MISSING'];
-    return `<div class="pm-it${o?' own':''}" data-pmopen="${esc(r[0])}" title="Open it in the planner">`+
+    return `<div class="pm-it${o?' own':''}" data-pmopen="${esc(r[0])}" title="Show every mission that drops it">`+
       `<span class="bph-s ${st[0]}">${st[1]}</span><div class="pm-tx"><b>${esc(r[1])}</b><span>${o?`received ${d?ddmm(d):''}`:bpBestHTML(r)}</span></div>`+
-      `<button type="button" class="bpin on" data-pmun="${esc(r[0])}" title="Unpin">\u2605</button></div>`; }).join('');
+      `<button type="button" class="bpin lbl sm on" data-pmun="${esc(r[0])}" title="Unpin">\u2605 Pinned</button></div>`; }).join('');
 }
 function pinMenu(on){
   const m=$('#pinMenu'), b=$('#pinBtn'); if(!m) return;
   m.classList.toggle('on', !!on); if(b) b.setAttribute('aria-expanded', on?'true':'false');
   if(on){ renderPinMenu(); if(typeof openScope==='function') openScope(false); if(typeof bellMenu==='function') bellMenu(false); if(typeof statusMenu==='function') statusMenu(false); }
 }
-// open a blueprint in the planner from anywhere: switch to Blueprints, then scroll to it
-function bpOpenInPlanner(k){
-  const r=((DATA.bp_catalog||{}).rows||[]).find(x=>x[0]===k); if(!r) return;
-  bpPlanKey=k; bpPlanQ=r[1];
-  const a=document.querySelector('#nav a[data-sec="blueprints"]');
-  if(section!=='blueprints' && a) a.click(); else { const el=$('#bpPlan'); if(el) el.innerHTML=bpPlanHTML(); }
-  const el=$('#bpPlan'); if(el) scrollToY(el.getBoundingClientRect().top+window.pageYOffset-160);
+// the drawer: any blueprint, opened in place from any page. Picture, status, pin and every
+// mission that drops it. Esc, the close button or a click outside closes it.
+let bpDrKey='';
+function bpDrawer(k){
+  let d=$('#bpDrawer');
+  if(!k){ if(d) d.classList.remove('on'); bpDrKey=''; return; }
+  const cat=DATA.bp_catalog, r=cat&&cat.rows.find(x=>x[0]===k); if(!r) return;
+  if(!d){ d=document.createElement('aside'); d.id='bpDrawer'; d.className='bpdr'; d.setAttribute('role','dialog');
+    document.body.append(d);
+    d.addEventListener('click', e=>{
+      if(e.target.closest('[data-bpdrx]')){ bpDrawer(null); return; }
+      const pin=e.target.closest('[data-bppin]'); if(pin){ e.preventDefault(); bpTogglePin(pin.dataset.bppin); bpPinsChanged(); } }); }
+  const was=bpDrKey; bpDrKey=k;
+  const o=bpOwnedRow(r), st=o?['ok','OWNED']:r[5]?['ok','DEFAULT']:bpNoSource(r)?['ns','MISSING']:['no','MISSING'], im=(cat.img||{})[k];
+  d.setAttribute('aria-label', r[1]);
+  d.innerHTML=`<div class="dr-h"><span class="bph-s ${st[0]}">${st[1]}</span><button type="button" class="dr-x" data-bpdrx title="Close">Esc \u2715</button></div>`+
+    (im?`<div class="dr-pic">${ICON.blueprints}${artImg(artUrls(im,1), true)}</div>`:'')+bpPathHTML(r);
+  d.classList.add('on'); if(was!==k) d.scrollTop=0;
 }
+// redraw an open drawer after a refresh or an account switch
+function bpDrawerRefresh(){ const d=$('#bpDrawer'); if(bpDrKey && d && d.classList.contains('on')) bpDrawer(bpDrKey); }
+document.addEventListener('keydown', e=>{ if(e.key==='Escape' && bpDrKey) bpDrawer(null); });
+document.addEventListener('click', e=>{ if(!bpDrKey || !e.target.isConnected) return;
+  if(e.target.closest('#bpDrawer,[data-bpplan],[data-pmopen],.pinwrap')) return; bpDrawer(null); });
 // a result or a pinned blueprint: owned or not at a glance, the next step, the full path on open
-function bpHitRow(row, open, attr){
+function bpHitRow(row){
   const o=bpOwnedRow(row), recv=bpRecv(), d=recv[row[0]]||recv['n:'+row[1].toLowerCase()];
   const st=o?['ok','OWNED']:row[5]?['ok','DEFAULT']:bpNoSource(row)?['ns','MISSING']:['no','MISSING'];
-  return `<div class="bphit${o?' own':''}${open?' open':''}"><div class="bph-r" ${attr}="${esc(row[0])}" title="${open?'Close':'Show every mission that drops it'}">`+
+  return `<div class="bphit${o?' own':''}"><div class="bph-r" data-bpplan="${esc(row[0])}" title="Show every mission that drops it">`+
     `<span class="bph-s ${st[0]}">${st[1]}</span>`+
     `<span class="bph-n"><b>${esc(row[1])}</b><span class="bpk">${esc(row[3])}${row[4]?' \u00b7 '+esc(row[4]):''}</span></span>`+
-    `<span class="bph-p">${o?`received ${d?ddmm(d):''}`:bpBestHTML(row)}</span>${bpPinBtn(row[0])}<span class="bph-c" aria-hidden="true"></span></div>`+
-    (open?`<div class="bph-x">${bpPathHTML(row)}</div>`:'')+`</div>`;
+    `<span class="bph-p">${o?`received ${d?ddmm(d):''}`:bpBestHTML(row)}</span>${bpPinBtn(row[0])}<span class="bph-c" aria-hidden="true"></span></div></div>`;
 }
-let bpFindQ='', bpFindOpen='', bpPinOpen='';
+let bpFindQ='';
 function bpFindHTML(){
   return `<h3>Find a blueprint <span class="u">\u2014 do you have it, and where it drops</span></h3>`+
     `<div class="bpbar"><input class="bpq" id="bpFindQ" type="search" placeholder="Name, maker, class or grade\u2026" value="${esc(bpFindQ)}" spellcheck="false" autocomplete="off"></div>`+
@@ -9535,7 +9619,7 @@ function bpFindHTML(){
 }
 function bpFindList(){
   const cat=DATA.bp_catalog, q=bpFindQ.trim().toLowerCase();
-  if(!q) return `<div class="empty">Type a name, maker, class or grade. Each result says owned or missing and where to get it. Open one for every mission that drops it.</div>`;
+  if(!q) return `<div class="empty">Type a name, maker, class or grade. Each result says owned or missing and where to get it. Click one for every mission that drops it.</div>`;
   const meta=cat.meta||{}, alias={};
   ((A().career||{}).blueprints||[]).forEach(b=>{ if(b[6]&&b[7]) alias[b[6]]=b[7]; });
   const words=q.split(/\s+/).filter(Boolean);
@@ -9544,15 +9628,15 @@ function bpFindList(){
       const n=r[1].toLowerCase(); return [n===q?0:n.startsWith(q)?1:n.includes(q)?2:3, r]; })
     .filter(Boolean).sort((a,b)=>a[0]-b[0]||a[1][1].localeCompare(b[1][1]));
   if(!hits.length) return `<div class="empty">Nothing in the catalogue matches that.</div>`;
-  return hits.slice(0,15).map(([,r])=>bpHitRow(r, bpFindOpen===r[0], 'data-bpfind')).join('')+
+  return hits.slice(0,15).map(([,r])=>bpHitRow(r)).join('')+
     (hits.length>15?`<div class="bph" style="margin-top:8px">${fmt(hits.length-15)} more. Add a word to narrow it.</div>`:'');
 }
 function bpPinnedHTML(){
   const cat=DATA.bp_catalog, by={}; cat.rows.forEach(r=>{ by[r[0]]=r; });
   const rows=bpPins().map(k=>by[k]).filter(Boolean), todo=rows.filter(r=>!bpOwnedRow(r)), got=rows.filter(bpOwnedRow);
   const h=`<h3>Pinned <span class="u">\u2014 ${rows.length?`${fmt(todo.length)} to get \u00b7 ${fmt(got.length)} got`:'what you\u2019re going after'}</span></h3>`;
-  if(!rows.length) return h+`<div class="empty">Pin a blueprint with \u2606 in search, the planner or the album. It stays here with its next step until it\u2019s in your library.</div>`;
-  return h+todo.concat(got).map(r=>bpHitRow(r, bpPinOpen===r[0], 'data-bppinopen')).join('');
+  if(!rows.length) return h+`<div class="empty">Pin a blueprint from Find, the collection or its missions. It stays here with its next step until it\u2019s in your library.</div>`;
+  return h+todo.concat(got).map(r=>bpHitRow(r)).join('');
 }
 function bpFloorsHTML(){
   const rows=(A().career||{}).rep_floor||[];
@@ -9607,14 +9691,11 @@ function bpBoardHTML(catalog){
       return `<i class="bdot ${p.on?'on':''}${n?' ns':''}" data-bpplan="${esc(p.key)}" title="${esc(p.n)} — ${p.on?'owned':'missing'}${n?BP_NOSRC_TIP:' · click for its missions'}">${s}</i>`; }).join('');
     return `<div class="blad"><span class="bsn bxa">${artBox('bp', f.name, 0, 'bxth')}<span>${esc(f.name)}<span class="bpk">${esc(f.kind)}</span></span></span><span class="bsl">${dots}</span><span class="bsc">${f.o}<span class="u">/${f.t}</span></span></div>`; };
   const restH=rest.length?(bpFamAll?rest.map(lad).join(''):'')+`<button class="foot-link" data-bpfa="1">${bpFamAll?'Hide':'Show'} the ${fmt(rest.length)} you haven\u2019t started</button>`:'';
-  const singlesOwned=singles.filter(f=>f.o).length;
-  const ladCard=`<div class="card"><h3>Ship weapons by size <span class="u">— one family per row, S1 to S${maxS}</span></h3>`+
-    `<div class="bsets">${started.map(lad).join('')||'<div class="empty">No ladder started yet.</div>'}${restH}</div>`+
-    (singles.length?`<div class="bph" style="margin-top:10px">+ ${fmt(singles.length)} one-size weapons, ${fmt(singlesOwned)} owned</div>`:'')+`</div>`;
   // --- every other blueprint, in the same row style as the armour sets
   const meta=r=>(catalog.meta||{})[r[0]]||[], typeOf=r=>(r[4]||'').split(' \u00b7 ')[0];
   const sizeOf=r=>{ const m=(r[4]||'').match(/\bS(\d+)\b/); return m?+m[1]:null; };
   const recv=bpRecv(), cut=Date.now()-30*864e5;
+  const byCatAll={}; catalog.rows.forEach(r=>(byCatAll[r[3]]=byCatAll[r[3]]||[]).push(r));
   const on=r=>has(r[0],r[1]), fresh=r=>{ const d=recv[r[0]]||recv['n:'+r[1].toLowerCase()]; return d && Date.parse(d)>=cut; };
   const sq=(r,label)=>{ const m=meta(r), o=on(r);
     const t=[r[1], m[0]&&m[0]+(m[1]?' grade '+m[1]:''), m[2]].filter(Boolean).join(' \u00b7 ')+(o?' \u2014 owned':' \u2014 missing');
@@ -9628,6 +9709,10 @@ function bpBoardHTML(catalog){
     return {st:status(rs), o, html:`<div class="bset"><span class="bsn bxa">${pic(rs)}<span>${esc(name)}${sub?`<span class="bpk">${esc(sub)}</span>`:''}</span></span>`+
       `<span class="bsl">${squares}</span><span class="bsc">${o}<span class="u">/${t}</span></span>${tail}</div>`}; };
   const ORDER={partial:0, complete:1, untouched:2};
+  const oneRs=(byCatAll['Ship weapons']||[]).filter(r=>singles.some(f=>f.sz.some(p=>p.key===r[0])));
+  const oneRow=oneRs.length?row('One-size weapons','one size only',oneRs,oneRs.map(r=>sq(r,'')).join('')).html:'';
+  const ladCard=`<div class="card"><h3>Ship weapons by size <span class="u">— one family per row, S1 to S${maxS}</span></h3>`+
+    `<div class="bsets">${started.map(lad).join('')||'<div class="empty">No ladder started yet.</div>'}${restH}${oneRow}</div></div>`;
   const board=(id,title,sub,rows,opt={})=>{ const B=BPB[id];
     if(B.tab!=='all' && !rows.some(x=>x.st===B.tab)) B.tab='all';
     const shown=rows.filter(x=>B.tab==='all'||x.st===B.tab), lim=opt.lim||999, cut2=B.all?shown:shown.slice(0,lim);
@@ -9643,7 +9728,7 @@ function bpBoardHTML(catalog){
   // collection totals
   const totals=`<div class="card bxtot"><h3>Collection <span class="u">\u2014 every blueprint in the game, ${fmt(catalog.rows.length)} in all</span></h3><div class="bxr">`+
     BP_CATS.filter(c=>byCat[c]).map(c=>{ const k=cnt(c), p=k.t?Math.round(100*k.o/k.t):0;
-      return `<div class="bxr-c"><div class="bxr-n">${esc(c)}</div><div class="bxr-v"><b>${fmt(k.o)}</b><span>/${fmt(k.t)}</span><em>${p}%</em></div>`+
+      return `<div class="bxr-c" data-bpv="collection" data-bpvg="${bpGroupOf(c)}" title="Open ${esc(c.toLowerCase())}"><div class="bxr-n">${esc(c)}</div><div class="bxr-v"><b>${fmt(k.o)}</b><span>/${fmt(k.t)}</span><em>${p}%</em></div>`+
         `<div class="bxr-b"><i style="width:${Math.max(p,1)}%"></i></div>`+
         `<div class="bxr-m" title="Missing: ${fmt(k.mi)} that a mission drops, ${fmt(k.ns)} with no known source"><span>${fmt(k.mi)} from missions</span><span>${fmt(k.ns)} no known source</span></div></div>`; }).join('')+
       `</div><div class="bxkey"><span><i class="bsq on"></i>owned</span><span><i class="bsq on new"></i>this month</span>`+
@@ -9669,29 +9754,28 @@ function bpBoardHTML(catalog){
   // everything else, so every blueprint has a row: magazines by maker, mining by maker, the
   // one-size ship weapons, armour and flight-suit pieces outside a set, clothing, decor
   const inSet=new Set((catalog.sets||[]).flatMap(st=>st[3].map(p=>p[1])));
-  const inLad=new Set(ladders.flatMap(f=>f.sz.map(p=>p.key)));
-  const gear=[];
-  const add=(name,sub,rs)=>{ if(rs.length) gear.push(row(name,sub,rs,rs.map(r=>sq(r,'')).join(''))); };
+  const gear=[], arm=[];
+  const add=(name,sub,rs,to)=>{ if(rs.length) (to||gear).push(row(name,sub,rs,rs.map(r=>sq(r,'')).join(''))); };
   const by=(rs,f)=>{ const g={}; rs.forEach(r=>{ const k=f(r); (g[k]=g[k]||[]).push(r); }); return Object.entries(g).sort((a,b)=>a[0].localeCompare(b[0])); };
   by(byCat['Magazines & batteries']||[], r=>(r[4]||'Magazine')+'|'+(meta(r)[2]||'Other makers')).forEach(([k,rs])=>{ const [kind,mk]=k.split('|'); add(mk, kind, rs); });
   by(byCat['Mining & salvage']||[], r=>(r[4]||'Mining')+'|'+(r[4]==='Mining laser'?(meta(r)[2]||'Other makers'):'')).forEach(([k,rs])=>{ const [kind,mk]=k.split('|'); add(mk||kind, mk?kind:'Mining & salvage', rs); });
-  add('One-size weapons', 'Ship weapons', (byCat['Ship weapons']||[]).filter(r=>!inLad.has(r[0])));
-  by((byCat['Armor']||[]).filter(r=>!inSet.has(r[0])), r=>(r[4]||'Armour').split(' \u00b7 ').pop()).forEach(([k,rs])=>add(k, 'Armour, no set', rs));
-  by((byCat['Flight suits']||[]).filter(r=>!inSet.has(r[0])), r=>r[4]||'Flight suit').forEach(([k,rs])=>add(k, 'Flight suit, no set', rs));
+  by((byCat['Armor']||[]).filter(r=>!inSet.has(r[0])), r=>(r[4]||'Armour').split(' \u00b7 ').pop()).forEach(([k,rs])=>add(k, 'Armour, no set', rs, arm));
+  by((byCat['Flight suits']||[]).filter(r=>!inSet.has(r[0])), r=>r[4]||'Flight suit').forEach(([k,rs])=>add(k, 'Flight suit, no set', rs, arm));
   ['Clothing','Flair & decor'].forEach(c=>add(c, '', byCat[c]||[]));
   Object.keys(byCat).filter(c=>!BP_CATS.includes(c)).forEach(c=>add(c, '', byCat[c]));
-  const gearCard=board('gear','Magazines, mining &amp; more', 'every blueprint not on another board', gear, {lim:14});
-  return totals+setsCard+compCard+`<div class="grid2">${ladCard}${gearCard}</div>`+fpsCard+
-    `<div class="card bxalb" id="bpAlbum">${bpAlbumHTML(catalog)}</div>`;
+  const gearCard=board('gear','Magazines, mining &amp; more', 'magazines, batteries, mining, clothing and decor', gear, {lim:24});
+  const armCard=arm.length?board('arm','Pieces outside a set', 'armour and flight-suit pieces that aren\u2019t part of a set', arm, {lim:14}):'';
+  return {totals, sets:setsCard, arm:armCard, comp:compCard, lad:ladCard, fps:fpsCard, gear:gearCard};
 }
 // the album: one category at a time, every blueprint a card with its picture
-function bpAlbumHTML(catalog){
+function bpAlbumHTML(catalog, cats){
   const byCat={}; catalog.rows.forEach(r=>(byCat[r[3]]=byCat[r[3]]||[]).push(r));
-  if(!byCat[BPA.cat]) BPA.cat=BP_CATS.find(c=>byCat[c])||Object.keys(byCat)[0];
+  const list=(cats||BP_CATS).filter(c=>byCat[c]);
+  if(!list.includes(BPA.cat)) BPA.cat=list[0]||Object.keys(byCat)[0];
   const own=bpOwnedKeys(), on=r=>own.has(r[0])||own.has('n:'+r[1].toLowerCase());
-  const tabs=BP_CATS.filter(c=>byCat[c]).map(c=>`<button class="vpill sm ${c===BPA.cat?'on':''}" data-bpac="${esc(c)}">${esc(c)} <span class="vc">${fmt(byCat[c].filter(on).length)}/${fmt(byCat[c].length)}</span></button>`).join('');
+  const tabs=list.length<2?'':list.map(c=>`<button class="vpill sm ${c===BPA.cat?'on':''}" data-bpac="${esc(c)}">${esc(c)} <span class="vc">${fmt(byCat[c].filter(on).length)}/${fmt(byCat[c].length)}</span></button>`).join('');
   const modes=[['all','All'],['owned','Owned'],['missing','Missing']].map(([k,l])=>`<button class="vpill sm ${BPA.mode===k?'on':''}" data-bpam="${k}">${l}</button>`).join('');
-  return `<h3>Album <span class="u">\u2014 every blueprint as a card \u00b7 pick a category</span></h3><div class="bpbar">${tabs}</div>`+
+  return `<h3>Cards <span class="u">\u2014 every blueprint with its picture</span></h3>${tabs?`<div class="bpbar">${tabs}</div>`:''}`+
     `<div class="bpbar">${modes}<input class="bpq" id="bpAlbQ" type="search" placeholder="Search ${esc(BPA.cat.toLowerCase())}\u2026" value="${esc(BPA.q)}" spellcheck="false" autocomplete="off"></div>`+
     `<div id="bpAlbList">${bpAlbumList(catalog)}</div>`;
 }
@@ -9768,87 +9852,110 @@ function secBlueprints(v){
   const listTitle = bpMode==='missing' ? `Not yet in your library <span class="u">— every catalogue blueprint you haven't been seen to receive</span>`
     : current==='all' ? `Your library <span class="u">— every blueprint you've received, newest first</span>`
                       : `Received in ${esc(pLabel(current))} <span class="u">— newest first</span>`;
-  $('#content').innerHTML=metaLine(v)+
-    group(1,'blueprints','Blueprint library','Everything the game has told you it handed over — and what it hasn\u2019t',
-      K+(catalog?`<div class="grid2 bphunt"><div class="card" id="bpFind">${bpFindHTML()}</div><div class="card" id="bpPinned">${bpPinnedHTML()}</div></div>`+
-        `<div id="bpBoard">${bpBoardHTML(catalog)}</div>`:''))+
-    (DATA.missions && catalog ? group(2,'missions','Planner','Which missions drop a blueprint, what standing they need, and where your completed contracts put you',
-      `<div class="grid2"><div class="card"><h3>Plan a blueprint <span class="u">— its missions and their gates</span></h3><div id="bpPlan">${bpPlanHTML()}</div></div>`+
-      `<div class="card"><h3>Standing floors <span class="u">— rep your matched completions alone would have earned</span></h3>${bpFloorsHTML()}</div></div>`+
-      noteFold(`A floor, not your standing: the game never writes reputation to the log. Missions CIG has retired, event bonuses and resets are invisible here.`,
-        `Each completed contract in your log is matched to the SC-Wiki\u2019s mission list by its class name and credited with that mission\u2019s reputation. Generated hauling contracts are matched by family. Gates and ladders come from the same data (${esc(String(DATA.missions.version||'').split('-')[0])}). If you know your real rank is higher, the plan is at least that good.`)) : '')+
-    group(3,'overview','Every blueprint','The whole list, searchable — what you have, or what you\u2019re still missing',
-      `<div class="card"><h3>${listTitle}</h3>${bar}<div id="bpList">${bpListHTML(v)}</div></div>`)+
-    group(4,'activity','Unlock history','When the blueprints arrived, and how far along each category is',
-      `<div class="grid2">`+cardHTML('Received per month','notifications, not distinct blueprints','bpMonths')+
-      cardHTML(catalog?'Progress by category':'By category', catalog?'owned / in the catalogue':'distinct blueprints in this scope','bpCats')+`</div>`)+
-    noteFold(
+  // ---- one page at a time, picked from the menu down the left
+  const P=catalog?bpBoardHTML(catalog):null;
+  if(!catalog && !['library','history'].includes(BPV.page)) BPV.page='library';
+  if(BPV.page==='standing' && !DATA.missions) BPV.page='overview';
+  const own=catalog?bpOwnedKeys():new Set(), on=r=>own.has(r[0])||own.has('n:'+r[1].toLowerCase());
+  const byCat={}; if(catalog) catalog.rows.forEach(r=>(byCat[r[3]]=byCat[r[3]]||[]).push(r));
+  const grpCats=g=>g[0]==='gear'?g[2].concat(Object.keys(byCat).filter(c=>!BP_CATS.includes(c))):g[2];
+  const gcount=g=>{ const rs=grpCats(g).flatMap(c=>byCat[c]||[]); return [rs.filter(on).length, rs.length]; };
+  const G=BP_GROUPS.find(x=>x[0]===BPV.grp)||BP_GROUPS[1];
+  const it=(page,label,cnt,grp,id)=>{ const act=BPV.page===page&&(!grp||BPV.grp===grp);
+    return `<button type="button" class="${grp?'sub ':''}${act?'on':''}" data-bpv="${page}"${grp?` data-bpvg="${grp}"`:''}${act?' aria-current="page"':''}>`+
+      `<span>${esc(label)}</span><b${id?` id="${id}"`:''}>${cnt}</b></button>`; };
+  const tree=`<nav class="stree" aria-label="Blueprints">`+
+    (catalog?`<input class="t-q" id="bpTreeQ" type="search" placeholder="Find a blueprint\u2026" value="${esc(bpFindQ)}" spellcheck="false" autocomplete="off" aria-label="Find a blueprint">`+
+      `<div class="t-h">Blueprints</div>`+it('overview','Overview','')+it('find','Find','')+
+      it('pinned','Pinned',bpPins().length?fmt(bpPinTodo()):'',null,'bptPin')+
+      `<div class="t-h">Collection</div>`+BP_GROUPS.map(g=>{ const [o,t]=gcount(g); return it('collection',g[1],`${fmt(o)}/${fmt(t)}`,g[0]); }).join(''):'')+
+    `<div class="t-h">More</div>`+(DATA.missions&&catalog?it('standing','Standing',''):'')+
+    it('library','Your library',fmt(owned.length))+it('history','Unlock history','')+`</nav>`;
+  const listCard=`<div class="card"><h3>${listTitle}</h3>${bar}<div id="bpList">${bpListHTML(v)}</div></div>`;
+  const aboutFold=noteFold(
       `Blueprints the game announced to you, counted once each. The log has no ownership list, so this is a minimum.`,
-      `Only the Received Blueprint notice is logged; the library itself sits on CIG\u2019s servers. Blueprints from before 4.7, or from another PC whose logs weren\u2019t imported, won\u2019t appear. Language packs (StarStrings, ScCompLangPack) rename items in the notice; CSR matches them back to the real item and keeps your wording as a search alias. <span class="bpx">\u00d72</span> marks a duplicate drop. PTU and Tech Preview run a copy of your account and get their own libraries. Armour sets are read off the game\u2019s item ids (pieces of one set share a variant number), ship-weapon families off the class with the size removed; single pieces aren\u2019t sets and only show in the list.${catalog?` Missing is measured against the SC-Wiki\u2019s extraction of the game data (${fmt(catalog.n)} blueprints, ${esc(String(catalog.version||'').split('-')[0])}), which includes blueprints you can\u2019t get yet — a wish-list, not a to-do list.`:''}`);
-  const plan=()=>{ const el=$('#bpPlan'); if(!el) return; el.innerHTML=bpPlanHTML(); wirePlan(); };
-  const wirePlan=()=>{
-    const c=$('#content');
-    if(c && !c.dataset.bpplanWired){ c.dataset.bpplanWired='1';
-      c.addEventListener('click', e=>{
-        if(!$('#bpFind') && !$('#bpPlan')) return;
-        const pin=e.target.closest('[data-bppin]');
-        if(pin && c.contains(pin)){ e.preventDefault(); e.stopPropagation();
-          const k=pin.dataset.bppin; bpTogglePin(k); bpPinsChanged(); const on=bpPins().includes(k);
-          c.querySelectorAll(`[data-bppin="${CSS.escape(k)}"]`).forEach(x=>{ x.classList.toggle('on',on); x.textContent=bpPinFace(on, x.dataset.lbl);
-            x.setAttribute('aria-pressed',on); x.title=on?'Unpin':'Pin it to track it'; });
-          const pc=$('#bpPinned'); if(pc) pc.innerHTML=bpPinnedHTML();
-          return; }
-        if(e.target.closest('a')) return;            // a wiki link inside a row opens itself
-        const fo=e.target.closest('[data-bpfind]');
-        if(fo && c.contains(fo)){ bpFindOpen = bpFindOpen===fo.dataset.bpfind ? '' : fo.dataset.bpfind;
-          const o=$('#bpFindOut'); if(o) o.innerHTML=bpFindList(); return; }
-        const po=e.target.closest('[data-bppinopen]');
-        if(po && c.contains(po)){ bpPinOpen = bpPinOpen===po.dataset.bppinopen ? '' : po.dataset.bppinopen;
-          const o=$('#bpPinned'); if(o) o.innerHTML=bpPinnedHTML(); return; }
-        const b=e.target.closest('[data-bpplan]'); if(!b || !c.contains(b) || !$('#bpPlan')) return;
-        e.preventDefault();
-        bpPlanKey=b.dataset.bpplan; const r=(DATA.bp_catalog.rows||[]).find(x=>x[0]===bpPlanKey); if(r) bpPlanQ=r[1];
-        const el=$('#bpPlan'); if(!el) return; el.innerHTML=bpPlanHTML(); wirePlan();
-        scrollToY(el.getBoundingClientRect().top+window.pageYOffset-160); }); }
-    const pq=$('#bpPlanQ'); if(pq){ pq.oninput=()=>{ bpPlanQ=pq.value; bpPlanKey=''; const o=$('#bpPlan'); if(o){ o.innerHTML=bpPlanHTML(); wirePlan(); const nq=$('#bpPlanQ'); if(nq){ nq.focus(); nq.setSelectionRange(nq.value.length,nq.value.length); } } }; }
-  };
-  const draw=()=>{ const el=$('#bpList'); if(!el) return; el.innerHTML=bpListHTML(v); wire(); wirePlan(); };
+      `Only the Received Blueprint notice is logged. The library itself sits on CIG\u2019s servers. Blueprints from before 4.7, or from another PC whose logs weren\u2019t imported, won\u2019t appear. Language packs (StarStrings, ScCompLangPack) rename items in the notice. CSR matches them back to the real item and keeps your wording as a search alias. <span class="bpx">\u00d72</span> marks a duplicate drop. PTU and Tech Preview run a copy of your account and get their own libraries. Armour sets are read off the game\u2019s item ids (pieces of one set share a variant number), ship-weapon families off the class with the size removed.${catalog?` Missing is measured against the SC-Wiki\u2019s extraction of the game data (${fmt(catalog.n)} blueprints, ${esc(String(catalog.version||'').split('-')[0])}). That includes blueprints you can\u2019t get yet.`:''}`);
+  const recent=owned.slice().sort((a,b)=>String(b[3]).localeCompare(String(a[3]))).slice(0,10);
+  const recentCard=`<div class="card"><h3>Latest unlocks <span class="u">\u2014 newest first</span></h3>`+(recent.length?`<div class="tline bprec">`+
+    recent.map(b=>`<div class="tev"${b[6]?` data-bpplan="${esc(b[6])}" title="Show every mission that drops it"`:''}><span class="td">${ddmm(b[3])}</span>`+
+      `<span class="tw">${esc(b[0])}<span class="bpk">${esc(b[2]||'')}</span></span><span class="tv"><span class="bph">${esc(b[1])}</span></span></div>`).join('')+`</div>`
+    :`<div class="empty">No blueprints received in this scope.</div>`)+`</div>`;
+  let body='';
+  if(BPV.page==='overview') body=K+`<div class="bpov"><div class="bpov-c"><div class="card" id="bpPinned">${bpPinnedHTML()}</div>${recentCard}</div>`+
+    `<div class="bpov-c">${P.totals}</div></div>`+aboutFold;
+  else if(BPV.page==='find') body=`<div class="card" id="bpFind">${bpFindHTML()}</div>`;
+  else if(BPV.page==='pinned') body=`<div class="card" id="bpPinned">${bpPinnedHTML()}</div>`;
+  else if(BPV.page==='collection'){ const [o,t]=gcount(G);
+    body=`<div class="sp-h"><h2>${esc(G[1])}</h2><span>${fmt(o)} of ${fmt(t)} owned</span>`+
+      `<div class="vt" role="group" aria-label="Show as">${[['rows','Rows'],['cards','Cards']].map(([k,l])=>`<button type="button" data-bpvv="${k}" class="${BPV.view===k?'on':''}" aria-pressed="${BPV.view===k}">${l}</button>`).join('')}</div></div>`+
+      `<div id="bpBoard">${BPV.view==='cards'?`<div class="card bxalb" id="bpAlbum">${bpAlbumHTML(catalog, grpCats(G))}</div>`
+        :{armour:P.sets+P.arm, comp:P.comp, sw:P.lad, fps:P.fps, gear:P.gear}[G[0]]}</div>`; }
+  else if(BPV.page==='standing') body=`<div class="sp-h"><h2>Standing</h2><span>where your completed contracts put you with each faction</span></div>`+
+      `<div class="card"><h3>Standing floors <span class="u">\u2014 rep your matched completions alone would have earned</span></h3>${bpFloorsHTML()}</div>`+
+      noteFold(`A floor, not your standing. The game never writes reputation to the log. Missions CIG has retired, event bonuses and resets are invisible here.`,
+        `Each completed contract in your log is matched to the SC-Wiki\u2019s mission list by its class name and credited with that mission\u2019s reputation. Generated hauling contracts are matched by family. Gates and ladders come from the same data (${esc(String(DATA.missions.version||'').split('-')[0])}). If you know your real rank is higher, the plan is at least that good.`);
+  else if(BPV.page==='library') body=listCard+aboutFold;
+  else body=`<div class="grid2">`+cardHTML('Received per month','notifications, not distinct blueprints','bpMonths')+
+      cardHTML(catalog?'Progress by category':'By category', catalog?'owned / in the catalogue':'distinct blueprints in this scope','bpCats')+`</div>`;
+  $('#content').innerHTML=metaLine(v)+`<div class="sapp">${tree}<div class="smain" id="bpMain">${body}</div></div>`;
+  const content=$('#content');
+  if(content && !content.dataset.bpWired){ content.dataset.bpWired='1';
+    content.addEventListener('click', e=>{
+      if(section!=='blueprints') return;
+      const pin=e.target.closest('[data-bppin]');
+      if(pin && content.contains(pin)){ e.preventDefault(); e.stopPropagation(); bpTogglePin(pin.dataset.bppin); bpPinsChanged(); return; }
+      if(e.target.closest('a')) return;            // a wiki link inside a row opens itself
+      const nav=e.target.closest('[data-bpv]');
+      if(nav && content.contains(nav)){ BPV.page=nav.dataset.bpv; if(nav.dataset.bpvg) BPV.grp=nav.dataset.bpvg; bpSaveView();
+        secBlueprints(view()); buildToc(); scrollToY(0); return; }
+      const vv=e.target.closest('[data-bpvv]');
+      if(vv && content.contains(vv)){ BPV.view=vv.dataset.bpvv; bpSaveView(); secBlueprints(view()); return; }
+      const b=e.target.closest('[data-bpplan]');
+      if(b && content.contains(b)){ e.preventDefault(); bpDrawer(b.dataset.bpplan); } }); }
+  const draw=()=>{ const el=$('#bpList'); if(!el) return; el.innerHTML=bpListHTML(v); wire(); };
   const wire=()=>document.querySelectorAll('#content [data-bpg]').forEach(b=>b.onclick=()=>{
     bpPage=+b.dataset.bpg; draw();
     const el=$('#bpList'); if(el) scrollToY(el.getBoundingClientRect().top+window.pageYOffset-160);
   });
-  wirePlan();
   // pills re-render the whole section (cheap); the search box only redraws the list, so
   // typing never loses focus
   document.querySelectorAll('#content [data-bpc]').forEach(b=>b.onclick=()=>{ bpCat=b.dataset.bpc; bpPage=0; secBlueprints(v); });
   document.querySelectorAll('#content [data-bpm]').forEach(b=>b.onclick=()=>{ bpMode=b.dataset.bpm; bpCat='all'; bpPage=0; secBlueprints(v); });
   const q=$('#bpQ'); if(q) q.oninput=()=>{ bpQ=q.value; bpPage=0; draw(); };
   wire();
-  // the board redraws on its own; nothing else on the page depends on its tabs
-  const board=()=>{ const el=$('#bpBoard'); if(!el||!catalog) return; el.innerHTML=bpBoardHTML(catalog); wireBoard(); };
+  // the collection redraws on its own; nothing else on the page depends on its tabs
+  const board=()=>{ const el=$('#bpBoard'); if(!el||!catalog) return; const P2=bpBoardHTML(catalog);
+    el.innerHTML={armour:P2.sets+P2.arm, comp:P2.comp, sw:P2.lad, fps:P2.fps, gear:P2.gear}[G[0]]; wireBoard(); };
   const wireBoard=()=>{
     document.querySelectorAll('#bpBoard [data-bpst]').forEach(b=>b.onclick=()=>{ bpSetTab=b.dataset.bpst; bpSetAll=false; board(); });
     document.querySelectorAll('#bpBoard [data-bpsa]').forEach(b=>b.onclick=()=>{ bpSetAll=!bpSetAll; board(); });
     document.querySelectorAll('#bpBoard [data-bpfa]').forEach(b=>b.onclick=()=>{ bpFamAll=!bpFamAll; board(); });
     document.querySelectorAll('#bpBoard [data-bpb]').forEach(b=>b.onclick=()=>{ const [id,k]=b.dataset.bpb.split(':');
       if(k==='+') BPB[id].all=!BPB[id].all; else { BPB[id].tab=k; BPB[id].all=false; } board(); });
-    wireAlbum();
   };
-  const album=()=>{ const el=$('#bpAlbum'); if(!el||!catalog) return; el.innerHTML=bpAlbumHTML(catalog); wireAlbum(); };
+  const album=()=>{ const el=$('#bpAlbum'); if(!el||!catalog) return; el.innerHTML=bpAlbumHTML(catalog, grpCats(G)); wireAlbum(); };
   const wireAlbum=()=>{
     document.querySelectorAll('#bpAlbum [data-bpac]').forEach(b=>b.onclick=()=>{ BPA.cat=b.dataset.bpac; BPA.q=''; BPA.page=0; album(); });
     document.querySelectorAll('#bpAlbum [data-bpam]').forEach(b=>b.onclick=()=>{ BPA.mode=b.dataset.bpam; BPA.page=0; album(); });
-    // a page change redraws the cards only and brings the album's top back into view
+    // a page change redraws the cards only and brings the top back into view
     const pager=()=>document.querySelectorAll('#bpAlbum [data-bpap]').forEach(b=>b.onclick=()=>{ BPA.page=+b.dataset.bpap;
       const l=$('#bpAlbList'); if(l){ l.innerHTML=bpAlbumList(catalog); pager(); }
       const a=$('#bpAlbum'); if(a) scrollToY(a.getBoundingClientRect().top+window.pageYOffset-90); });
     pager();
     const q=$('#bpAlbQ'); if(q) q.oninput=()=>{ BPA.q=q.value; BPA.page=0; const l=$('#bpAlbList'); if(l){ l.innerHTML=bpAlbumList(catalog); pager(); } };
   };
-  wireBoard();
-  const fq=$('#bpFindQ'); if(fq) fq.oninput=()=>{ bpFindQ=fq.value; bpFindOpen=''; const o=$('#bpFindOut'); if(o) o.innerHTML=bpFindList(); };
-  if(bpLead) mountHero('bp', bpLead.name, bpLead.o===bpLead.t?'Complete armour set':'Closest armour set',
+  wireBoard(); wireAlbum();
+  // the menu's search box and Find's own box share one query
+  const findOut=()=>{ const o=$('#bpFindOut'); if(o) o.innerHTML=bpFindList(); };
+  const fq=$('#bpFindQ'); if(fq) fq.oninput=()=>{ bpFindQ=fq.value; const t=$('#bpTreeQ'); if(t) t.value=bpFindQ; findOut(); };
+  const tq=$('#bpTreeQ'); if(tq) tq.oninput=()=>{ bpFindQ=tq.value;
+    if(BPV.page!=='find'){ BPV.page='find'; bpSaveView(); secBlueprints(view()); buildToc();
+      const n=$('#bpTreeQ'); if(n){ n.focus(); n.setSelectionRange(n.value.length,n.value.length); } return; }
+    const f=$('#bpFindQ'); if(f) f.value=bpFindQ; findOut(); };
+  if(BPV.page==='overview' && bpLead){ mountHero('bp', bpLead.name, bpLead.o===bpLead.t?'Complete armour set':'Closest armour set',
     `${bpLead.o} of ${bpLead.t} pieces`, wikiURL(bpLead.name));
+    const ph=$('#content > .phero'), mn=$('#bpMain'); if(ph&&mn) mn.prepend(ph); }
+  if(!$('#bpMonths')) return;
   const months=v.bp_months||[];
   if(months.length) vbars($('#bpMonths'), months.map(([m,n])=>({label:MON[+m.slice(5,7)-1]+' '+m.slice(2,4), full:m, value:n})), {w:560,h:200,rot:months.length>9});
   else $('#bpMonths').innerHTML='<div style="color:var(--dim);font-size:12px;padding:8px 2px">Nothing in this scope</div>';
@@ -10257,10 +10364,9 @@ function lastCrashHTML(v){
     `<div class="bsub" id="bugMsg" style="margin-top:7px">`+
     (CRASH_SEARCH[c.exception]
       ? `Nothing is sent anywhere. Search the Issue Council for <b>${esc(CRASH_SEARCH[c.exception])}</b> `+
-        `before filing — someone may already have reported it.`
+        `before filing. Someone may have reported it already.`
       : `Nothing is sent anywhere. <b>${esc(c.exception||'This exception')}</b> is too generic to `+
-        `search usefully — it only means the game touched memory it shouldn't have, and no two `+
-        `are the same bug. The report below is the part worth filing.`)+
+        `search for. It only means the game touched memory it shouldn't have. File the copied report as it is.`)+
     `</div></div></div></div>`;
 }
 // ---- crash history: every crash, paged ----
@@ -10274,7 +10380,7 @@ let crashPage=0;
 // null shows everything. Rows are filtered before paging.
 let crashFilter=null;
 function setCrashFilter(f){
-  crashFilter=f||null; crashPage=0; render();
+  crashFilter=f||null; crashPage=0; if(f && section==='stability'){ SV.page='crashes'; svSave(); } render();
   const el=$('#crashList'); if(el) scrollToY(el.getBoundingClientRect().top+window.pageYOffset-160);
 }
 // Details under a row: everything the row's two lines leave out. Fields the data
@@ -10307,18 +10413,18 @@ function crashListHTML(v){
   // the whole layout jump up under the cursor. A ghost row carries the same elements
   // as a real one (including a hidden toggle button) so the two lines match in height.
   const pad=rows.length ? Array.from({length:Math.max(0, CRASH_PAGE-slice.length)},
-    ()=>`<div class="tev crow ghost"><div class="cl1"><span class="td">&nbsp;</span><span class="tw">&nbsp;</span></div>`+
-      `<div class="cl2"><span class="cs">&nbsp;</span>`+
+    ()=>`<div class="tev crow ghost"><div class="cl1"><span class="td">&nbsp;</span><span class="tw">&nbsp;</span>`+
       `<button class="foot-link cdet" tabindex="-1" aria-hidden="true" style="visibility:hidden">▸</button></div></div>`).join('') : '';
   const body=slice.map((c,i)=>{
     const [label,act]=crashKind(c.exception);
-    const where=crashWhere(c), sent=crashSentence(c);
-    // .tw is always present (nbsp when the row has no where) so line 1 keeps its height
+    const where=crashWhere(c), [sent,src]=crashSentenceSrc(c);
+    // one line per crash. The stock "fault inside Star Citizen" sentence is left to the label;
+    // a sentence that says something about this crash rides after the place
+    const extra=src==='verdict'?'':sent, tip=[where,sent].filter(Boolean).join(' \u00b7 ');
     return `<div class="tev crow"><div class="cl1"><span class="td" style="color:${act?'var(--amber)':'#8b9bb4'}">`+
       `${esc(whenStamp(c.at, c.date))}</span>`+
-      `<span class="tw"${where?` title="${attrEsc(where)}"`:''}>${where?esc(where):'&nbsp;'}</span>`+
-      `<span class="tv" style="color:${act?'var(--amber)':'#8b9bb4'}">${esc(label)}</span></div>`+
-      `<div class="cl2"><span class="cs" title="${attrEsc(sent)}">${esc(sent)}</span>`+
+      `<span class="tw" title="${attrEsc(tip)}">${where?esc(where):'&nbsp;'}${extra?`<span class="cs"> \u00b7 ${esc(extra)}</span>`:''}</span>`+
+      `<span class="tv" style="color:${act?'var(--amber)':'#8b9bb4'}">${esc(label)}</span>`+
       `<button class="foot-link cdet" data-cdet="${start+i}" aria-expanded="false" aria-label="Details" title="Details">▸</button></div>`+
       crashDetailsHTML(c)+`</div>`;
   }).join('') || `<div class="empty">No crash in this scope matches.</div>`;
@@ -10477,7 +10583,9 @@ function navLive(w){
   if(on) d.title = w.live ? 'Session live — checking every '+w.poll+'s'
                           : 'Watching your logs — checking every '+w.poll+'s';
 }
+var LAST_WATCH=null;
 function renderWatch(w){
+  if(w) LAST_WATCH=w;
   navLive(w);
   const el=$('#watchBody'); if(!el||!w) return;
   if(!w.on){ el.innerHTML=`<div class="wscan dead"><div class="wscan-top">`+
@@ -10740,6 +10848,9 @@ function loadingHTML(v){
     `</div>`;
 }
 // One renderer, two tabs: `STAB` picks which half of System & Stability to draw.
+// which Stability page is open, kept in this browser
+var SV=(()=>{ let o={}; try{ o=JSON.parse(localStorage.getItem('csr_stab_view')||'{}')||{}; }catch(e){} return {page:o.page||'overview'}; })();
+function svSave(){ try{ localStorage.setItem('csr_stab_view', JSON.stringify(SV)); }catch(e){} }
 function secStability(v){ return secSystem(v, true); }
 function secSystem(v, STAB){
   const r=v.rig||{}, pi=v.perf_index, oc=v.outcomes||{}, rated=v.outcomes_rated||0;
@@ -10852,29 +10963,44 @@ function secSystem(v, STAB){
   // Split in two tabs at 8 groups: the machine you play on barely changes, while the
   // stability side is live and is what you open CSR to check. Mixing them meant
   // scrolling past your CPU model to find out what crashed you an hour ago.
-  $('#content').innerHTML = STAB ? (metaLine(v)+
-    group(1,'pulse','Live monitoring','Watching your logs for crashes, disconnects and lost players',
-      watchHTML())+
-    group(2,'bug','Crashes','What Star Citizen said went wrong',
-      lastCrashHTML(v)+crashCausesHTML(v)+crashListHTML(v))+
-    group(3,'space','Lost your player','The game kept running but your client had no player entity — no body, nothing responds',
-      softHTML(v))+
-    group(4,'no','Back to the main menu','Returned to the front end mid-session and carried on — a server drop or an exit to menu',
-      bootsHTML(v))+
-    group(5,'satellite','Servers','Which region you played on, and how often you changed server mid-session',
-      serversHTML(v))+
-    group(6,'cargo','Home inventory','How full your home inventory is, and whether Sort still works',
-      inventoryHTML(v))+
-    group(7,'warning','Session outcomes','How your sessions ended',
-      rated ? stabKpis+ctx+newcomerVerdict(v,oc,rated,thin)+stabNote+
-        `<div class="grid2" style="margin-top:16px">`+
-        cardHTML('How sessions ended','share of '+fmt(rated)+' sessions','outcomeChart')+
-        (hasPatchTrend?barsCard('Rough sessions by patch','% ending badly','roughByPatch')
-                      :'<div class="card"><div class="empty">Only one patch in this scope.</div></div>')+
-        `</div>`
-        : `<div class="card"><div class="empty">No completed sessions rated yet.</div></div>`)+
-    `${NOTE}`
-  ) : (metaLine(v)+
+  // Stability is one page at a time, picked from a menu down the left. The live watcher
+  // sits on every page as one line.
+  let stabHTML='';
+  if(STAB){
+    const b=v.boots, sf=v.soft, sv=v.servers, inv=v.inventory, lc=v.last_crash;
+    const PAGES=['overview','crashes','menu','lost','outcomes','servers','inventory'];
+    if(!PAGES.includes(SV.page)) SV.page='overview';
+    const hp=inv&&inv.home?Math.round(inv.home.pct):null, top=sv&&sv.regions&&sv.regions[0];
+    const it=(page,label,cnt,cls)=>{ const on=SV.page===page;
+      return `<button type="button" class="${page==='overview'||page==='crashes'?'':'sub '}${on?'on':''}" data-sv="${page}"${on?' aria-current="page"':''}>`+
+        `<span>${label}</span><b class="${cls||''}">${cnt}</b></button>`; };
+    const tree=`<nav class="stree" aria-label="Stability">`+
+      `<div class="t-h">Stability</div>`+it('overview','Overview','')+it('crashes','Crashes',fmt(oc.crash||0))+
+      `<div class="t-h">Disconnects</div>`+it('menu','Back to the menu',b?fmt(b.n):'0',b&&b.n?'warn':'ok')+
+      it('lost','Lost your player',sf?fmt(sf.n):'0',sf&&sf.n?'warn':'ok')+
+      `<div class="t-h">Your sessions</div>`+it('outcomes','Session outcomes',rated?(thin?`${fmt(oc.clean||0)}/${fmt(rated)}`:okPct):'')+
+      it('servers','Servers',top?esc(top[0]):'')+it('inventory','Home inventory',hp!=null?hp+'%':'',hp!=null?invCls(hp):'')+`</nav>`;
+    const head=(t,sub)=>`<div class="sp-h"><h2>${t}</h2><span>${sub}</span></div>`;
+    const rough=hasPatchTrend?barsCard('Rough sessions by patch','% ending badly','roughByPatch')
+      :'<div class="card"><div class="empty">Only one patch in this scope.</div></div>';
+    let body='';
+    if(SV.page==='overview') body=(rated?kpiRow([
+        [icon('yes'), thin?`${fmt(oc.clean||0)}/${fmt(rated)}`:okPct, 'Sessions ended normally', thin?'too few rated sessions for a rate':`${fmt(oc.clean||0)} of ${fmt(rated)}`],
+        [icon('bug'), fmt(oc.crash||0), 'Crashes', lc&&lc.date?`last ${ddmm(lc.date)}`:'the game reported these itself'],
+        [icon('no'), b&&b.per10h!=null?b.per10h.toFixed(2):'0', 'Back to menu per 10 h', b?`${fmt(b.n)} in all`:'none in this scope'],
+        [icon('satellite'), sv?sv.hop_pct+'%':'N/A', 'Sessions with a server hop', sv?`${fmt(sv.hop_sessions)} of ${fmt(sv.sessions)}`:'no server joins here', sv?'':'na'],
+      ]):'')+`<div class="grid2 stov">${lastCrashHTML(v)}${rated?rough:''}</div>`+crashCausesHTML(v)+NOTE;
+    else if(SV.page==='crashes') body=head('Crashes','What Star Citizen said went wrong')+lastCrashHTML(v)+crashCausesHTML(v)+crashListHTML(v);
+    else if(SV.page==='menu') body=head('Back to the main menu','Returned to the front end mid-session and carried on. A server drop or an exit to menu.')+bootsHTML(v);
+    else if(SV.page==='lost') body=head('Lost your player','The game kept running but your client had no player entity. No body, nothing responds.')+softHTML(v);
+    else if(SV.page==='servers') body=head('Servers','Which region you played on, and how often you changed server mid-session')+serversHTML(v);
+    else if(SV.page==='inventory') body=head('Home inventory','How full your home inventory is, and whether Sort still works')+inventoryHTML(v);
+    else body=head('Session outcomes','How your sessions ended')+(rated ? stabKpis+ctx+newcomerVerdict(v,oc,rated,thin)+stabNote+
+        `<div class="grid2">`+cardHTML('How sessions ended','share of '+fmt(rated)+' sessions','outcomeChart')+rough+`</div>`
+        : `<div class="card"><div class="empty">No completed sessions rated yet.</div></div>`);
+    stabHTML=metaLine(v)+`<div class="sapp">${tree}<div class="smain" id="stMain"><div class="lstrip">${watchHTML()}</div>${body}</div></div>`;
+  }
+  $('#content').innerHTML = STAB ? stabHTML : (metaLine(v)+
     group(1,'system','Your machine','What the game reports your rig as',
       specs+changeCard+driverCard)+
     group(2,'yes','Configuration check','What you are running, and anything measurably wrong',
@@ -10924,6 +11050,8 @@ function secSystem(v, STAB){
     });
   });
 
+  if(STAB) document.querySelectorAll('#content [data-sv]').forEach(b=>b.onclick=()=>{ SV.page=b.dataset.sv; svSave(); render(); scrollToY(0); });
+  if(STAB && LAST_WATCH) renderWatch(LAST_WATCH);
   if(SERVED) pollStatus();          // fills the Live monitoring card immediately
   document.querySelectorAll('[data-cpg]').forEach(b=>{
     b.onclick=()=>{ crashPage=+b.dataset.cpg; render();
@@ -11026,7 +11154,7 @@ function secSystem(v, STAB){
       else { try{ document.execCommand('copy'); done(); }catch(e){} }
     };
   }
-  if(rated && STAB){
+  if(rated && STAB && $('#outcomeChart')){
     splitbar($('#outcomeChart'), [
       {label:'Normal exit', value:oc.clean||0, color:'#4ade80'},
       {label:'Crash (reported)', value:oc.crash||0, color:'#ff5468'},
@@ -11035,6 +11163,8 @@ function secSystem(v, STAB){
       {label:'Other', value:oc.other||0, color:'#8b9bb4'},
     ].filter(p=>p.value>0), {big:thin?`${oc.clean||0}/${rated}`:(100-v.rough_pct).toFixed(0)+'%',
                              small:'ended normally'});
+  }
+  if(rated && STAB && $('#roughByPatch')){
     if(hasPatchTrend){
       // Same rule per bar: a patch you launched three times can't carry a percentage.
       const all=patchSeries(p=>{
@@ -11096,6 +11226,7 @@ function render(){
   SECTIONS[section].fn(view());
   buildToc();
   renderPinMenu();
+  bpDrawerRefresh();
 }
 // "On this page": the open tab's groups in the sidebar, the one in view lit. Only for
 // tabs with three or more groups. CSS hides it on the icon rail and on short windows.
@@ -11559,12 +11690,13 @@ pollStatus();
 }
 renderBell();
 { const pb=$('#pinBtn'), pg=$('#pinGo'), pl=$('#pinList');
-  if(pb) pb.innerHTML=icon('star')+'<span class="bbadge pbadge" id="pinBadge"></span>';
+  if(pb){ pb.classList.add('pinlbl'); pb.innerHTML=icon('star')+'<span class="pl-t">Pinned</span><span class="pl-n" id="pinBadge"></span>'; }
   if(pb) pb.onclick=e=>{ e.stopPropagation(); pinMenu(!$('#pinMenu').classList.contains('on')); };
-  if(pg) pg.onclick=e=>{ e.stopPropagation(); pinMenu(false); const a=document.querySelector('#nav a[data-sec="blueprints"]'); if(a) a.click(); };
+  if(pg) pg.onclick=e=>{ e.stopPropagation(); pinMenu(false); BPV.page='pinned'; bpSaveView();
+    const a=document.querySelector('#nav a[data-sec="blueprints"]'); if(section==='blueprints') render(); else if(a) a.click(); };
   if(pl) pl.addEventListener('click', e=>{ e.stopPropagation();
     const un=e.target.closest('[data-pmun]'); if(un){ bpTogglePin(un.dataset.pmun); bpPinsChanged(); return; }
-    const it=e.target.closest('[data-pmopen]'); if(it){ pinMenu(false); bpOpenInPlanner(it.dataset.pmopen); } });
+    const it=e.target.closest('[data-pmopen]'); if(it){ pinMenu(false); bpDrawer(it.dataset.pmopen); } });
   document.addEventListener('click',e=>{ if(!e.target.closest('.pinwrap')) pinMenu(false); });
   document.addEventListener('keydown',e=>{ if(e.key==='Escape' && $('#pinMenu') && $('#pinMenu').classList.contains('on')){ pinMenu(false); if(pb) pb.focus(); } });
 }
