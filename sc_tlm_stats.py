@@ -15,6 +15,7 @@ import glob
 import json
 import os
 import threading
+import time
 import zlib
 from datetime import datetime, timedelta
 
@@ -267,8 +268,8 @@ class _Acc:
     def _wallet(self, t, state, flags):
         o = self.out
         bal = state.get(WALLET)
-        if WALLET not in state and "astate" in flags:
-            bal = 0     # proto3 drops a zero balance
+        if WALLET not in state and "astate" in flags and self.bal is not None:
+            bal = 0     # proto3 drops a zero balance. Only after a real balance was seen.
         if not _num(bal):
             return
         if self.bal is None:
@@ -471,6 +472,7 @@ _index_lock = threading.Lock()
 CAREER_SERIES_MAX = 400
 MATCH_SLACK = 120       # seconds after a session's end that a recording may still start
 OPEN_WINDOW = 60        # a session ending this close to now may still be running
+RECENT_S = 10           # a recording modified this recently may still be open
 
 
 def tlm_dir(app_dir):
@@ -502,7 +504,14 @@ def save_index(root, idx):
 
 
 def _skipped(path, skip):
-    return os.path.basename(path) in skip or path in skip
+    """True for the open recording named in `skip` and for any file written in the last
+    RECENT_S seconds."""
+    if os.path.basename(path) in skip or path in skip:
+        return True
+    try:
+        return abs(time.time() - os.path.getmtime(path)) < RECENT_S
+    except OSError:
+        return True
 
 
 def _summarize_safe(path):
@@ -656,7 +665,57 @@ def match(sessions, idx, now=None):
             unmatched.append(entry)
         else:
             matched.setdefault(id(best[0]), []).append(entry)
+    for key, entries in matched.items():
+        matched[key] = _drop_overlaps(entries)
     return matched, unmatched
+
+
+def _span(entry):
+    start = _parse_iso(entry.get("started"))
+    end = _parse_iso(entry.get("ended"))
+    if start is None:
+        return None
+    return start, (end if end is not None and end > start else start)
+
+
+def _drop_overlaps(entries):
+    """Real segments of one session never overlap. Two that do came from two CSR windows
+    recording the same game: keep the longer one."""
+    kept = []
+    for e in entries:
+        sp = _span(e)
+        if sp is None:
+            kept.append(e)
+            continue
+        clash = []
+        for k in kept:
+            ks = _span(k)
+            if ks is not None and sp[0] < ks[1] and ks[0] < sp[1]:
+                clash.append(k)
+        if not clash:
+            kept.append(e)
+        elif sp[1] - sp[0] > max(_span(k)[1] - _span(k)[0] for k in clash):
+            kept = [k for k in kept if not any(k is c for c in clash)] + [e]
+    return kept
+
+
+def _combine_safe(entries):
+    """combine(), leaving out entries whose `sum` it can't use. None when none can be used."""
+    try:
+        return combine(entries)
+    except Exception:
+        pass
+    good = []
+    for e in entries:
+        try:
+            combine([e])
+        except Exception:
+            continue
+        good.append(e)
+    try:
+        return combine(good) if good else None
+    except Exception:
+        return None
 
 
 def attach(sessions, idx, now=None):
@@ -665,9 +724,10 @@ def attach(sessions, idx, now=None):
     out = []
     for s in sessions:
         entries = matched.get(id(s))
-        if entries:
+        tlm_sum = _combine_safe(entries) if entries else None
+        if tlm_sum is not None:
             s = dict(s)
-            s["_tlm"] = combine(entries)
+            s["_tlm"] = tlm_sum
         out.append(s)
     return out, unmatched
 

@@ -133,6 +133,13 @@ class SummaryTests(SummaryBase):
         self.assertEqual((s["uec_spent"], s["uec_earned"]), (500, 300))
         self.assertEqual(s["uec_end"], 300)
 
+    def test_wallet_starts_at_first_explicit_balance(self):
+        s = self.sum([(0.0, {LOCO: "ON_FOOT"}), (1.0, {LOCO: "ON_FOOT", WALLET: 82000000}),
+                      (2.0, {LOCO: "ON_FOOT", WALLET: 82000000})])
+        self.assertEqual(s["uec_start"], 82000000)
+        self.assertEqual((s["uec_earned"], s["uec_spent"]), (0, 0))
+        self.assertEqual(s["uec_series"][0][1], 82000000)
+
     def test_wallet_missing_without_actor_state_is_unknown(self):
         s = self.sum([(0.0, {WALLET: 500}), (1.0, {HEALTH: 0.5}), (2.0, {WALLET: 300})],
                      groups=["wallet", "vitals"])

@@ -4,6 +4,7 @@ import os
 import sys
 import tempfile
 import threading
+import time
 import unittest
 from datetime import datetime, timedelta
 from unittest import mock
@@ -33,6 +34,8 @@ class IndexBase(unittest.TestCase):
         for t, flat in steps:
             w.add(t, flat, [])
         w.close()
+        old = time.time() - 60          # finished a while ago, not a file being written
+        os.utime(path, (old, old))
         return path
 
 
@@ -128,6 +131,18 @@ class IndexTests(IndexBase):
         self.rec(datetime(2026, 11, 24, 19, 0, 0), W2)
         self.assertEqual(list(st.refresh_index(self.root)), ["20261124-190000.jsonl.gz"])
 
+    def test_recent_file_skipped(self):
+        p = self.rec(datetime(2026, 11, 24, 19, 0, 0), W2)
+        now = time.time()
+        os.utime(p, (now - 2, now - 2))
+        self.assertEqual(st.refresh_index(self.root), {})
+        self.assertEqual(st.delete_all_recordings(self.root), 0)
+        self.assertEqual(st.apply_retention(self.root, 30, datetime(2027, 6, 1)), 0)
+        self.assertTrue(os.path.exists(p))
+        os.utime(p, (now - 11, now - 11))
+        self.assertEqual(list(st.refresh_index(self.root)), [os.path.basename(p)])
+        self.assertEqual(st.apply_retention(self.root, 30, datetime(2027, 6, 1)), 1)
+
     def test_usage_and_delete_all(self):
         p = self.rec(datetime(2026, 11, 24, 19, 0, 0), W2)
         self.rec(datetime(2026, 11, 24, 20, 0, 0), W2)
@@ -194,6 +209,36 @@ class MatchTests(IndexBase):
         m, un = st.match([a, b], self.idx(), now)
         self.assertEqual(sum(len(v) for v in m.values()), 1)
         self.assertEqual(un, [])
+
+    def test_overlapping_entries_keep_longer(self):
+        def e(name, started, ended, dist):
+            return {"file": name, "channel": "LIVE", "started": started, "ended": ended,
+                    "v": st.SUMMARY_VERSION, "sum": {"dist_m": dist}}
+        idx = {"a": e("a", "2026-11-24T19:00:00", "2026-11-24T19:30:00", 100.0),
+               "b": e("b", "2026-11-24T19:00:05", "2026-11-24T19:20:00", 50.0),
+               "c": e("c", "2026-11-24T19:30:00", "2026-11-24T19:40:00", 7.0)}
+        s = {"start": datetime(2026, 11, 24, 18, 59, 0), "dur": 3600.0}
+        m, un = st.match([s], idx, self.NOW)
+        self.assertEqual(sorted(x["file"] for x in m[id(s)]), ["a", "c"])
+        self.assertEqual(un, [])
+        idx["b"]["ended"] = "2026-11-24T19:35:00"      # now b is the longer one
+        m, _ = st.match([s], idx, self.NOW)
+        self.assertEqual(sorted(x["file"] for x in m[id(s)]), ["b"])
+        att, _ = st.attach([s], idx, self.NOW)
+        self.assertEqual(att[0]["_tlm"]["dist_m"], 50.0)
+
+    def test_attach_skips_bad_entry(self):
+        good = {"file": "g", "channel": "LIVE", "started": "2026-11-24T19:00:00",
+                "ended": "2026-11-24T19:10:00", "v": 1, "sum": {"dist_m": 5.0, "warn": {"pwr": 1}}}
+        bad = {"file": "b", "channel": "LIVE", "started": "2026-11-24T19:20:00",
+               "ended": "2026-11-24T19:30:00", "v": 1, "sum": {"dist_m": "x", "warn": 3}}
+        s = {"start": datetime(2026, 11, 24, 18, 59, 0), "dur": 3600.0}
+        other = {"start": datetime(2026, 11, 25, 18, 59, 0), "dur": 3600.0}
+        good2 = dict(good, file="g2", started="2026-11-25T19:00:00", ended="2026-11-25T19:10:00")
+        att, _ = st.attach([s, other], {"g": good, "b": bad, "g2": good2}, self.NOW)
+        self.assertEqual(att[0]["_tlm"]["dist_m"], 5.0)
+        self.assertEqual(att[0]["_tlm"]["warn"], {"pwr": 1})
+        self.assertEqual(att[1]["_tlm"]["dist_m"], 5.0)
 
     def test_attach_does_not_mutate(self):
         self.rec(datetime(2026, 11, 24, 19, 0, 0), W2)

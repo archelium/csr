@@ -704,6 +704,51 @@ ERROR_BACKOFF_S = 5.0  # after an unexpected error
 CONNECT_TIMEOUT_S = 2.0
 SILENT_S = 15.0        # connected but no frames this long -> drop and reconnect
 EVENT_KEEP = 50
+LOCK_NAME = "recorder.lock"
+
+
+class ProcessLock:
+    """Exclusive lock on a file, held across processes. The OS releases it when the
+    process dies. acquire() never blocks."""
+
+    def __init__(self, path):
+        self.path = path
+        self._fd = None
+
+    def acquire(self):
+        if self._fd is not None:
+            return True
+        try:
+            os.makedirs(os.path.dirname(self.path), exist_ok=True)
+            fd = os.open(self.path, os.O_RDWR | os.O_CREAT, 0o644)
+        except OSError:
+            return True     # no lock file possible: a write would fail the same way
+        try:
+            if os.name == "nt":
+                import msvcrt
+                os.lseek(fd, 0, os.SEEK_SET)
+                msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            os.close(fd)
+            return False
+        self._fd = fd
+        return True
+
+    def release(self):
+        fd, self._fd = self._fd, None
+        if fd is None:
+            return
+        try:
+            if os.name == "nt":
+                import msvcrt
+                os.lseek(fd, 0, os.SEEK_SET)
+                msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+        except OSError:
+            pass
+        os.close(fd)
 
 
 class Recorder:
@@ -711,8 +756,11 @@ class Recorder:
     writes one recording file per connected stretch.
 
     status()["reason"]: "port" (state off, refused for OFF_AFTER_S), "schema" (state off, no
-    schema from the exe or cache), "channel" (state waiting, pick_channel found nothing),
-    "error" (state waiting, unexpected error in the loop). Empty otherwise.
+    schema from the exe or cache), "other" (state off, another process holds the recorder
+    lock in root), "channel" (state waiting, pick_channel found nothing), "error" (state
+    waiting, unexpected error in the loop), "write" (state live, record on, the file write
+    failed). Empty otherwise. status()["file"] is the open recording, "" when none.
+    status()["streamed"]: frames came in since the game started.
 
     Locking: `_lock` guards status and live data (`_st`, `_live`, `_events`, `_stream`,
     `_writer`). Only the recorder thread uses the writer. stop() sets `_stop` and closes the
@@ -733,8 +781,9 @@ class Recorder:
         self._stream = None
         self._writer = None
         self._schema_try = None   # (key, schema or None)
+        self._plock = ProcessLock(os.path.join(root, LOCK_NAME))
         self._st = {"state": "idle", "reason": "", "channel": "", "file": "", "bytes": 0,
-                    "since": time.time(), "frames": 0}
+                    "since": time.time(), "frames": 0, "streamed": False}
         self._live = {"t": 0.0, "snapshot": {}}
         self._events = deque(maxlen=EVENT_KEEP)
 
@@ -783,6 +832,7 @@ class Recorder:
             out["state"] = self._st["state"]
             out["channel"] = self._st["channel"]
             out["reason"] = self._st["reason"]
+            out["streamed"] = self._st["streamed"]
             out["events"] = list(self._events)
             return out
 
@@ -809,6 +859,7 @@ class Recorder:
                 except Exception:
                     pass
             self._stop.wait(delay)
+        self._plock.release()
         self._set("idle", "")
 
     def _schema_for(self, label, cdir):
@@ -834,9 +885,13 @@ class Recorder:
             return ""
 
     def _cycle(self, refused):
+        if not self._plock.acquire():
+            refused[0] = None
+            self._set("off", "other", file="", frames=0)
+            return RETRY_S
         if self.game_running() is False:
             refused[0] = None
-            self._set("idle", "", file="", frames=0)
+            self._set("idle", "", file="", frames=0, streamed=False)
             return IDLE_S
         picked = self.pick_channel()
         if not picked:
@@ -852,7 +907,7 @@ class Recorder:
         if schema is None:
             self._set("off", "schema")
             return RETRY_S
-        if self._st["state"] == "idle" or self._st["reason"] == "channel":
+        if self._st["state"] == "idle" or self._st["reason"] in ("channel", "other"):
             self._set("waiting", "")
         try:
             stream = GrpcStream(self.host, self.port, STREAM_PATH, timeout=CONNECT_TIMEOUT_S,
@@ -885,7 +940,7 @@ class Recorder:
             except Exception:
                 pass
         if self.game_running() is False:
-            self._set("idle", "", file="", frames=0)
+            self._set("idle", "", file="", frames=0, streamed=False)
             return IDLE_S
         self._set("waiting", "")
         return RETRY_S
@@ -937,6 +992,8 @@ class Recorder:
                 return
             mono = time.monotonic()
             if raw is not None:
+                if mono - last_frame >= SILENT_S and self._writer is not None:
+                    self._close_file()      # resumed after sleep: a file is one unbroken stream
                 last_frame = mono
             elif mono - last_frame >= SILENT_S:
                 return
@@ -945,8 +1002,12 @@ class Recorder:
                 if self.game_running() is False:
                     return
                 settings = self.get_settings() or {}
-                if not settings.get("record") and self._writer is not None:
-                    self._close_file()
+                if not settings.get("record"):
+                    if self._writer is not None:
+                        self._close_file()
+                    if broken:
+                        broken = False      # off and on again tries a new file
+                        self._set(reason="")
             if raw is None:
                 continue
             try:
@@ -963,6 +1024,7 @@ class Recorder:
                 for e in evs:
                     self._events.append({"t": now, "type": e})
                 self._st["frames"] += 1
+                self._st["streamed"] = True
             if self._st["state"] != "live":
                 self._set("live", "")
             if settings.get("record") and not broken:
@@ -975,3 +1037,4 @@ class Recorder:
                 except Exception:
                     broken = True
                     self._close_file()
+                    self._set(reason="write")

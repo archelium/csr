@@ -122,7 +122,9 @@ class RecorderTests(unittest.TestCase):
             self.assertTrue(lv["events"])
             self.assertIn("ACTOR_DOWNED", lv["events"][-1]["type"])
             self.assertLessEqual(len(lv["events"]), 50)
+            self.assertTrue(lv["streamed"])
             self.assertEqual(rec.status()["file"], "")
+            self.assertEqual(rec.status()["reason"], "")
         self.assertEqual(rig.closed, [])
         self.assertFalse(os.path.exists(os.path.join(rig.root, "LIVE")))
 
@@ -212,6 +214,7 @@ class RecorderTests(unittest.TestCase):
             rec.start()
             time.sleep(0.3)
         self.assertEqual(rec.status()["state"], "idle")
+        self.assertFalse(rec.live()["streamed"])
         self.assertEqual(attempts, [])
 
     def test_loop_survives_errors(self):
@@ -309,8 +312,66 @@ class RecorderTests(unittest.TestCase):
             rec = rig.make(srv.port)
             rec.start()
             self.assertTrue(wait_for(lambda: rec.status()["frames"] >= 15))
-        self.assertEqual(len(opened), 1)
-        self.assertEqual(len(rig.closed), 1)
+            self.assertEqual(len(opened), 1)
+            st = rec.status()
+            self.assertEqual((st["state"], st["reason"], st["file"]), ("live", "write", ""))
+            rig.settings["record"] = False       # off: live, not recording
+            self.assertTrue(wait_for(lambda: rec.status()["reason"] == ""))
+            self.assertEqual(rec.status()["state"], "live")
+            rig.settings["record"] = True        # on again: tries a new file
+            self.assertTrue(wait_for(lambda: len(opened) == 2))
+            self.assertTrue(wait_for(lambda: rec.status()["reason"] == "write"))
+        self.assertEqual(len(rig.closed), 2)
+
+    def test_status_recording_has_file(self):
+        rig = Rig(self)
+        with StreamServer([{"frames": frames(5), "gap": 0.01, "end": "hold"}]) as srv:
+            rec = rig.make(srv.port)
+            rec.start()
+            self.assertTrue(wait_for(lambda: rec.status()["bytes"] > 0))
+            st = rec.status()
+            self.assertEqual((st["state"], st["reason"]), ("live", ""))
+            self.assertTrue(st["file"])
+
+    def test_second_recorder_same_root_is_off(self):
+        rig = Rig(self)
+        rig.running = False
+        first = rig.make(free_port())
+        first.start()
+        self.assertTrue(wait_for(lambda: first.status()["state"] == "idle"))
+        second = tlm.Recorder(rig.root, lambda: dict(rig.settings), lambda: False,
+                              lambda: ("LIVE", rig.chan), rig.closed.append, port=free_port())
+        self.addCleanup(second.stop)
+        second.start()
+        self.assertTrue(wait_for(lambda: second.status()["state"] == "off"))
+        self.assertEqual(second.status()["reason"], "other")
+        time.sleep(0.2)
+        self.assertEqual(second.status()["reason"], "other")
+        first.stop()
+        self.assertTrue(wait_for(lambda: second.status()["state"] == "idle"))
+        self.assertEqual(second.status()["reason"], "")
+
+    def test_frame_after_sleep_starts_new_file(self):
+        rig = Rig(self)
+        rec = rig.make(free_port())
+        schema = rec._schema_for("LIVE", rig.chan)
+        clock = [1000.0]
+
+        class Stream:
+            def messages(self):
+                for adv, raw in ((0, frames(1)[0]), (1, frames(1, 200)[0]),
+                                 (tlm.SILENT_S + 60, frames(1, 300)[0]), (1, frames(1, 400)[0])):
+                    clock[0] += adv
+                    yield raw
+
+        with mock.patch.object(tlm.time, "monotonic", lambda: clock[0]):
+            rec._read(Stream(), schema, "LIVE", rig.chan)
+            rec._close_file()
+        self.assertEqual(len(rig.closed), 2)
+        rows = [tlm.read_recording(p)[1] for p in rig.closed]
+        self.assertEqual([r[0]["t"] for r in rows], [0, 0])
+        self.assertEqual(rows[0][-1]["t"], 1)
+        self.assertEqual(rows[1][-1]["t"], 1)
 
     def test_header_started_matches_filename(self):
         rig = Rig(self)
