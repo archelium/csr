@@ -194,3 +194,88 @@ class FakeGrpcServer:
             pass
         finally:
             c.close()
+
+
+def actor_frame(uec=100, health=None, event=None):
+    """One TelemetryStreamResponse: actor.state.uec_balance, optional health, optional event."""
+    vit = enc_field(1, 2, enc_field(1, 5, f32(health))) if health is not None else b""
+    state = enc_field(2, 2, enc_field(4, 0, uec))
+    out = enc_field(6, 2, vit + state)
+    if event is not None:
+        out = enc_field(5, 2, enc_field(1, 2, enc_field(1, 0, event))) + out
+    return out
+
+
+def free_port():
+    s = socket.socket()
+    s.bind(("127.0.0.1", 0))
+    port = s.getsockname()[1]
+    s.close()
+    return port
+
+
+class StreamServer:
+    """Accepts any number of connections. Connection n serves plans[n] (the last plan repeats):
+    `frames` messages, `gap` seconds apart. Then, with end="trailers", a clean end (or end="drop",
+    a plain close). With end="hold", the stream stays open and the frames cycle until the client
+    leaves. Pass `port` to bind a known port."""
+
+    def __init__(self, plans, port=0):
+        self.plans = plans
+        self.port = port
+        self.accepted = 0
+        self._stop = threading.Event()
+
+    def __enter__(self):
+        self.srv = socket.socket()
+        self.srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.srv.bind(("127.0.0.1", self.port))
+        self.srv.listen(4)
+        self.srv.settimeout(0.2)
+        self.port = self.srv.getsockname()[1]
+        self.thread = threading.Thread(target=self._accept, daemon=True)
+        self.thread.start()
+        return self
+
+    def __exit__(self, *exc):
+        self._stop.set()
+        self.thread.join(5)
+        self.srv.close()
+
+    def _accept(self):
+        while not self._stop.is_set():
+            try:
+                c, _ = self.srv.accept()
+            except socket.timeout:
+                continue
+            except OSError:
+                return
+            plan = self.plans[min(self.accepted, len(self.plans) - 1)]
+            self.accepted += 1
+            threading.Thread(target=self._serve, args=(c, plan), daemon=True).start()
+
+    def _serve(self, c, plan):
+        frames, gap, end = plan["frames"], plan.get("gap", 0.0), plan.get("end", "trailers")
+        try:
+            c.recv(65536)
+            c.sendall(tlm._frame(tlm.SETTINGS, 0, 0) + tlm._frame(tlm.HEADERS, tlm.F_END_HEADERS, 1, b"\x88"))
+            i = 0
+            while not self._stop.is_set():
+                if i >= len(frames):
+                    if end != "hold":
+                        break
+                    i = 0
+                msg = frames[i]
+                i += 1
+                g = b"\x00" + struct.pack(">I", len(msg)) + msg
+                c.sendall(tlm._frame(tlm.DATA, 0, 1, g))
+                if gap:
+                    time.sleep(gap)
+            if end == "trailers":
+                c.sendall(tlm._frame(tlm.HEADERS, tlm.F_END_HEADERS | tlm.F_END_STREAM, 1,
+                                     b"\x00\x0bgrpc-status\x010"))
+                time.sleep(0.2)
+        except OSError:
+            pass
+        finally:
+            c.close()

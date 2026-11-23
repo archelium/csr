@@ -15,7 +15,11 @@ import re
 import socket
 import struct
 import sys
+import threading
+import time
 import zlib
+from collections import deque
+from datetime import datetime, timedelta, timezone
 
 PKG = "sc.game.telemetry.v1"
 STREAM_PATH = f"/{PKG}.GameTelemetryService/TelemetryStream"
@@ -672,3 +676,260 @@ def iter_states(rows):
             cur = state.get(base)
             peaks[base] = (cur if lo is None else lo, cur if hi is None else hi)
         yield row.get("t", 0.0), dict(state), list(row.get("ev") or ()), peaks
+
+
+# --- recorder thread ---------------------------------------------------------------
+
+RETRY_S = 5.0          # between connect attempts while the game runs
+OFF_AFTER_S = 180.0    # refused this long in a row -> state "off"
+POLL_S = 1.0           # how often the game and the record flag are re-checked while live
+IDLE_S = 1.0           # re-check interval while the game is not running
+ERROR_BACKOFF_S = 5.0  # after an unexpected error
+CONNECT_TIMEOUT_S = 2.0
+EVENT_KEEP = 50
+
+
+class Recorder:
+    """Background thread: connects to the game's telemetry port while the game runs and
+    writes one recording file per connected stretch.
+
+    Locking: `_lock` guards status and live data (`_st`, `_live`, `_events`, `_stream`,
+    `_writer`). Only the recorder thread uses the writer. stop() sets `_stop` and closes the
+    open stream from the calling thread, which ends the blocking read."""
+
+    def __init__(self, root, get_settings, game_running, pick_channel, on_close,
+                 host=HOST, port=PORT):
+        self.root = root
+        self.get_settings = get_settings
+        self.game_running = game_running
+        self.pick_channel = pick_channel
+        self.on_close = on_close
+        self.host = host
+        self.port = port
+        self._lock = threading.Lock()
+        self._stop = threading.Event()
+        self._thread = None
+        self._stream = None
+        self._writer = None
+        self._schema_try = None   # (key, schema or None)
+        self._st = {"state": "idle", "reason": "", "channel": "", "file": "", "bytes": 0,
+                    "since": time.time(), "frames": 0}
+        self._live = {"t": 0.0, "snapshot": {}}
+        self._events = deque(maxlen=EVENT_KEEP)
+
+    # -- public ---------------------------------------------------------------
+
+    def start(self):
+        if self._thread and self._thread.is_alive():
+            return
+        self._stop.clear()
+        self._thread = threading.Thread(target=self._run, name="tlm-recorder", daemon=True)
+        self._thread.start()
+
+    def stop(self):
+        self._stop.set()
+        with self._lock:
+            stream = self._stream
+        if stream is not None:
+            try:
+                stream.close()
+            except Exception:
+                pass
+        t = self._thread
+        if t and t is not threading.current_thread():
+            t.join(CONNECT_TIMEOUT_S + 2.0)
+
+    @property
+    def connected(self):
+        with self._lock:
+            return self._stream is not None
+
+    def status(self):
+        with self._lock:
+            out = dict(self._st)
+            w = self._writer
+        out["bytes"] = w.bytes_written if w is not None else 0
+        return out
+
+    def live(self):
+        with self._lock:
+            out = dict(self._live)
+            out["state"] = self._st["state"]
+            out["channel"] = self._st["channel"]
+            out["events"] = list(self._events)
+            return out
+
+    # -- internals ------------------------------------------------------------
+
+    def _set(self, state=None, reason=None, **kw):
+        with self._lock:
+            if state is not None and state != self._st["state"]:
+                self._st["state"] = state
+                self._st["since"] = time.time()
+            if reason is not None:
+                self._st["reason"] = reason
+            self._st.update(kw)
+
+    def _run(self):
+        refused = [None]
+        while not self._stop.is_set():
+            try:
+                delay = self._cycle(refused)
+            except Exception:
+                delay = ERROR_BACKOFF_S
+                try:
+                    self._set("waiting", "error")
+                except Exception:
+                    pass
+            self._stop.wait(delay)
+        self._set("idle", "")
+
+    def _schema_for(self, label, cdir):
+        exe = os.path.join(cdir, "Bin64", "StarCitizen.exe")
+        try:
+            st = os.stat(exe)
+            sig = (st.st_size, int(st.st_mtime))
+        except OSError:
+            sig = None
+        key = (label, cdir, sig)
+        if self._schema_try and self._schema_try[0] == key:
+            return self._schema_try[1]
+        schema = load_schema(exe, self.root, label)
+        self._schema_try = (key, schema)
+        return schema
+
+    @staticmethod
+    def _build_of(cdir):
+        try:
+            with open(os.path.join(cdir, "build_manifest.id"), encoding="utf-8") as fh:
+                return str(json.load(fh)["Data"]["Version"])
+        except (OSError, ValueError, KeyError, TypeError):
+            return ""
+
+    def _cycle(self, refused):
+        if self.game_running() is False:
+            refused[0] = None
+            self._set("idle", "", file="", frames=0)
+            return IDLE_S
+        picked = self.pick_channel()
+        if not picked:
+            self._set("idle", "channel")
+            return IDLE_S
+        label, cdir = picked
+        self._set(channel=label)
+        schema = self._schema_for(label, cdir)
+        if schema is None:
+            self._set("off", "schema")
+            return RETRY_S
+        try:
+            stream = GrpcStream(self.host, self.port, STREAM_PATH, timeout=CONNECT_TIMEOUT_S)
+        except OSError:
+            now = time.monotonic()
+            if refused[0] is None:
+                refused[0] = now
+            if now - refused[0] >= OFF_AFTER_S:
+                self._set("off", "port")
+            else:
+                self._set("waiting", "")
+            return RETRY_S
+        refused[0] = None
+        with self._lock:
+            self._stream = stream
+            self._st["frames"] = 0
+        self._set("waiting", "")
+        try:
+            if not self._stop.is_set():
+                self._read(stream, schema, label, cdir)
+        except Exception:
+            pass
+        finally:
+            self._close_file()
+            with self._lock:
+                self._stream = None
+            try:
+                stream.close()
+            except Exception:
+                pass
+        if self.game_running() is False:
+            self._set("idle", "", file="", frames=0)
+            return IDLE_S
+        self._set("waiting", "")
+        return RETRY_S
+
+    def _close_file(self):
+        with self._lock:
+            w, self._writer = self._writer, None
+            path = self._st["file"]
+            self._st["file"] = ""
+        if w is None:
+            return
+        try:
+            w.close()
+        except Exception:
+            pass
+        try:
+            self.on_close(path)
+        except Exception:
+            pass
+
+    def _open_file(self, label, cdir, schema, settings):
+        folder = os.path.join(self.root, label)
+        os.makedirs(folder, exist_ok=True)
+        now = datetime.now().replace(microsecond=0)
+        while True:
+            path = os.path.join(folder, now.strftime("%Y%m%d-%H%M%S") + ".jsonl.gz")
+            if not os.path.exists(path):
+                break
+            now += timedelta(seconds=1)
+        header = {"v": 1, "csr": settings.get("csr"), "channel": label,
+                  "build": self._build_of(cdir),
+                  "started": datetime.now().replace(microsecond=0).isoformat(),
+                  "started_utc": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+                  "schema": schema.hash}
+        w = RecordingWriter(path, header, settings.get("detail", "normal"),
+                            settings.get("groups") or DEFAULT_GROUPS)
+        with self._lock:
+            self._writer = w
+            self._st["file"] = path
+        return w
+
+    def _read(self, stream, schema, label, cdir):
+        settings = self.get_settings() or {}
+        last_check = time.monotonic()
+        file_t0 = 0.0
+        for raw in stream.messages():
+            if self._stop.is_set():
+                return
+            mono = time.monotonic()
+            if mono - last_check >= POLL_S:
+                last_check = mono
+                if self.game_running() is False:
+                    return
+                settings = self.get_settings() or {}
+                if not settings.get("record") and self._writer is not None:
+                    self._close_file()
+            try:
+                frame = schema.decode(RESP_TYPE, raw)
+                flat = flatten(frame)
+                evs = frame_events(frame)
+            except Exception:
+                continue
+            now = time.time()
+            snap = {k: v for k, v in frame.items() if k != "events"}
+            with self._lock:
+                self._live["t"] = now
+                self._live["snapshot"] = snap
+                for e in evs:
+                    self._events.append({"t": now, "type": e})
+                self._st["frames"] += 1
+            if self._st["state"] != "live":
+                self._set("live", "")
+            if settings.get("record"):
+                w = self._writer
+                if w is None:
+                    w = self._open_file(label, cdir, schema, settings)
+                    file_t0 = mono
+                try:
+                    w.add(mono - file_t0, flat, evs)
+                except Exception:
+                    self._close_file()
