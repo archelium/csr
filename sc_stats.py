@@ -5359,8 +5359,59 @@ def patch_key(k):
         return (2, 0, 0, "") if k == UNKNOWN_PATCH else (1, 0, 0, str(k))
 
 
+# Persistent-universe wipes: the patch that reset everyone's progress. CSR opens on the
+# stats since the latest one, and keeps the ones before it as their own scope.
+WIPES = ["4.8"]
+
+
+def _ver_at_least(patch, wipe):
+    """True/False for a numbered patch against a wipe's version, None when the patch has
+    no number (a feature preview, an unversioned build)."""
+    try:
+        a = tuple(int(x) for x in str(patch).split(".")[:2])
+        b = tuple(int(x) for x in str(wipe).split(".")[:2])
+    except ValueError:
+        return None
+    return a >= b if len(a) == 2 else None
+
+
+def split_by_wipe(sessions, wipe):
+    """(after, before) lists of sessions. Numbered patches go by version. A session
+    without one goes by date, against the first session on the wipe patch or later.
+    Both lists come back empty when nothing was played on or after the wipe."""
+    starts = [s["start"] for s in sessions if s.get("start") and _ver_at_least(s.get("patch"), wipe)]
+    if not starts:
+        return [], []
+    w0 = min(starts)
+    after, before = [], []
+    for s in sessions:
+        v = _ver_at_least(s.get("patch"), wipe)
+        if v is None:
+            v = bool(s.get("start") and s["start"] >= w0)
+        (after if v else before).append(s)
+    return after, before
+
+
+def build_eras(sessions):
+    """{'since-4.8': stats, 'pre-4.8': stats} for the latest wipe. Empty when there was
+    no play before it (then the career is the same thing) or none after it."""
+    wipe = WIPES[-1] if WIPES else None
+    if not wipe:
+        return {}
+    after, before = split_by_wipe(sessions, wipe)
+    if not after or not before:
+        return {}
+    eras = {}
+    for key, part in ((f"since-{wipe}", after), (f"pre-{wipe}", before)):
+        agg = blank_patch()
+        for s in part:
+            fold(agg, s)
+        eras[key] = finalize(agg)
+    return eras
+
+
 def build_account(sessions, handle, fresh_profile=False):
-    """Aggregate one account's sessions into {career, patches, showcase, profile...}."""
+    """Aggregate one account's sessions into {career, patches, eras, showcase, profile...}."""
     per_patch = defaultdict(blank_patch)
     career = blank_patch()
     for s in sessions:
@@ -5377,12 +5428,14 @@ def build_account(sessions, handle, fresh_profile=False):
     order = sorted(patches.keys(),
                    key=lambda k: (patches[k].get("first") or "9999", patch_key(k)))
     career_f = finalize(career)
+    eras = build_eras(sessions)
     prof, orgs = fetch_profile_cached(handle, force=fresh_profile)
     months = sorted({m for k in patches for m in patches[k]["months"]})
     return {
         "career": career_f, "patches": patches, "order": order, "months": months,
         "patch_playtime": [[k, patches[k]["hours"]] for k in order],
-        "showcase": build_showcase(career_f, patches, order),
+        "eras": eras,
+        "showcase": build_showcase(career_f, patches, order, eras),
         "profile": prof,
         "orgs": orgs,
     }
@@ -6008,12 +6061,14 @@ def _view_showcase(v):
     return {"ships": ships, "guns": guns}
 
 
-def build_showcase(career, patches, order):
-    """Top-3 ships + guns with artwork & classification, per patch AND career."""
+def build_showcase(career, patches, order, eras=None):
+    """Top-3 ships + guns with artwork & classification, per patch, era AND career."""
     cstep("retrieving hull & armament imagery from the fleet registry")
     out = {"all": _view_showcase(career)}
     for k in order:
         out[k] = _view_showcase(patches[k])
+    for k, v in (eras or {}).items():
+        out[k] = _view_showcase(v)
     return out
 
 
@@ -8774,6 +8829,7 @@ function markHintSeen(){ try{ localStorage.setItem(HINT_KEY,'1'); }catch(e){} }
 function defaultAccount(){ return savedMain(currentChannel) || C().primary; }
 let currentAccount = defaultAccount();
 const A = () => C().acct[currentAccount] || {career:{},patches:{},order:[],showcase:{},patch_playtime:[]};
+current = defaultScope();
 
 function esc(s){return (s||'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));}
 
@@ -9027,7 +9083,7 @@ function showCard(item, rank, kind){
 }
 function showcaseHTML(){
   const sc = (A().showcase && A().showcase[current]) || {ships:[],guns:[]};
-  const scope = current==='all' ? 'career' : ('patch '+current);
+  const scope = current==='all' ? 'career' : isEra(current) ? scopeLabel() : ('patch '+current);
   const ships = sc.ships.map((s,i)=>showCard(s,i+1,'ship')).join('') || '<div class="empty">No ships flown in this scope.</div>';
   const guns  = sc.guns.map((g,i)=>showCard(g,i+1,'gun')).join('')  || '<div class="empty">No weapons drawn in this scope.</div>';
   const s0 = sc.ships[0]||{};
@@ -9160,14 +9216,23 @@ const NOTE = noteFold(
 function pFeature(p){
   return p.replace(/^scp-/,'').replace(/[-_]+/g,' ').replace(/\b\w/g,c=>c.toUpperCase());
 }
+// the scope CSR opens on: since the latest wipe when there was play before it, else the career
+const isEra = k => /^(since|pre)-/.test(k||'');
+function defaultScope(){ return Object.keys(A().eras||{}).find(k=>k.startsWith('since-'))||'all'; }
 // full label for headings and the dropdown
 function pLabel(p){
+  if(p==='all') return 'Career';
+  if(/^since-/.test(p)) return 'Since '+p.slice(6)+' wipe';
+  if(/^pre-/.test(p)) return 'Before '+p.slice(4)+' wipe';
   if(p==='unknown') return 'Unversioned build';
   if(/^\d/.test(p)) return 'Patch '+p;
   return pFeature(p)+' Preview';
 }
 // short label for chart axes, where space is tight
 function pShort(p){
+  if(p==='all') return 'Career';
+  if(/^since-/.test(p)) return p.slice(6)+'+';
+  if(/^pre-/.test(p)) return 'Pre-'+p.slice(4);
   if(p==='unknown') return '—';
   if(/^\d/.test(p)) return p;
   return pFeature(p)+' TP';
@@ -9270,7 +9335,7 @@ function pbars(el, items, opts={}){
 }
 
 function secOverview(v){
-  const reset = current!=='all' ? `<button class="chart-reset" id="patchReset">↩ View career</button>` : '';
+  const reset = current!==defaultScope() ? `<button class="chart-reset" id="patchReset">↩ ${pLabel(defaultScope())}</button>` : '';
   const chartCard = `<section class="card ov-chart"><h3><span>Playtime by Patch <span class="u">— click a bar to filter</span></span>${reset}</h3>`+
     `<div id="patchChart"></div></section>`;
   $('#content').innerHTML = heroHTML(v)+
@@ -9285,9 +9350,9 @@ function secOverview(v){
     return pLabel(k)+(b?' · build '+b:'')+(when?' · '+when:'');
   };
   const items = A().patch_playtime.map(([k,h])=>({key:k, label:pShort(k), value:h, disp:fmt(Math.round(h))+' h', full:pfull(k)}));
-  pbars($('#patchChart'), items, {sel: current==='all'?null:current, fmtY:x=>Math.round(x)+'h',
-    onClick:(it)=>{ current = (current===it.key) ? 'all' : it.key; renderPatches(); render(); }});
-  const rb=$('#patchReset'); if(rb) rb.onclick=()=>{ current='all'; renderPatches(); render(); };
+  pbars($('#patchChart'), items, {sel: (current==='all'||isEra(current))?null:current, fmtY:x=>Math.round(x)+'h',
+    onClick:(it)=>{ current = (current===it.key) ? defaultScope() : it.key; renderPatches(); render(); }});
+  const rb=$('#patchReset'); if(rb) rb.onclick=()=>{ current=defaultScope(); renderPatches(); render(); };
 }
 
 // Places visited: the game asks for your stored items when you land or dock somewhere,
@@ -10076,7 +10141,7 @@ function secBlueprints(v){
   const K=kpiRow([
     catalog ? [icon('blueprints'), `${fmt(ownedAll)} <span class="u">/ ${fmt(total)}</span>`, 'Blueprints owned', `${pct}% of the crafting catalogue · ${esc(String(catalog.version||'').split('-')[0])}`]
             : [icon('blueprints'), fmt(ownedAll), 'Blueprints owned', 'distinct · all-time on this account'],
-    current==='all' ? [icon('import'), fmt(v.bp_receipts||0), 'Times received', `${fmt(v.bp_repeats||0)} received more than once`]
+    current==='all'||isEra(current) ? [icon('import'), fmt(v.bp_receipts||0), 'Times received', `${fmt(v.bp_repeats||0)} received more than once`]
                     : [icon('import'), fmt(v.bp_unique||0), 'Received in '+esc(pLabel(current)), `${fmt(v.bp_receipts||0)} notifications`],
     catalog ? [icon('overview'), fmt(missing.length), 'Still missing', 'never seen received in your logs']
             : [icon('overview'), fmt(cats.length), 'Categories', cats.length?esc(cats[0][0])+' is the largest':'—'],
@@ -10089,7 +10154,7 @@ function secBlueprints(v){
     cats.map(([c,n])=>`<button class="vpill sm ${bpCat===c?'on':''}" data-bpc="${esc(c)}">${esc(c)} <span class="vc">${fmt(n)}</span></button>`).join('');
   const bar=`<div class="bpbar">${modes}${pills}<input class="bpq" id="bpQ" type="search" placeholder="Search blueprints…" value="${esc(bpQ)}" spellcheck="false" autocomplete="off"></div>`;
   const listTitle = bpMode==='missing' ? `Not Yet in Your Library <span class="u">— every catalogue blueprint you haven't been seen to receive</span>`
-    : current==='all' ? `Your Library <span class="u">— every blueprint you've received, newest first</span>`
+    : current==='all'||isEra(current) ? `Your Library <span class="u">— every blueprint you've received${current==='all'?'':' '+esc(scopeLabel())}, newest first</span>`
                       : `Received in ${esc(pLabel(current))} <span class="u">— newest first</span>`;
   // ---- one page at a time, picked from the menu down the left
   const P=catalog?bpBoardHTML(catalog):null;
@@ -11472,12 +11537,12 @@ function secOrgs(v){
 
 // ==== NAV + PATCH ORCHESTRATION ====
 let section='overview';
-function view(){ return current==='all' ? A().career : A().patches[current]; }
+function view(){ return current==='all' ? A().career : ((A().eras||{})[current] || A().patches[current] || A().career); }
 function render(){
   updateScopePill();
   $('#secTitle').textContent=SECTIONS[section].title;
   const sb=$('#secScope');
-  if(sb){ sb.textContent = current==='all' ? 'Career' : pLabel(current);
+  if(sb){ sb.textContent = pLabel(current);
     sb.classList.toggle('patch', current!=='all'); }
   renderLimitedNote();
   SECTIONS[section].fn(view());
@@ -11529,15 +11594,18 @@ function renderLimitedNote(){
 
 // patch selector (dropdown — saves horizontal space vs a row of tabs), plus a
 // ‹ › stepper so you can walk patches without opening the list every time.
-const scopeList = () => ['all'].concat(A().order||[]);
+// eras first (since the wipe, the career, before the wipe), then every patch
+const scopeList = () => { const e=Object.keys(A().eras||{});
+  return e.filter(k=>k.startsWith('since-')).concat(['all'], e.filter(k=>k.startsWith('pre-')), A().order||[]); };
 function renderPatches(){
   const sel=$('#patchSel'); if(!sel) return;
   // A <select> is as wide as its WIDEST option, so "Career (all patches)" and
   // "Patch 4.1" were setting the width of the whole control. The field is captioned
   // PATCH directly above it, so the word is redundant inside every row.
-  let h=`<option value="all">Career</option>`;
-  A().order.forEach(p=>{ const v=pBuild(p);
-    h+=`<option value="${p}">${pShort(p)}${v?' · '+v:''}</option>`; });
+  let h='';
+  scopeList().forEach(p=>{
+    if(p==='all'||isEra(p)){ h+=`<option value="${p}">${pLabel(p)}</option>`; return; }
+    const v=pBuild(p); h+=`<option value="${p}">${pShort(p)}${v?' · '+v:''}</option>`; });
   sel.innerHTML=h; sel.value=current;
   const L=scopeList(), i=L.indexOf(current);
   const pv=$('#patchPrev'), nx=$('#patchNext');
@@ -11605,7 +11673,7 @@ function renderChannels(){
   sel.value=currentChannel;
 }
 $('#chanSel').onchange=e=>{
-  currentChannel=e.target.value; currentAccount=defaultAccount(); current='all';
+  currentChannel=e.target.value; currentAccount=defaultAccount(); current=defaultScope();
   $('#who').textContent=currentAccount;
   renderAccts(); renderPatches(); render(); updateGen();
 };
@@ -11615,7 +11683,7 @@ $('#chanSel').onchange=e=>{
 $('#homeBtn').onclick=()=>{
   currentChannel=DATA.default_channel;
   currentAccount=defaultAccount();
-  current='all';
+  current=defaultScope();
   section='overview';
   document.querySelectorAll('#nav a').forEach(x=>x.classList.toggle('active',x.dataset.sec==='overview'));
   $('#who').textContent=currentAccount;
@@ -11648,7 +11716,7 @@ function renderAccts(){
       : `Set ${currentAccount} as your main account for ${CHAN_LABEL[currentChannel]||currentChannel} — CSR will open here by default`;
   }
 }
-$('#acctSel').onchange=e=>{ currentAccount=e.target.value; current='all';
+$('#acctSel').onchange=e=>{ currentAccount=e.target.value; current=defaultScope();
   $('#who').textContent=currentAccount; renderAccts(); renderPatches(); render(); };
 $('#mainBtn').onclick=()=>{
   setMain(currentChannel, savedMain(currentChannel)===currentAccount ? null : currentAccount);
@@ -11693,8 +11761,8 @@ function updateScopePill(){
   const ch=$('#spChan'), ac=$('#spAcct'), pt=$('#spPatch'), att=$('#spAtt'); if(!ac) return;
   if(ch) ch.textContent = CHAN_LABEL[currentChannel]||currentChannel;
   ac.textContent = currentAccount||'Citizen';
-  if(pt){ pt.textContent = current==='all' ? 'Career' : pShort(current);
-    pt.classList.toggle('sel', current!=='all'); }
+  if(pt){ pt.textContent = pShort(current);
+    pt.classList.toggle('sel', current!==defaultScope()); }
   // amber dot = the first-run "pick your main" question is still open
   if(att) att.classList.toggle('on',
     (C().accounts||[]).length>1 && !savedMain(currentChannel) && !hintSeen());
