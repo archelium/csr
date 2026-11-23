@@ -92,7 +92,7 @@ class WriterTests(unittest.TestCase):
         w.add(0.1, {NAME: "A"}, [])
         w.close()
         lines = read_lines(self.path)
-        self.assertEqual(lines[1:], [{"t": 0.0, NAME: "A"}])
+        self.assertEqual(lines[1:], [{"t": 0.0, NAME: "A"}, {"t": 0.1}])
 
     def test_bytes_written_grows(self):
         w = self.writer()
@@ -192,7 +192,7 @@ class WriterTests(unittest.TestCase):
         w.add(0.0, {NAME: "A"}, ["ACTOR_DEAD"])
         w.add(1.0, {NAME: "A"}, ["ACTOR_DEAD"])
         w.close()
-        self.assertEqual(read_lines(self.path)[1:], [{"t": 0.0, NAME: "A"}])
+        self.assertEqual(read_lines(self.path)[1:], [{"t": 0.0, NAME: "A"}, {"t": 1.0}])
 
     def test_close_writes_pending_smooth_and_peaks(self):
         w = self.writer("light")
@@ -202,6 +202,38 @@ class WriterTests(unittest.TestCase):
         w.close()
         self.assertEqual(read_lines(self.path)[2:],
                          [{"t": 2.0, SPEED: 20, SPEED + "^": 90}])
+
+    def test_close_writes_end_time_after_quiet_adds(self):
+        w = self.writer()
+        w.add(0.0, {NAME: "A"}, [])
+        w.add(30.0, {NAME: "A"}, [])
+        w.close()
+        self.assertEqual(read_lines(self.path)[-1], {"t": 30.0})
+        head, rows = tlm.read_recording(self.path)
+        states = list(tlm.iter_states(rows))
+        self.assertEqual(states[-1][0], 30.0)
+        self.assertEqual(states[-1][1], {NAME: "A"})
+        self.assertEqual(states[-1][3], {})
+
+    def test_close_no_end_line_when_last_add_wrote(self):
+        w = self.writer()
+        w.add(0.0, {NAME: "A"}, [])
+        w.add(2.0, {NAME: "B"}, [])
+        w.close()
+        self.assertEqual([x["t"] for x in read_lines(self.path)[1:]], [0.0, 2.0])
+
+    def test_removed_smooth_path_writes_pending_peaks(self):
+        w = self.writer()
+        w.add(0.0, {SPEED: 1.0}, [])
+        w.add(0.1, {SPEED: 9.0}, [])
+        w.add(0.2, {SPEED: 0.5}, [])
+        w.add(0.3, {NAME: "A"}, [])
+        w.close()
+        lines = read_lines(self.path)
+        gone = [x for x in lines if "-" in x][0]
+        self.assertEqual(gone["-"], [SPEED])
+        self.assertEqual(gone[SPEED + "^"], 9.0)
+        self.assertEqual(gone[SPEED + "_"], 0.5)
 
     def test_close_idempotent_and_quiet_when_nothing_pending(self):
         w = self.writer()

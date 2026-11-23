@@ -41,6 +41,7 @@ CM0A = "weapons.countermeasures[0].amount"
 CM1T = "weapons.countermeasures[1].type"
 CM1A = "weapons.countermeasures[1].amount"
 
+POWER_X = "vehicle.state.power.engines"
 HEADER = {"v": 1, "channel": "LIVE", "build": "1234", "started": "2026-11-24T19:50:00"}
 
 
@@ -107,20 +108,35 @@ class SummaryTests(SummaryBase):
 
     def test_flight_takeoff_landing_distance(self):
         seated = {LOCO: "SEATED", CLASS: "X"}
-        steps = [(0.0, dict(seated, **{LANDED: True})), (2.0, dict(seated, **{SPEED: 100.0}))]
-        steps += [(2.0 + i, dict(seated, **{SPEED: 100.0 + (i % 2)})) for i in range(1, 10)]
-        steps += [(12.0, dict(seated, **{LANDED: True}))]
+        steps = [(0.0, dict(seated, **{LANDED: True})), (2.0, dict(seated, **{SPEED: 100.0})),
+                 (12.0, dict(seated, **{LANDED: True}))]
         s = self.sum(steps)
         self.assertEqual((s["takeoffs"], s["landings"]), (1, 1))
-        self.assertAlmostEqual(s["dist_m"], 1000, delta=5)
+        self.assertAlmostEqual(s["dist_m"], 1000, delta=1)
         self.assertAlmostEqual(s["t_flying"], 10, delta=0.1)
-        self.assertEqual(s["top_speed"], 101.0)
+        self.assertEqual(s["top_speed"], 100.0)
 
-    def test_dt_capped_at_five_seconds(self):
-        seated = {LOCO: "SEATED", CLASS: "X", SPEED: 100.0}
-        s = self.sum([(0.0, seated), (60.0, dict(seated, **{SPEED: 50.0}))])
-        self.assertAlmostEqual(s["t_flying"], 5, delta=0.01)
-        self.assertAlmostEqual(s["dist_m"], 500, delta=0.5)
+    def test_quiet_stretch_counts_in_full(self):
+        s = self.sum([(0.0, {LOCO: "ON_FOOT"}), (60.0, {LOCO: "EVA"})])
+        self.assertEqual(s["t_on_foot"], 60)
+
+    def test_close_end_time_counts_last_stretch(self):
+        w = self.record([(0.0, {LOCO: "ON_FOOT"}), (30.0, {LOCO: "ON_FOOT"})], close=False)
+        w.close()
+        out = st.summarize(self.path)
+        self.assertEqual(out["sum"]["t_on_foot"], 30)
+        self.assertEqual(out["ended"], "2026-11-24T19:50:30")
+
+    def test_wallet_zero_is_dropped_by_proto3(self):
+        s = self.sum([(0.0, {WALLET: 500, LOCO: "ON_FOOT"}), (1.0, {LOCO: "ON_FOOT"}),
+                      (2.0, {WALLET: 300, LOCO: "ON_FOOT"})])
+        self.assertEqual((s["uec_spent"], s["uec_earned"]), (500, 300))
+        self.assertEqual(s["uec_end"], 300)
+
+    def test_wallet_missing_without_actor_state_is_unknown(self):
+        s = self.sum([(0.0, {WALLET: 500}), (1.0, {HEALTH: 0.5}), (2.0, {WALLET: 300})],
+                     groups=["wallet", "vitals"])
+        self.assertEqual((s["uec_spent"], s["uec_earned"]), (200, 0))
 
     def test_vehicle_leaving_is_not_a_takeoff(self):
         steps = [(0.0, {LOCO: "SEATED", CLASS: "X", LANDED: True}),
@@ -176,7 +192,18 @@ class SummaryTests(SummaryBase):
         base = {LOCO: "SEATED", CLASS: "X"}
         seq = ["NOMINAL", "MINOR_ON", "MAJOR_ON", "NOMINAL", "MAJOR_ON"]
         s = self.sum([(float(i), dict(base, **{PROX: v})) for i, v in enumerate(seq)])
-        self.assertEqual(s["warn"], {"prox": 3})
+        self.assertEqual(s["warn"], {"prox": 2})
+
+    def test_warn_flashing_to_on_is_one(self):
+        base = {LOCO: "SEATED", CLASS: "X"}
+        seq = ["OFF", "MINOR_FLASHING", "MINOR_ON"]
+        s = self.sum([(float(i), dict(base, **{PROX: v})) for i, v in enumerate(seq)])
+        self.assertEqual(s["warn"], {"prox": 1})
+
+    def test_warn_first_observation_not_counted(self):
+        base = {LOCO: "SEATED", CLASS: "X"}
+        s = self.sum([(0.0, dict(base, **{PROX: "MAJOR_ON"})), (1.0, dict(base, **{PROX: "NOMINAL"}))])
+        self.assertEqual(s["warn"], {})
 
     def test_group_off_means_absent(self):
         groups = [g for g in tlm.DEFAULT_GROUPS if g != "vitals"]
@@ -252,7 +279,7 @@ class SummaryTests(SummaryBase):
         self.assertAlmostEqual(s["qt_used"], 0.3, places=6)
 
     def test_shields_off_flying_and_ifcs(self):
-        base = {LOCO: "SEATED", CLASS: "X", LANDED: False}
+        base = {LOCO: "SEATED", CLASS: "X", LANDED: False, POWER_X: True}
         steps = [(0.0, dict(base, **{SHIELDS: True, ESP: True})),
                  (2.0, dict(base, **{ESP: True, CPRED: True})),
                  (5.0, dict(base, **{SHIELDS: True, LANDED: True, ESP: True})),
@@ -260,6 +287,11 @@ class SummaryTests(SummaryBase):
         s = self.sum(steps)
         self.assertEqual(s["t_shields_off_flying"], 3)
         self.assertEqual(s["t_ifcs"], {"ifcs_esp": 5, "course_prediction": 3})
+
+    def test_shields_off_needs_power_message(self):
+        base = {LOCO: "SEATED", CLASS: "X"}
+        s = self.sum([(0.0, base), (5.0, dict(base, **{SPEED: 1.0})), (6.0, base)])
+        self.assertEqual(s["t_shields_off_flying"], 0)
 
     def test_ifcs_needs_flight_group(self):
         base = {LOCO: "SEATED", CLASS: "X", ESP: True}
@@ -321,6 +353,17 @@ class CombineTests(SummaryBase):
         self.assertEqual((s["max_ext_temp"], s["min_ext_temp"]), (30.0, -5.0))
         self.assertEqual(s["presets"], {"A": 3, "B": 3})
         self.assertEqual(s["top_speed"], 5.0)
+
+    def test_combine_sorts_by_started(self):
+        a = self.entry("a.jsonl.gz", [(0.0, {WALLET: 1000}), (1.0, {WALLET: 1500})])
+        b = self.entry("b.jsonl.gz", [(0.0, {WALLET: 1500}), (1.0, {WALLET: 900})],
+                       header=dict(HEADER, started="2026-11-24T21:00:00"))
+        c = {"started": None, "sum": {"uec_start": 7, "uec_end": 7}}
+        self.assertEqual(st.combine([b, a]), st.combine([a, b]))
+        self.assertEqual(st.combine([c, b, a]), st.combine([a, b, c]))
+        s = st.combine([b, a, c])
+        self.assertEqual((s["uec_start"], s["uec_end"]), (1000, 7))
+        self.assertEqual(s["uec_series"][0][1], 1000)
 
     def test_combine_absent_stays_absent(self):
         a = self.entry("a.jsonl.gz", [(0.0, {WALLET: 5}), (1.0, {WALLET: 6})], groups=["wallet"])

@@ -527,6 +527,8 @@ class RecordingWriter:
         self._smooth = {}    # path -> [last_sample_t, hi, lo]
         self._flushed_t = None
         self._t = 0.0
+        self._line_t = None   # t of the last written data line
+        self._added = False
         self._path = path
         self._fh = gzip.open(path, "wt", encoding="utf-8")
         head = dict(header)
@@ -550,6 +552,7 @@ class RecordingWriter:
     def add(self, t, flat, events):
         line = {}
         self._t = t
+        self._added = True
         cur = {p: v for p, v in flat.items() if group_of(p) in self._wanted}
         for path, v in cur.items():
             st = self._smooth.get(path)
@@ -576,8 +579,13 @@ class RecordingWriter:
                     self._put(line, path, v)
         gone = [p for p in self._last if p not in cur]
         for p in gone:
-            del self._last[p]
-            self._smooth.pop(p, None)
+            last = self._last.pop(p)
+            st = self._smooth.pop(p, None)
+            if st is not None:
+                if st[1] is not None and st[1] != last:
+                    line[p + "^"] = st[1]
+                if st[2] is not None and st[2] != last:
+                    line[p + "_"] = st[2]
         if gone:
             line["-"] = gone
         if events and "events" in self._wanted:
@@ -586,6 +594,7 @@ class RecordingWriter:
             out = {"t": round(t, 2)}
             out.update(line)
             self._fh.write(json.dumps(out, separators=(",", ":")) + "\n")
+            self._line_t = out["t"]
         if self._flushed_t is None:
             self._flushed_t = t
         elif t - self._flushed_t >= FLUSH_SECONDS:
@@ -609,10 +618,13 @@ class RecordingWriter:
                     line[path + "^"] = hi
                 if lo is not None and lo != v:
                     line[path + "_"] = lo
+            end_t = round(self._t, 2)
             if line:
-                out = {"t": round(self._t, 2)}
+                out = {"t": end_t}
                 out.update(line)
                 fh.write(json.dumps(out, separators=(",", ":")) + "\n")
+            elif self._added and (self._line_t is None or end_t > self._line_t):
+                fh.write(json.dumps({"t": end_t}, separators=(",", ":")) + "\n")
             self._sync(fh)
         finally:
             fh.close()

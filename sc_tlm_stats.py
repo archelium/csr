@@ -7,7 +7,8 @@ Rules that hold throughout:
 - A key is written only if its group was on. A group that was off is absent, never 0.
 - A value that proto3 dropped counts as 0 only when its parent message is present
   (the gauge for vitals, a vehicle frame for flight values). Otherwise it is unknown.
-- Durations use the time to the next row, capped at STEP_CAP seconds per step.
+- Durations use the real time to the next row. A recording is one continuous stream and its
+  last row carries the end time, so unchanged stretches count in full.
 - Records (max/min) include the `^` / `_` peaks. Totals are exact, only the series is thinned.
 """
 import os
@@ -16,7 +17,6 @@ from datetime import datetime, timedelta
 import sc_telemetry as tlm
 
 SUMMARY_VERSION = 1
-STEP_CAP = 5.0
 SERIES_MAX = 200
 SERIES_MAX_COMBINED = 400
 
@@ -42,9 +42,9 @@ SETTINGS = "vehicle.state.flight.settings."
 ANN = "vehicle.state.annunciators."
 LIGHTS = ("pwr", "wpn", "thr", "shld", "cool", "qdrv", "radr", "prox", "hit", "misl")
 WARN_STATES = ("MINOR_ON", "MAJOR_ON", "MINOR_FLASHING", "MAJOR_FLASHING")
-SHIELDS = "vehicle.state.power.shield_generators"
+POWER = "vehicle.state.power."
+SHIELDS = POWER + "shield_generators"
 PRESET = "weapons.preset_name"
-CLASS_KEY = "vehicle.state.class_name"
 HEALTH_KEY = "actor.vitals.health.current"
 CM_SLOTS = 16
 
@@ -77,8 +77,28 @@ def _num(v):
     return isinstance(v, (int, float)) and not isinstance(v, bool)
 
 
-def _has_prefix(state, prefix):
-    return any(k.startswith(prefix) for k in state)
+def _flags(state):
+    """Which parent messages are present in this state, from one pass over the keys."""
+    f = set()
+    for k in state:
+        if k.startswith("actor."):
+            if k.startswith("actor.state."):
+                f.add("astate")
+            elif k.startswith(VITALS):
+                f.add("vitals")
+                for base in GAUGES.values():
+                    if k.startswith(base + "."):
+                        f.add(base)
+            elif k.startswith(ENV):
+                f.add("env")
+        elif k.startswith("vehicle."):
+            if k.startswith(VEHICLE):
+                f.add("veh")
+                if k.startswith(POWER):
+                    f.add("power")
+        elif k.startswith("weapons."):
+            f.add("weapons")
+    return f
 
 
 def _parse_iso(s):
@@ -142,31 +162,30 @@ class _Acc:
     # --- per-row context -------------------------------------------------------
 
     def _context(self, state):
-        veh = CLASS_KEY in state or _has_prefix(state, VEHICLE)
+        flags = _flags(state)
+        veh = "veh" in flags
         if "you" in self.g:
             seated = veh and state.get(LOCO) == "SEATED"
         else:
             seated = veh        # a vehicle frame only exists while seated
         flying = "flight" in self.g and seated and not state.get(LANDED)
-        return veh, seated, flying
+        return flags, seated, flying
 
-    def _gauge(self, state, base):
+    def _gauge(self, state, flags, base):
         """Current value of a gauge. 0 when the gauge is present but `current` was dropped,
         None when the gauge isn't there at all."""
         key = base + ".current"
         if key in state:
             v = state[key]
             return v if _num(v) else None
-        if base + ".max" in state or _has_prefix(state, base + "."):
-            return 0.0
-        return None
+        return 0.0 if base in flags else None
 
     # --- one row ---------------------------------------------------------------
 
     def step(self, t, state, events, peaks):
         if self.prev is not None:
             pt, pstate, pctx = self.prev
-            dt = min(max(t - pt, 0.0), STEP_CAP)
+            dt = max(t - pt, 0.0)
             if dt > 0:
                 self._durations(pstate, pctx, dt)
         ctx = self._context(state)
@@ -176,24 +195,25 @@ class _Acc:
                 if name:
                     self.out[name] += 1
         if "wallet" in self.g:
-            self._wallet(t, state)
+            self._wallet(t, state, ctx[0])
         if "vitals" in self.g:
-            self._vitals_records(state, peaks)
+            self._vitals_records(state, peaks, ctx[0])
         if "surroundings" in self.g:
-            self._env_records(state, peaks)
+            self._env_records(state, peaks, ctx[0])
         if "flight" in self.g:
-            self._flight(state, peaks, ctx[0])
+            self._flight(state, peaks, "veh" in ctx[0])
         if "ship" in self.g:
             self._warn(state)
         if "weapons" in self.g:
-            self._countermeasures(state)
+            self._countermeasures(state, ctx[0])
         self.prev = (t, state, ctx)
 
     # --- time-weighted ---------------------------------------------------------
 
     def _durations(self, state, ctx, dt):
         o, g = self.out, self.g
-        veh, seated, flying = ctx
+        flags, seated, flying = ctx
+        veh = "veh" in flags
         if "you" in g:
             k = LOCO_KEYS.get(state.get(LOCO))
             if k:
@@ -202,11 +222,11 @@ class _Acc:
             if k:
                 o[k] += dt
         if "vitals" in g:
-            if self._gauge(state, GAUGES["oxygen"]) == 0:
+            if self._gauge(state, flags, GAUGES["oxygen"]) == 0:
                 o["t_no_air"] += dt
-            if self._gauge(state, GAUGES["hunger"]) == 0:
+            if self._gauge(state, flags, GAUGES["hunger"]) == 0:
                 o["t_starving"] += dt
-            if self._gauge(state, GAUGES["thirst"]) == 0:
+            if self._gauge(state, flags, GAUGES["thirst"]) == 0:
                 o["t_dehydrated"] += dt
         if "flight" in g:
             if veh:
@@ -222,7 +242,7 @@ class _Acc:
                         o["t_nav"] += dt
                     else:
                         o["t_scm"] += dt
-                    if not state.get(SHIELDS):
+                    if "power" in flags and not state.get(SHIELDS):
                         o["t_shields_off_flying"] += dt
                 if "settings" in g:
                     ifcs = o["t_ifcs"]
@@ -240,9 +260,11 @@ class _Acc:
 
     # --- wallet ----------------------------------------------------------------
 
-    def _wallet(self, t, state):
+    def _wallet(self, t, state, flags):
         o = self.out
         bal = state.get(WALLET)
+        if WALLET not in state and "astate" in flags:
+            bal = 0     # proto3 drops a zero balance
         if not _num(bal):
             return
         if self.bal is None:
@@ -267,24 +289,24 @@ class _Acc:
 
     # --- records ---------------------------------------------------------------
 
-    def _vitals_records(self, state, peaks):
+    def _vitals_records(self, state, peaks, flags):
         o = self.out
         hp = HEALTH_KEY
-        cur = self._gauge(state, GAUGES["health"])
+        cur = self._gauge(state, flags, GAUGES["health"])
         lo, _ = peaks.get(hp, (None, None))
         low = [v for v in (cur, lo) if _num(v)]
         if low:
             o["min_health"] = min(low + ([o["min_health"]] if "min_health" in o else []))
-        if INTOX in state or _has_prefix(state, VITALS):
+        if INTOX in state or "vitals" in flags:
             v = state.get(INTOX, 0)
             _, hi = peaks.get(INTOX, (None, None))
             for x in (v, hi):
                 if _num(x):
                     o["max_intox"] = max(o["max_intox"], x)
 
-    def _env_records(self, state, peaks):
+    def _env_records(self, state, peaks, flags):
         o = self.out
-        if RAD in state or _has_prefix(state, ENV):
+        if RAD in state or "env" in flags:
             _, hi = peaks.get(RAD, (None, None))
             for x in (state.get(RAD, 0), hi):
                 if _num(x):
@@ -336,12 +358,12 @@ class _Acc:
         warn = self.out["warn"]
         for light in LIGHTS:
             cur = state.get(ANN + light)
-            if cur in WARN_STATES and cur != self.prev_light.get(light):
+            if cur in WARN_STATES and self.prev_light.get(light) in ("NOMINAL", "OFF"):
                 warn[light] = warn.get(light, 0) + 1
             self.prev_light[light] = cur
 
-    def _countermeasures(self, state):
-        if not (PRESET in state or _has_prefix(state, "weapons.")):
+    def _countermeasures(self, state, flags):
+        if "weapons" not in flags:
             self.prev_cm = None
             return
         cur = {}
@@ -403,7 +425,8 @@ def summarize(path):
 
 def combine(entries):
     """One `sum` for a session from several entries (in time order)."""
-    sums = [e.get("sum") or {} for e in entries]
+    ordered = sorted(entries, key=lambda e: (e.get("started") is None, e.get("started") or ""))
+    sums = [e.get("sum") or {} for e in ordered]
     out = {}
     for key in ADD_KEYS:
         vals = [s[key] for s in sums if key in s]
