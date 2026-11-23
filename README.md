@@ -145,8 +145,8 @@ Same experience as the exe (folder picker, Refresh button), but needs Python 3.9
 python sc_stats.py --open       # writes + opens CSR.html, then exits
 python sc_stats.py --live "D:\...\StarCitizen\LIVE"   # point at a specific LIVE folder
 ```
-Produces a **single self-contained `CSR.html`** you can open any time or
-share. (No server, so no in-page Refresh button — re-run to update.)
+Produces a **single `CSR.html`** you can open any time or
+share. Ship and item pictures load from RSI and starcitizen.tools when you view it. (No server, so no in-page Refresh button — re-run to update.)
 
 ---
 
@@ -242,8 +242,9 @@ so they land in the right career even if you dropped them in the wrong folder.
 Everything is real, from your logs. Backend class IDs become in-fiction names
 (`RSI_Zeus_ES` → **Zeus Mk II ES**, `klwe_rifle_energy_01` → **Klaus & Werner
 Gallant**); ship names/art come from the official **RSI Ship Matrix**, item names
-from the **SC-Wiki** item data. Artwork and fonts are embedded, so the page is a
-single self-contained file. Internet is used only on the run that builds the page.
+from the **SC-Wiki** item data. Fonts and maker logos are embedded. Ship, gun, item
+and place pictures load from RSI and starcitizen.tools as you scroll. Offline, each
+picture slot shows its icon and everything else works.
 
 **What CSR can't show** — on-foot kills, K/D, accuracy, damage, and your aUEC *balance /
 earnings*: Star Citizen stopped writing those to the client log in the 2026 builds

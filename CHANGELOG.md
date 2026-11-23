@@ -16,6 +16,9 @@ uses [Semantic Versioning](https://semver.org/) (MAJOR.MINOR.PATCH).
   ship purchase, closest armour set. In every ranked list of ships, guns, items and places
   the top 3 are picture tiles and the rest have thumbnails. Ships come from RSI, the rest
   from starcitizen.tools. Something with no picture shows its list's icon in the same slot.
+- **Pictures load when you view the page**, from RSI and starcitizen.tools, as they scroll
+  into view. The scan downloads none. The page went from 20 MB to about 2 MB. Offline,
+  every picture slot shows its icon.
 
 ### Changed
 - **HUD look.** Panels have bevelled corners and a cyan top edge, group titles sit on a
@@ -31,8 +34,6 @@ uses [Semantic Versioning](https://semver.org/) (MAJOR.MINOR.PATCH).
   render. Update now picks again.
 - **Update now also pulls the item catalogue.** Names, gun types and images for items
   added since the last release. Its date shows next to the other catalogues.
-- **Each picture is stored once in the page.** Every patch view used to carry its own copy
-  of the same ship renders.
 
 ### Fixed
 - **On a wide window the top bar and the cards didn't line up**, and everything past
