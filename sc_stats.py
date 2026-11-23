@@ -29,21 +29,27 @@ Usage:
 
 import argparse
 import glob
+import hmac
 import html
+import http.server
 import json
 import math
 import os
 import re
+import secrets
+import socket
 import sys
 import time
 import shutil
 import subprocess
 import threading
+import urllib.parse
 import webbrowser
 from collections import defaultdict, Counter, deque
 from datetime import datetime, timedelta, timezone
 
 import sc_names
+import sc_qr
 import sc_telemetry
 import sc_tlm_stats
 
@@ -588,6 +594,196 @@ def validate_tlm_settings(body):
             return False, f"Unknown group: {bad[0]}"
         out["groups"] = list(dict.fromkeys(g))
     return True, out
+
+
+# --- phone listener --------------------------------------------------------------------
+# A second HTTP server on the LAN that serves only the live view. Every request needs
+# the private key from the link (?k=) or the cookie set on the first /live visit.
+
+PHONE_PORTS = range(7890, 7900)
+PHONE_COOKIE = "csrk"
+_PHONE = {"srv": None, "port": None, "key": None, "live": None, "on_seen": None,
+          "qr": (None, None)}
+_PHONE_LOCK = threading.Lock()
+
+
+def lan_ip():
+    """This PC's address on the local network. A UDP connect picks the outgoing
+    interface without sending anything. 127.0.0.1 when there is no network."""
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            s.connect(("192.0.2.1", 9))
+            ip = s.getsockname()[0]
+        finally:
+            s.close()
+    except OSError:
+        return "127.0.0.1"
+    return ip if ip and ip != "0.0.0.0" else "127.0.0.1"
+
+
+class _PhoneServer(http.server.ThreadingHTTPServer):
+    # Windows lets SO_REUSEADDR bind a port another server already holds. Take it
+    # exclusively so a busy port falls through to the next one.
+    allow_reuse_address = False
+
+    def server_bind(self):
+        if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
+            self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+        super().server_bind()
+
+
+class _PhoneHandler(http.server.BaseHTTPRequestHandler):
+    """Live view only: /live and /api/telemetry/live. Everything else is 404."""
+
+    def _send(self, code, body, ctype="application/json; charset=utf-8", extra=None):
+        b = body.encode("utf-8") if isinstance(body, str) else body
+        self.send_response(code)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(b)))
+        self.send_header("Cache-Control", "no-store")
+        for k, v in (extra or {}).items():
+            self.send_header(k, v)
+        self.end_headers()
+        try:
+            self.wfile.write(b)
+        except Exception:
+            pass
+
+    def _cookie_key(self):
+        for part in (self.headers.get("Cookie") or "").split(";"):
+            name, _, value = part.strip().partition("=")
+            if name == PHONE_COOKIE:
+                return value
+        return None
+
+    def _key_ok(self, query):
+        want = _PHONE["key"]
+        if not want:
+            return False
+        want = want.encode("utf-8")
+        for got in (query.get("k", [None])[0], self._cookie_key()):
+            if got and hmac.compare_digest(got.encode("utf-8", "replace"), want):
+                return True
+        return False
+
+    def do_GET(self):
+        parts = urllib.parse.urlsplit(self.path)
+        path = parts.path
+        if path not in ("/live", "/api/telemetry/live"):
+            self._send(404, "Not found.", "text/plain; charset=utf-8")
+            return
+        if not self._key_ok(urllib.parse.parse_qs(parts.query)):
+            self._send(403, "Old or wrong link. Scan the QR code in CSR again.",
+                       "text/plain; charset=utf-8")
+            return
+        if path == "/live":
+            cookie = (f"{PHONE_COOKIE}={_PHONE['key']}; Path=/; Max-Age=31536000; "
+                      f"HttpOnly; SameSite=Strict")
+            self._send(200, LIVE_HTML(), "text/html; charset=utf-8",
+                       extra={"Set-Cookie": cookie})
+            return
+        on_seen = _PHONE["on_seen"]
+        if on_seen:
+            on_seen()
+        try:
+            body = json.dumps(_json_safe(_PHONE["live"]()), default=str)
+        except Exception as e:
+            self._send(200, json.dumps({"ok": False, "error": str(e)}))
+            return
+        self._send(200, body)
+
+    def _not_found(self):
+        self._send(404, "Not found.", "text/plain; charset=utf-8")
+
+    do_POST = do_PUT = do_DELETE = do_PATCH = do_HEAD = do_OPTIONS = _not_found
+
+    def log_message(self, *a):
+        pass
+
+
+def start_phone_server(port_range=PHONE_PORTS, key=None, live=None, on_seen=None,
+                       host="0.0.0.0"):
+    """Start the phone listener on the first free port in `port_range`. `key` defaults
+    to the saved phone key, `live` returns the live payload, `on_seen` runs on each
+    valid poll. Already running: takes the new key and callbacks, keeps its port.
+    Returns the port, or None when no port in the range is free."""
+    with _PHONE_LOCK:
+        _PHONE["key"] = key if key is not None else tlm_settings().get("phone_key")
+        if live is not None:
+            _PHONE["live"] = live
+        if on_seen is not None:
+            _PHONE["on_seen"] = on_seen
+        if _PHONE["srv"] is not None:
+            return _PHONE["port"]
+        for p in port_range:
+            try:
+                srv = _PhoneServer((host, p), _PhoneHandler)
+            except OSError:
+                continue
+            _PHONE["srv"], _PHONE["port"] = srv, srv.server_address[1]
+            threading.Thread(target=srv.serve_forever, name="phone", daemon=True).start()
+            return _PHONE["port"]
+        return None
+
+
+def stop_phone_server():
+    with _PHONE_LOCK:
+        srv, _PHONE["srv"], _PHONE["port"] = _PHONE["srv"], None, None
+    if srv is not None:
+        try:
+            srv.shutdown()
+            srv.server_close()
+        except Exception:
+            pass
+
+
+def phone_url():
+    """The private link for the phone, or None when the listener isn't running."""
+    port, key = _PHONE["port"], _PHONE["key"]
+    if port is None or not key:
+        return None
+    return f"http://{lan_ip()}:{port}/live?k={urllib.parse.quote(key, safe='')}"
+
+
+def new_phone_key():
+    """Make and save a new phone key. Old links and cookies stop working. Returns the
+    key, or None when the config couldn't be saved."""
+    key = secrets.token_urlsafe(16)
+    if save_tlm_settings({"phone_key": key}) is None:
+        return None
+    with _PHONE_LOCK:
+        _PHONE["key"] = key
+    return key
+
+
+def sync_phone_server(live=None, on_seen=None, host="0.0.0.0", port_range=PHONE_PORTS):
+    """Match the listener to the saved "phone" setting. On: makes a key if there is
+    none and starts. Off: stops. Returns the port, or None when not listening."""
+    s = tlm_settings()
+    if not s.get("phone"):
+        stop_phone_server()
+        return None
+    key = s.get("phone_key") or new_phone_key()
+    if not key:
+        return None
+    return start_phone_server(port_range, key=key, live=live, on_seen=on_seen, host=host)
+
+
+def phone_status():
+    """The "phone" block of /api/telemetry/status."""
+    if not tlm_settings().get("phone"):
+        return {"on": False, "url": None}
+    url = phone_url()
+    svg = None
+    if url:
+        cached_url, cached_svg = _PHONE["qr"]
+        if cached_url == url:
+            svg = cached_svg
+        else:
+            svg = sc_qr.qr_svg(url)
+            _PHONE["qr"] = (url, svg)
+    return {"on": True, "url": url, "qr_svg": svg}
 
 
 def _json_safe(o):
@@ -12160,6 +12356,7 @@ def serve(out_path, port=7878, explicit_logs=None, open_browser=True,
             recorder.stop()                   # close an open recording cleanly
         except Exception:
             pass
+        stop_phone_server()
         try:
             srv.shutdown()
             srv.server_close()                # release the port before the new process
@@ -12273,7 +12470,17 @@ def serve(out_path, port=7878, explicit_logs=None, open_browser=True,
                              for lab, cdir in list(_CHANNEL_DIRS.items())},
                 "disk": sc_tlm_stats.disk_usage(tlm_root),
                 "unmatched": _TLM_UNMATCHED,
-                "phone": {"on": bool(s.get("phone")), "url": None}}
+                "phone": phone_status()}
+
+    def phone_seen():
+        state["seen"] = time.time()          # a phone watching the live view counts
+
+    def phone_sync():
+        try:
+            if sync_phone_server(live=recorder.live, on_seen=phone_seen) is None                     and tlm_settings().get("phone"):
+                cerr(f"phone view: no free port in {PHONE_PORTS.start}-{PHONE_PORTS.stop - 1}.")
+        except Exception as e:
+            cerr(f"phone view error: {e}")
 
     csr_banner()
     # scanning runs in the BACKGROUND so the browser can open onto the animated
@@ -12534,6 +12741,15 @@ def serve(out_path, port=7878, explicit_logs=None, open_browser=True,
                     return
                 if "keep_days" in res:
                     tlm_wake.set()             # apply the new retention off this thread
+                if "phone" in res:
+                    phone_sync()
+                self._send(200, json.dumps(_json_safe({"ok": True, **tlm_status()}),
+                                           default=str))
+            elif p == "/api/telemetry/new-link":
+                if new_phone_key() is None:
+                    self._send(200, json.dumps({"ok": False, "error":
+                        "Could not save csr_config.json. Link not changed."}))
+                    return
                 self._send(200, json.dumps(_json_safe({"ok": True, **tlm_status()}),
                                            default=str))
             elif p == "/api/telemetry/enable":
@@ -12576,6 +12792,7 @@ def serve(out_path, port=7878, explicit_logs=None, open_browser=True,
     threading.Thread(target=watchdog, daemon=True).start()
     start_watcher()      # tail Game.log for crashes / disconnects while you play
     recorder.start()     # record the game's telemetry stream while it runs
+    phone_sync()         # phone view, when it's on in settings
     threading.Thread(target=tlm_worker, name="tlm-index", daemon=True).start()
     # Hide the console straight away rather than after the scan: the browser's
     # flight-recorder terminal is already showing that progress, so leaving this
@@ -12619,6 +12836,7 @@ def serve(out_path, port=7878, explicit_logs=None, open_browser=True,
         print()
         clog(f"{_paint(_g('◼', '#'), _AMB)} terminal powered down. fly safe, Citizen.", _AMB)
         recorder.stop()
+        stop_phone_server()
         srv.shutdown()
 
 
