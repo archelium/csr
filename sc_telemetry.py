@@ -616,3 +616,47 @@ class RecordingWriter:
             self._sync(fh)
         finally:
             fh.close()
+
+
+def read_recording(path):
+    """-> (header, rows). A cut-off gzip or a half-written last line keeps what came before."""
+    header, rows = {}, []
+    try:
+        with gzip.open(path, "rt", encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                try:
+                    obj = json.loads(line)
+                except ValueError:
+                    continue
+                if not isinstance(obj, dict):
+                    continue
+                if not header and "t" not in obj:
+                    header = obj
+                elif "t" in obj:
+                    rows.append(obj)
+    except (EOFError, OSError, zlib.error):
+        pass
+    return header, rows
+
+
+def iter_states(rows):
+    """Yield (t, state, events, peaks) per row, with the row applied to a running state.
+    peaks is {path: (lo, hi)} from that row's `^` / `_` keys."""
+    state = {}
+    for row in rows:
+        peaks = {}
+        for p in row.get("-") or ():
+            state.pop(p, None)
+        for k, v in row.items():
+            if k in ("t", "-", "ev"):
+                continue
+            if k.endswith("^") or k.endswith("_"):
+                base = k[:-1]
+                lo, hi = peaks.get(base, (None, None))
+                peaks[base] = (lo, v) if k.endswith("^") else (v, hi)
+            else:
+                state[k] = v
+        for base, (lo, hi) in list(peaks.items()):
+            cur = state.get(base)
+            peaks[base] = (cur if lo is None else lo, cur if hi is None else hi)
+        yield row.get("t", 0.0), dict(state), list(row.get("ev") or ()), peaks

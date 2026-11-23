@@ -220,5 +220,71 @@ class WriterTests(unittest.TestCase):
         self.assertTrue(fh.closed)
 
 
+class ReaderTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.path = os.path.join(self.tmp.name, "r.jsonl.gz")
+
+    def test_roundtrip_rebuilds_state(self):
+        w = tlm.RecordingWriter(self.path, {"v": 1}, "normal", tlm.DEFAULT_GROUPS)
+        w.add(0.0, {NAME: "A", WALLET: 5, SPEED: 0}, [])
+        w.add(1.0, {NAME: "B", WALLET: 5, SPEED: 0}, ["ACTOR_DEAD"])
+        w.add(2.0, {NAME: "B", WALLET: 9}, [])
+        w.add(3.0, {NAME: "C", WALLET: 9}, [])
+        w.close()
+        head, rows = tlm.read_recording(self.path)
+        self.assertEqual(head["v"], 1)
+        states = list(tlm.iter_states(rows))
+        self.assertEqual([s[0] for s in states], [0.0, 1.0, 2.0, 3.0])
+        self.assertEqual(states[1][2], ["ACTOR_DEAD"])
+        self.assertEqual(states[-1][1], {NAME: "C", WALLET: 9})
+
+    def test_peaks_split_out(self):
+        rows = [{"t": 0.0, SPEED: 1}, {"t": 1.0, SPEED: 5, SPEED + "^": 9, SPEED + "_": 0}]
+        states = list(tlm.iter_states(rows))
+        self.assertEqual(states[1][1], {SPEED: 5})
+        self.assertEqual(states[1][3], {SPEED: (0, 9)})
+        self.assertEqual(states[0][3], {})
+
+    def test_none_is_a_value_and_repeated_t(self):
+        rows = [{"t": 0.0, SPEED: 1}, {"t": 1.0, SPEED: None}, {"t": 1.0, NAME: "A"}]
+        states = list(tlm.iter_states(rows))
+        self.assertEqual(states[1][1], {SPEED: None})
+        self.assertEqual(states[2][1], {SPEED: None, NAME: "A"})
+
+    def test_states_are_independent_copies(self):
+        rows = [{"t": 0.0, NAME: "A"}, {"t": 1.0, NAME: "B"}]
+        states = list(tlm.iter_states(rows))
+        self.assertEqual(states[0][1], {NAME: "A"})
+
+    def test_truncated_file_readable(self):
+        w = tlm.RecordingWriter(self.path, {"v": 1}, "full", tlm.DEFAULT_GROUPS)
+        for i in range(100):
+            w.add(i * 0.1, {NAME: "n%d" % i}, [])
+        w.close()
+        cut = os.path.join(self.tmp.name, "cut.jsonl.gz")
+        with open(self.path, "rb") as fh:
+            data = fh.read()
+        with open(cut, "wb") as fh:
+            fh.write(data[:-7])
+        head, rows = tlm.read_recording(cut)
+        self.assertEqual(head["v"], 1)
+        self.assertGreaterEqual(len(rows), 90)
+
+    def test_half_line_dropped(self):
+        text = ('{"v":1}\n{"t":0.0,"x":1}\n{"t":1.0,"x":2}\n{"t": 9.9, "x"')
+        with gzip.open(self.path, "wt", encoding="utf-8") as fh:
+            fh.write(text)
+        head, rows = tlm.read_recording(self.path)
+        self.assertEqual(head, {"v": 1})
+        self.assertEqual(rows, [{"t": 0.0, "x": 1}, {"t": 1.0, "x": 2}])
+
+    def test_missing_and_empty_file(self):
+        self.assertEqual(tlm.read_recording(os.path.join(self.tmp.name, "nope")), ({}, []))
+        open(self.path, "wb").close()
+        self.assertEqual(tlm.read_recording(self.path), ({}, []))
+
+
 if __name__ == "__main__":
     unittest.main()
