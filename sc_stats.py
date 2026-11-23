@@ -44,6 +44,8 @@ from collections import defaultdict, Counter, deque
 from datetime import datetime, timedelta, timezone
 
 import sc_names
+import sc_telemetry
+import sc_tlm_stats
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -465,16 +467,103 @@ def config_path():
 
 def load_config():
     try:
-        return json.load(open(config_path(), encoding="utf-8"))
+        with open(config_path(), encoding="utf-8") as fh:
+            return json.load(fh)
     except Exception:
         return {}
 
 
 def save_config(cfg):
     try:
-        json.dump(cfg, open(config_path(), "w", encoding="utf-8"), indent=2)
+        with open(config_path(), "w", encoding="utf-8") as fh:
+            json.dump(cfg, fh, indent=2)
     except Exception as e:
         cerr(f"could not save config: {e}")
+
+
+#: request threads and the telemetry recorder read and write the config concurrently
+_CONFIG_LOCK = threading.RLock()
+
+
+def update_config(**kv):
+    """Merge top-level keys into the saved config and save it. Keys not named are kept.
+    Returns the saved config."""
+    with _CONFIG_LOCK:
+        cfg = load_config()
+        cfg.update(kv)
+        save_config(cfg)
+        return cfg
+
+
+def remember_folder(path):
+    """Save the linked StarCitizen folder without touching the rest of the config."""
+    return update_config(live_path=path)
+
+
+TLM_DEFAULTS = {"record": True, "detail": "normal", "keep_days": None,
+                "groups": sc_telemetry.DEFAULT_GROUPS, "phone": False, "phone_key": None}
+TLM_KEEP_DAYS = (None, 365, 90, 30)
+TLM_GROUP_NAMES = [g for g, _ in sc_telemetry.GROUPS] + ["other"]
+
+
+def tlm_settings():
+    """Telemetry settings: config "tlm" merged over TLM_DEFAULTS."""
+    with _CONFIG_LOCK:
+        saved = load_config().get("tlm")
+    out = {k: (list(v) if isinstance(v, list) else v) for k, v in TLM_DEFAULTS.items()}
+    if isinstance(saved, dict):
+        out.update(saved)
+    return out
+
+
+def save_tlm_settings(changes):
+    """Merge `changes` into config "tlm" and save. Other keys are kept."""
+    with _CONFIG_LOCK:
+        cur = load_config().get("tlm")
+        cur = cur if isinstance(cur, dict) else {}
+        return update_config(tlm={**cur, **changes})
+
+
+def validate_tlm_settings(body):
+    """(True, cleaned) for a settings POST body, (False, error message) otherwise.
+    Only record, detail, keep_days, groups and phone are taken. Other keys are dropped."""
+    if not isinstance(body, dict):
+        return False, "Bad request."
+    out = {}
+    for key in ("record", "phone"):
+        if key in body:
+            if not isinstance(body[key], bool):
+                return False, f"{key} must be true or false."
+            out[key] = body[key]
+    if "detail" in body:
+        if body["detail"] not in sc_telemetry.DETAIL_SECONDS:
+            return False, "Unknown detail level."
+        out["detail"] = body["detail"]
+    if "keep_days" in body:
+        v = body["keep_days"]
+        if isinstance(v, bool) or v not in TLM_KEEP_DAYS:
+            return False, "Keep must be forever, 365, 90 or 30 days."
+        out["keep_days"] = v
+    if "groups" in body:
+        g = body["groups"]
+        if not isinstance(g, list) or not all(isinstance(x, str) for x in g):
+            return False, "groups must be a list of names."
+        bad = [x for x in g if x not in TLM_GROUP_NAMES]
+        if bad:
+            return False, f"Unknown group: {bad[0]}"
+        out["groups"] = list(dict.fromkeys(g))
+    return True, out
+
+
+def _json_safe(o):
+    """NaN and infinity become None. JSON.parse in the page rejects them."""
+    if isinstance(o, float):
+        return o if math.isfinite(o) else None
+    if isinstance(o, dict):
+        return {k: _json_safe(v) for k, v in o.items()}
+    if isinstance(o, (list, tuple)):
+        return [_json_safe(v) for v in o]
+    return o
 
 
 def _cache_fetched(path):
@@ -749,6 +838,81 @@ def _channel_dir(files, live):
 
 #: channel label -> install folder, so a write can find the file again later
 _CHANNEL_DIRS = {}
+
+#: telemetry index entries no session claimed. Filled by the page build.
+_TLM_UNMATCHED: list = []
+
+TLM_CFG_LINE = "grpc.client.server.enabled = true"
+_TLM_CFG_RE = re.compile(r"^\s*grpc\.client\.server\.enabled\s*=\s*(true|1)\s*$", re.I)
+_TLM_APPLIED_NAMES = ("GRPC_CLIENT_SERVER_ENABLED", "grpc-client-server-enabled")
+_TLM_APPLIED_LINES = 300
+
+
+def tlm_channel_now():
+    """(label, folder) of the channel whose Game.log was written last, or None."""
+    best = None
+    for label, cdir in list(_CHANNEL_DIRS.items()):
+        try:
+            mt = os.path.getmtime(os.path.join(cdir, "Game.log"))
+        except (OSError, TypeError):
+            continue
+        if best is None or mt > best[0]:
+            best = (mt, label, cdir)
+    return (best[1], best[2]) if best else None
+
+
+def _user_cfg_has_line(path):
+    try:
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            return any(_TLM_CFG_RE.match(ln) for ln in fh)
+    except OSError:
+        return False
+
+
+def user_cfg_state(channel_dir):
+    """{"line": user.cfg turns the telemetry port on, "applied": the running game's
+    Game.log names the setting in its first lines}."""
+    out = {"line": False, "applied": False}
+    if not channel_dir:
+        return out
+    out["line"] = _user_cfg_has_line(os.path.join(channel_dir, "user.cfg"))
+    try:
+        with open(os.path.join(channel_dir, "Game.log"), encoding="utf-8",
+                  errors="replace") as fh:
+            for i, ln in enumerate(fh):
+                if i >= _TLM_APPLIED_LINES:
+                    break
+                if any(n in ln for n in _TLM_APPLIED_NAMES):
+                    out["applied"] = True
+                    break
+    except OSError:
+        pass
+    return out
+
+
+def enable_user_cfg(channel_dir):
+    """Append the telemetry line to the channel's user.cfg. Every other line is kept and
+    the old file is copied to user.cfg.csr-bak first. The game reads user.cfg only at
+    launch, so this is safe while it runs. Returns (ok, message)."""
+    if not channel_dir or not os.path.isdir(channel_dir):
+        return False, "No folder for that channel."
+    path = os.path.join(channel_dir, "user.cfg")
+    if _user_cfg_has_line(path):
+        return True, "Already in user.cfg."
+    try:
+        data = b""
+        if os.path.isfile(path):
+            with open(path, "rb") as fh:
+                data = fh.read()
+            shutil.copy2(path, path + ".csr-bak")
+        add = (TLM_CFG_LINE + "\r\n").encode("utf-8")
+        if data and not data.endswith(b"\n"):
+            add = b"\r\n" + add
+        with open(path, "ab") as fh:
+            fh.write(add)
+    except OSError as e:
+        return False, f"Could not write user.cfg: {e}"
+    return True, "Added to user.cfg. Restart the game to turn it on."
 
 
 # --------------------------------------------------------------------------- #
@@ -11715,6 +11879,10 @@ def serve(out_path, port=7878, explicit_logs=None, open_browser=True,
         you're already looking at is reused instead of a duplicate opening."""
         time.sleep(0.35)                      # let the HTTP reply flush
         try:
+            recorder.stop()                   # close an open recording cleanly
+        except Exception:
+            pass
+        try:
             srv.shutdown()
             srv.server_close()                # release the port before the new process
         except Exception:
@@ -11756,6 +11924,8 @@ def serve(out_path, port=7878, explicit_logs=None, open_browser=True,
         GRACE = 900                          # 15 min — long enough for a background tab
         while True:
             time.sleep(30)
+            if recorder.connected:           # the game is streaming: stay up
+                state["seen"] = time.time()
             if not _CONSOLE_HIDDEN:
                 continue
             if time.time() - state.get("seen", 0) > GRACE:
@@ -11784,6 +11954,48 @@ def serve(out_path, port=7878, explicit_logs=None, open_browser=True,
             state["log_count"] = data["log_count"]
             state["sessions"] = data["log_count"]
             return True
+
+    # Telemetry recorder: its own thread, records while the game streams. Index upkeep
+    # and the page rebuild after a recording closes run on tlm_worker, never on the
+    # recorder thread or a request thread.
+    tlm_root = sc_tlm_stats.tlm_dir(app_dir())
+    tlm_wake = threading.Event()
+
+    def tlm_skip():
+        f = recorder.status().get("file")
+        return frozenset((f, os.path.basename(f))) if f else frozenset()
+
+    def tlm_housekeeping():
+        try:
+            skip = tlm_skip()
+            sc_tlm_stats.refresh_index(tlm_root, skip=skip)
+            sc_tlm_stats.apply_retention(tlm_root, tlm_settings().get("keep_days"),
+                                         datetime.now(), skip=skip)
+        except Exception as e:
+            cerr(f"telemetry index error: {e}")
+
+    def tlm_worker():
+        while True:
+            tlm_wake.wait()
+            tlm_wake.clear()
+            tlm_housekeeping()
+            if state["configured"] or state["has_work"]:
+                do_generate(quick=True)
+
+    recorder = sc_telemetry.Recorder(
+        tlm_root, get_settings=lambda: {**tlm_settings(), "csr": CSR_VERSION},
+        game_running=_sc_process_running, pick_channel=tlm_channel_now,
+        on_close=lambda _path: tlm_wake.set())
+
+    def tlm_status():
+        s = tlm_settings()
+        return {"settings": {k: v for k, v in s.items() if k != "phone_key"},
+                "recorder": recorder.status(),
+                "channels": {lab: user_cfg_state(cdir)
+                             for lab, cdir in list(_CHANNEL_DIRS.items())},
+                "disk": sc_tlm_stats.disk_usage(tlm_root),
+                "unmatched": _TLM_UNMATCHED,
+                "phone": {"on": bool(s.get("phone")), "url": None}}
 
     csr_banner()
     # scanning runs in the BACKGROUND so the browser can open onto the animated
@@ -11830,7 +12042,12 @@ def serve(out_path, port=7878, explicit_logs=None, open_browser=True,
                     # session is currently writing (the page polls faster while it is)
                     "events": watch_events(),
                     "session_live": _WATCH["live"],
-                    "watch": watch_status()}))
+                    "watch": watch_status(),
+                    "tlm": recorder.status()}))
+            elif p == "/api/telemetry/live":
+                self._send(200, json.dumps(_json_safe(recorder.live()), default=str))
+            elif p == "/api/telemetry/status":
+                self._send(200, json.dumps(_json_safe(tlm_status()), default=str))
             elif p == "/api/export":
                 # hand over the accumulated archive as a downloadable backup
                 try:
@@ -11859,7 +12076,7 @@ def serve(out_path, port=7878, explicit_logs=None, open_browser=True,
                              "one containing LIVE / PTU), or a LIVE folder directly."}))
                 return
             state["live_path"] = path
-            save_config({"live_path": path})
+            remember_folder(path)
             self._send(200, json.dumps({"ok": True, "path": path}))
 
         def _body(self):
@@ -12015,6 +12232,33 @@ def serve(out_path, port=7878, explicit_logs=None, open_browser=True,
                     _SETTINGS_CACHE.pop(chan, None)
                     do_generate(quick=True)
                 self._send(200, json.dumps({"ok": ok, "msg": msg, "which": which}))
+            elif p == "/api/telemetry/settings":
+                try:
+                    req = json.loads(self._body() or "{}")
+                except Exception:
+                    req = None
+                ok, res = validate_tlm_settings(req)
+                if not ok:
+                    self._send(200, json.dumps({"ok": False, "error": res}))
+                    return
+                save_tlm_settings(res)
+                if "keep_days" in res:
+                    tlm_wake.set()             # apply the new retention off this thread
+                self._send(200, json.dumps(_json_safe({"ok": True, **tlm_status()}),
+                                           default=str))
+            elif p == "/api/telemetry/enable":
+                try:
+                    chan = (json.loads(self._body() or "{}") or {}).get("channel")
+                except Exception:
+                    chan = None
+                cdir = _CHANNEL_DIRS.get(chan) if isinstance(chan, str) else None
+                ok, msg = enable_user_cfg(cdir)
+                self._send(200, json.dumps({"ok": ok, "msg": msg,
+                                            "state": user_cfg_state(cdir)}))
+            elif p == "/api/telemetry/delete-all":
+                n = sc_tlm_stats.delete_all_recordings(tlm_root, skip=tlm_skip())
+                self._send(200, json.dumps({"ok": True, "deleted": n,
+                                            "disk": sc_tlm_stats.disk_usage(tlm_root)}))
             else:
                 self._send(404, "{}")
 
@@ -12041,6 +12285,8 @@ def serve(out_path, port=7878, explicit_logs=None, open_browser=True,
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     threading.Thread(target=watchdog, daemon=True).start()
     start_watcher()      # tail Game.log for crashes / disconnects while you play
+    recorder.start()     # record the game's telemetry stream while it runs
+    threading.Thread(target=tlm_worker, name="tlm-index", daemon=True).start()
     # Hide the console straight away rather than after the scan: the browser's
     # flight-recorder terminal is already showing that progress, so leaving this
     # window up means two things reporting the same thing. Everything printed while
@@ -12064,9 +12310,12 @@ def serve(out_path, port=7878, explicit_logs=None, open_browser=True,
         # modified logs are still read, and an archive written by an older parser is
         # rejected wholesale by _reuse_map — so a CSR update still re-parses everything
         # exactly once, automatically, without anyone having to ask for a full re-scan.
+        # The telemetry index is brought up to date first so the build can use it.
         threading.Thread(
-            target=lambda: (do_generate(quick=True), ready_banner()), daemon=True).start()
+            target=lambda: (tlm_housekeeping(), do_generate(quick=True), ready_banner()),
+            daemon=True).start()
     else:
+        threading.Thread(target=tlm_housekeeping, daemon=True).start()
         ready_banner()
     try:
         while True:
@@ -12079,6 +12328,7 @@ def serve(out_path, port=7878, explicit_logs=None, open_browser=True,
         tui_disable()
         print()
         clog(f"{_paint(_g('◼', '#'), _AMB)} terminal powered down. fly safe, Citizen.", _AMB)
+        recorder.stop()
         srv.shutdown()
 
 
