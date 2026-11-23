@@ -9581,7 +9581,7 @@ function secFlight(v){
       noteFold(
         `Systems come from location names in the log. `+(tlmOn(v) ? `Fuel and distance aren't in the game log. Flight records come from telemetry.`
           : `Fuel and distance aren't logged. Turn on telemetry in Backup &amp; transfer to record them.`),
-        `Stanton, Pyro and Nyx are the only live systems; a session counts for one if any location there shows up. Refuelling is a server-side transaction and the client only logs an error with no amount`+(tlmOn(v) ? `. Fuel used comes from telemetry, refuel spend isn't recorded.` : `, so fuel used and refuel spend can't be shown.`)+` Fuel pods bought at a shop count under Economy — that's a purchase, not a refuel.`)
+        `Stanton, Pyro and Nyx are the only live systems. A session counts for one if any location there shows up. Refuelling is a server-side transaction. The client only logs an error with no amount.`+(tlmOn(v) ? ` Fuel used comes from telemetry. Refuel spend isn't recorded.` : ` Fuel used and refuel spend can't be shown.`)+` Fuel pods bought at a shop count under Economy as purchases.`)
     )+
     group(3,'planet','Where you\u2019ve been','Jurisdictions, armistice zones and hangar requests from the HUD, plus the places you landed',
       (v.hud_known ? kpiRow([
