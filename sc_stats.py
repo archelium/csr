@@ -6009,7 +6009,8 @@ def _view_lists(v):
         ("item", [w[0] for w in v.get("weapons_top") or [] if w[2]]),
         ("item", [r[0] for r in ((v.get("gear_lost") or {}).get("top") or [])]),
         ("place", [r[0] for r in ((v.get("places") or {}).get("rows") or [])[:15]]),
-        ("item", [r[0] for r in haul.get("com") or []]),
+        ("commodity", [r[0] for r in haul.get("com") or []]),
+        ("place", [r[0] + " System" for r in v.get("systems") or []]),
         ("place", [r[0] for r in haul.get("dest") or []]),
     ]
 
@@ -6025,13 +6026,88 @@ def _is_system(name):
     return bool(re.search(r"\bSystem$", name or ""))
 
 
+def _wiki_file(name):
+    """art_src for a starcitizen.tools file by name. MediaWiki keeps an upload under the
+    md5 of its name, so the path needs no lookup."""
+    import hashlib
+    import urllib.parse
+    n = name.replace(" ", "_")
+    h = hashlib.md5(n.encode("utf-8")).hexdigest()
+    return ["w", f"{h[0]}/{h[:2]}/{urllib.parse.quote(n)}"]
+
+
+# A place whose own wiki page has no picture. Systems: their page image is a star map.
+# Stations of one design share a picture: every gateway, service station, Onyx facility
+# and QV station looks like its siblings.
+_SYSTEM_ART = {"Stanton": "Stanton Star Starmap.png", "Pyro": "Pyro star.webp", "Nyx": "Glaciem Ring.png"}
+_PLACE_FAMILY = (
+    (r"^People's Service Station", ("file", "People'sServiceStation1.png")),
+    (r"^Klescher", ("file", "Klescher-facility-02.png")),
+    (r"^Onyx Facility", ("page", "Onyx Facility (ASD)")),
+    (r"^QV (Extraction|Logistics|Breaker)", ("page", "QV Breaker stations")),
+)
+_PLACE_ALIAS = {"NB Int. Spaceport": "New Babbage Interstellar Spaceport"}
+# The SCU crates goods travel in, by commodity type: the catalogue pictures commodities
+# this way too (Titanium is "Cargo - Metal")
+_CARGO_CRATE = (
+    (r"hydrogen|quantum fuel|\bfuel\b", "Cargo - Gas - Hydrogen.png"),
+    (r"astatine|chlorine|fluorine|iodine|nitrogen|\bgas\b", "Cargo - Gas - Astatine.png"),
+    (r"medical", "Cargo - Medical Supplies.png"),
+    (r"agricultur|fertili", "Cargo - Agricultural Supplies.png"),
+    (r"food|spirits|produce|beverage", "Cargo - Non-Perishable Foodstuff.png"),
+    (r"scrap|salvage|recycled|construction", "Cargo - Scrap.png"),
+    (r"waste", "Cargo - Waste.png"),
+    (r"alumin|titanium|iron|copper|gold|tungsten|\btin\b|steel|agricium|laranite|taranite|bexalite|"
+     r"borase|hephaestanite|stileron|riccite|lindinium|ouratite|savrilium|cobalt|aslarite|metal",
+     "Cargo - Metal.png"),
+    (r"potassium|silicon|quartz|diamond|corundum|beryl|\bice\b|sadaryx|carinite|jaclium|mineral|"
+     r"hadanite|aphorite|dolivine|janalite",
+     "Cargo - Minerals.png"),
+)
+
+
+def _place_titles(n):
+    """Wiki page titles to try for a place, most specific first. Mission text names a
+    destination in full ("Gaslight at the L2 Lagrange of Pyro V"), the wiki doesn't."""
+    n = _PLACE_ALIAS.get(n, n)
+    short = re.sub(r"\s+(at the|above|on|near|in orbit of)\s.*$", "", n)
+    out = [n, short, re.sub(r"\s*\(.*?\)$", "", short)]
+    m = re.match(r"^(\w+) Gateway \((\w+)\)$", short)
+    if m:                     # its twins: the same gateway name in the other systems
+        out += [f"{m.group(1)} Gateway ({z})" for z in ("Pyro", "Stanton", "Nyx") if z not in m.groups()]
+    return list(dict.fromkeys(t for t in out if t))
+
+
+def _place_art(n):
+    """art_src for a place: its wiki page's picture, a system's picture, or its family's."""
+    sysname = re.sub(r"\s+System$", "", n)
+    if sysname in _SYSTEM_ART:
+        return _wiki_file(_SYSTEM_ART[sysname])
+    for t in _place_titles(n):
+        if _WIKI_LEAD.get(t):
+            return art_src(_WIKI_LEAD[t])
+    for rx, (how, what) in _PLACE_FAMILY:
+        if re.search(rx, n):
+            return _wiki_file(what) if how == "file" else art_src(_WIKI_LEAD.get(what))
+    return None
+
+
+def _item_titles(n):
+    """Wiki titles for an item the catalogue has no picture of: as named, then without a
+    capacity or size tag ("Killshot Rifle Magazine (45 Cap)", "Ship Ammunition - Size 4")."""
+    return list(dict.fromkeys([n, re.sub(r"\s*\(.*?\)$", "", n), re.sub(r"\s+-\s+Size \d+$", "", n)]))
+
+
 def build_list_art(data):
     """{kind: {name: source}} for every picture-carrying list in every view and the
     Overview cards (see art_src). A name with no picture is left out: the page draws the
     list's icon in its place."""
-    rows = set()
+    rows, commodities = set(), set()
     for v in _views(data):
         for kind, ns in _view_lists(v):
+            if kind == "commodity":
+                commodities.update(ns)
+                kind = "item"
             rows.update((("ship" if SHIPS.record_by_name(n) else "item") if kind == "mixed" else kind, n)
                         for n in ns)
     # blueprint sets and size ladders you've started: the core piece, the first owned size
@@ -6053,8 +6129,11 @@ def build_list_art(data):
     rows.update(("bp", n) for n in bp)
     # where each subject's picture lives
     picks = {}                                       # (kind, name) -> wiki url or rsi record
-    _wiki_leads([n for k, n in rows if k == "place"] + [n for k, n in rows if k == "ship" and
-                                                       not (SHIPS.record_by_name(n) or {}).get("img_large")])
+    no_pic = [n for k, n in rows if k == "item" and not (ITEMS.ok and ITEMS.image_for(n))]
+    _wiki_leads([t for k, n in rows if k == "place" for t in _place_titles(n)]
+                + [t for n in no_pic for t in _item_titles(n)]
+                + [n for k, n in rows if k == "ship" and not (SHIPS.record_by_name(n) or {}).get("img_large")]
+                + [what for _rx, (how, what) in _PLACE_FAMILY if how == "page"])
     gun_meta = {}
     for v in _views(data):
         for n, m in (v.get("gun_meta") or {}).items():
@@ -6069,15 +6148,20 @@ def build_list_art(data):
         elif kind == "gun":
             picks[(kind, n)] = _gun_pick(n, gun_meta.get(n))
         elif kind == "item":
-            picks[(kind, n)] = ITEMS.image_for(n) if ITEMS.ok else None
+            u = (ITEMS.image_for(n) if ITEMS.ok else None) or next(
+                (_WIKI_LEAD[t] for t in _item_titles(n) if _WIKI_LEAD.get(t)), None)
+            crate = None
+            if not u and n in commodities:
+                crate = next((f for rx, f in _CARGO_CRATE if re.search(rx, n, re.I)), None)
+            picks[(kind, n)] = _wiki_file(crate) if crate else u
         elif kind == "bp":
             picks[(kind, n)] = ITEMS.imgs.get((bp.get(n) or "").lower()) if ITEMS.ok else None
-        elif kind == "place" and not _is_system(n):
-            picks[(kind, n)] = _WIKI_LEAD.get(n) or _WIKI_LEAD.get(re.sub(r"\s*\(.*?\)$", "", n))
+        elif kind == "place":
+            picks[(kind, n)] = _place_art(n)
 
     out = defaultdict(dict)
     for (kind, n), p in picks.items():
-        d = art_src(p)
+        d = p if isinstance(p, list) else art_src(p)
         if d:
             out[kind][n] = d
     return dict(out)
@@ -8269,7 +8353,9 @@ function artUrls(d, size){
     return [[sm, lg], [lg, sm], [lg.replace('store_large','store_hub_large'), lg]][size]; }
   if(d[0]==='w'){ const p=d[1], n=p.split('/').pop(), orig=WIKI_MEDIA+p;
     const t=w=>`${WIKI_MEDIA}thumb/${p}/${w}px-${n}${/\.webp$/i.test(n)?'':'.webp'}`;
-    return [[t(200), orig], [t(640), t(400), orig], [t(1280), t(960), t(600), orig]][size]; }
+    // the wiki resizes to fixed widths only (240, 320, 480, 640, 800, 960, 1200, 1280):
+    // 200 or 400 px answers 404 unless someone asked for that file at that width before
+    return [[t(240), t(320), orig], [t(640), t(480), orig], [t(1280), t(960), t(800), orig]][size]; }
   return [d[1]];
 }
 function artNext(img){
@@ -8864,7 +8950,7 @@ function secFlight(v){
   const sz=v.ship_size.map(([n,c])=>({label:n,value:c,color:SIZE_COLOR[n]||'#8aa0b8'}));
   splitbar($('#sizeChart'), sz, {big:fmt(v.ships_unique), small:'distinct ships · bar = sessions by hull size'});
   hbars($('#roleBars'), toItems(v.ship_role,'#5bd1e6'));
-  hbars($('#sysBars'), toItems(v.systems,'#b98bff'));
+  hbars($('#sysBars'), toItems(v.systems,'#b98bff').map(d=>({...d, full:d.label+' System'})), {art:'place'});
   const jb=$('#jurisBars'); if(jb) hbars(jb, (v.juris||[]).map(([k,s,n])=>({label:k, value:s, disp:`${fmt(s)} <span class="vv-u">sess</span> · ${fmt(n)} entries`})));
   const pb=$('#placeBars'); if(pb) hbars(pb, ((v.places||{}).rows||[]).slice(0,15).map(([nm,sy,kd,n,first])=>({label:nm, value:n,
     disp:`${fmt(n)} <span class="vv-u">sess</span>`, title:`${sy} · ${kd.toLowerCase()}${first?' · first visit '+ddmm(first):''}`})), {art:'place'});

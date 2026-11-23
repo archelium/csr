@@ -25,6 +25,24 @@ class ArtSourceTests(unittest.TestCase):
         self.assertIsNone(sc_stats.art_src({"img_small": "s.jpg"}))
 
 
+class StandInTests(unittest.TestCase):
+    def test_systems_have_their_own_picture(self):
+        self.assertEqual(sc_stats._place_art("Nyx System"), ["w", "8/88/Glaciem_Ring.png"])
+        self.assertEqual(sc_stats._place_art("Pyro"), ["w", "b/b7/Pyro_star.webp"])
+
+    def test_wiki_file_path_is_the_md5_of_its_name(self):
+        self.assertEqual(sc_stats._wiki_file("People'sServiceStation1.png"), ["w", "f/f3/People%27sServiceStation1.png"])
+
+    def test_mission_text_and_gateway_twins(self):
+        self.assertEqual(sc_stats._place_titles("Gaslight at the L2 Lagrange of Pyro V")[1], "Gaslight")
+        self.assertEqual(sc_stats._place_titles("Stanton Gateway (Nyx)")[-1], "Stanton Gateway (Pyro)")
+        self.assertEqual(sc_stats._place_titles("Pyro Gateway (Stanton)")[-1], "Pyro Gateway (Nyx)")
+
+    def test_item_titles_drop_capacity_and_size(self):
+        self.assertIn("Killshot Rifle Magazine", sc_stats._item_titles("Killshot Rifle Magazine (45 Cap)"))
+        self.assertIn("Ship Ammunition", sc_stats._item_titles("Ship Ammunition - Size 4"))
+
+
 class PackImagesTests(unittest.TestCase):
     def test_each_picture_is_stored_once(self):
         img = "data:image/jpeg;base64," + "A" * 400
@@ -49,12 +67,15 @@ class PackImagesTests(unittest.TestCase):
 class ViewListTests(unittest.TestCase):
     def test_lists_in_display_order(self):
         v = {"ships_top": [["Asgard", 3]], "weapons_top": [["Gallant Rifle", 9, False], ["Multi-Tool", 4, True]],
-             "haul": {"dest": [["Nyx System", 5], ["Everus Harbor", 3]], "com": [["Waste", 7]]}}
+             "haul": {"dest": [["Nyx System", 5], ["Everus Harbor", 3]], "com": [["Waste", 7]]},
+             "systems": [["Stanton", 40]]}
         lists = dict((k + str(i), ns) for i, (k, ns) in enumerate(sc_stats._view_lists(v)))
         self.assertEqual(lists["ship0"], ["Asgard"])
         self.assertEqual(lists["gun4"], ["Gallant Rifle"])
         self.assertEqual(lists["item5"], ["Multi-Tool"])
-        self.assertEqual(lists["place9"], ["Nyx System", "Everus Harbor"])
+        self.assertEqual(lists["commodity8"], ["Waste"])
+        self.assertEqual(lists["place9"], ["Stanton System"])
+        self.assertEqual(lists["place10"], ["Nyx System", "Everus Harbor"])
         self.assertTrue(sc_stats._is_system("Nyx System"))
         self.assertFalse(sc_stats._is_system("Everus Harbor"))
 

@@ -15,7 +15,10 @@ uses [Semantic Versioning](https://semver.org/) (MAJOR.MINOR.PATCH).
   opens on its #1: your most-flown ship, most-drawn gun, top hauling destination, biggest
   ship purchase, closest armour set. In every ranked list of ships, guns, items and places
   the top 3 are picture tiles and the rest have thumbnails. Ships come from RSI, the rest
-  from starcitizen.tools. Something with no picture shows its list's icon in the same slot.
+  from starcitizen.tools. Systems show their star or landmark (Nyx is the Glaciem Ring).
+  Stations of one design share a picture: gateways, People's Service Stations, Onyx
+  facilities, QV stations. Commodities show the cargo crate they ship in. Something with
+  no picture at all shows its list's icon in the same slot.
 - **Pictures load when you view the page**, from RSI and starcitizen.tools, as they scroll
   into view. The scan downloads none. The page went from 20 MB to about 2 MB. Offline,
   every picture slot shows its icon.
