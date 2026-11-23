@@ -23,6 +23,12 @@ uses [Semantic Versioning](https://semver.org/) (MAJOR.MINOR.PATCH).
 - **Click any blueprint for its missions.** Every square, set piece, ladder dot and album
   card opens the planner on it: the missions that drop it, the standing each needs, the
   drop chance and a wiki link per mission.
+- **Find a blueprint.** A search at the top of Blueprints: name, maker, class or grade.
+  Each result says owned or missing and the next step: "open now" with the mission, or
+  how much rep you're short and with whom. Open a result for every mission that drops it.
+- **Pinned blueprints.** Pin with ☆ in search, the planner or the album. Pinned keeps
+  each one's next step at the top of the page until it's in your library. Pins are saved
+  in your browser, per account.
 - **Blueprints with no known source are marked.** The catalogue lists every craftable
   blueprint in the game files. 920 of 1,628 have no mission and aren't given by default.
   Their squares are dashed, their cards say "no known source", and the totals split what
@@ -34,6 +40,7 @@ uses [Semantic Versioning](https://semver.org/) (MAJOR.MINOR.PATCH).
   battery and the Raider Camo Palatino pieces now match.
 
 ### Fixed
+- **Every web link opens in a new tab**, including any built without one.
 - **Stealth components showed as "Sth/2/A Umbra" under Other.** The game writes stealth
   as "Sth". They now read Umbra, Shimmer and Veil, under ship components.
 

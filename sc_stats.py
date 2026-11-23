@@ -8141,6 +8141,33 @@ nav a::after{background:var(--menu-bg);border-color:var(--glass-line);box-shadow
 .chead .ccol{font-family:var(--font-mono);font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
 .bsq.on.new{background:var(--amber);border-color:var(--amber)}
 [data-bpplan]{cursor:pointer}
+.bphunt{margin-bottom:20px;align-items:start}
+.bphit{border-bottom:1px dashed var(--line)}
+.bphit:last-child{border-bottom:0}
+.bph-r{display:flex;align-items:center;gap:10px;padding:8px 2px;cursor:pointer;min-width:0}
+.bph-r:hover{background:var(--tint-cyan)}
+.bph-s{flex:none;width:66px;text-align:center;font-family:var(--font-mono);font-size:10.5px;letter-spacing:.06em;padding:2px 0;border-radius:4px;border:1px solid}
+.bph-s.ok{color:var(--cyan);border-color:var(--cyan)} .bph-s.no{color:var(--amber);border-color:var(--amber)}
+.bph-s.ns{color:var(--dim);border-color:var(--dim);border-style:dashed}
+.bph-n{flex:1;min-width:0;display:flex;flex-direction:column}
+.bph-n b{font-weight:600;color:var(--txt);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bph-n .bpk{margin:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bph-p{flex:0 1 46%;min-width:0;font-size:12px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bph-p .bpst{margin:0 6px 0 0}
+.bphit.own .bph-p{color:var(--dim)}
+.bph-c{flex:none;width:14px;height:14px;display:grid;place-items:center;color:var(--dim)}
+.bph-c::before{content:'';width:6px;height:6px;border-right:1.5px solid currentColor;border-bottom:1.5px solid currentColor;transform:translateY(-2px) rotate(45deg)}
+.bphit.open .bph-c::before{transform:translateY(2px) rotate(-135deg)}
+.bph-x{padding:4px 0 12px 76px}
+.bpin{all:unset;box-sizing:border-box;flex:none;cursor:pointer;width:24px;height:24px;display:inline-grid;place-items:center;border-radius:5px;
+  color:var(--dim);font-size:15px;line-height:1}
+.bpin:hover{color:var(--amber);background:var(--tint-amber,rgba(244,169,42,.12))}
+.bpin.on{color:var(--amber)}
+.bpin:focus-visible{outline:2px solid var(--cyan)}
+.bpph .bpin{margin-right:6px}
+.ac .pic .bpin{position:absolute;left:6px;top:6px;z-index:1;background:rgba(7,11,17,.72)}
+.bpst.ns{color:var(--dim);border:1px dashed var(--dim)}
+@media(max-width:900px){ .bph-p{display:none} .bph-x{padding-left:0} }
 .bsq.ns,.bdot.ns{border-style:dashed;opacity:.45}
 .ac.ns .st{border-style:dashed}
 .ac.ns:not(.on) .pic img{opacity:.6}
@@ -8408,6 +8435,9 @@ const DATA = /*__DATA__*/;
     else if(x && typeof x==='object') fix(x); } };
   fix(DATA); delete DATA.ART;
 })();
+// every web link opens in a new tab, including any built without a target
+document.addEventListener('click', e=>{ const a=e.target.closest && e.target.closest('a[href^="http"]');
+  if(a && a.target!=='_blank'){ a.target='_blank'; a.rel='noopener'; } }, true);
 const LART=DATA.list_art||{};
 const ART_IC={ship:'ship', gun:'gun', item:'cargo', place:'planet', bp:'blueprints'};
 function lart(kind, name){ const k=LART[kind]; return (k && k[name]) || null; }
@@ -9347,38 +9377,107 @@ let bpPlanKey='', bpPlanQ='';
 const MIS_F = {DBG:0, TITLE:1, FAC:2, RANK:3, STAND:4, THR:5, REP:6, GAINS:7, HASBP:8, SYS:9, URL:10};
 function bpFloorOf(fac){ const r=((A().career||{}).rep_floor||[]).find(x=>x[0]===fac); return r ? r[1] : 0; }
 function bpRankAt(fac, rep){ const lad=((DATA.missions||{}).factions||{})[fac]; if(!lad) return ''; let now=''; (lad.l||[]).forEach(([n,t])=>{ if(rep>=t) now=n; }); return now; }
+// ---- a blueprint's pathway: every mission that drops it, open ones first, then the
+// smallest rep gap. Shared by the planner, Find a blueprint and Pinned.
+function bpOwnedRow(row){ const own=bpOwnedKeys(); return own.has(row[0])||own.has('n:'+row[1].toLowerCase()); }
+function bpPaths(row){
+  const M=DATA.missions; if(!M) return [];
+  return (row[7]||[]).map(([mi,ch])=>{
+    if(typeof mi!=='number') return {retired:true, title:String(mi), ch:ch||0, open:false, gap:Infinity};
+    const m=M.rows[mi], fac=m[MIS_F.FAC], thr=m[MIS_F.THR]||0, floor=fac?bpFloorOf(fac):0, open=!fac||!thr||floor>=thr;
+    return {mi, m, fac, thr, floor, ch:ch||0, open, gap:open?0:thr-floor, title:m[MIS_F.TITLE]}; })
+    .sort((a,b)=>(b.open-a.open)||(a.gap-b.gap)||(b.ch-a.ch)||String(a.title).localeCompare(String(b.title)));
+}
+const bpChance=ch=>ch>=1?'guaranteed':ch>0?Math.round(ch*100)+'% drop':'';
+// one line: where to go next for it
+function bpBestHTML(row){
+  if(row[5]) return `<span class="bpst ok">default</span> available from the start`;
+  const ps=bpPaths(row), live=ps.filter(p=>!p.retired);
+  if(!ps.length) return `<span class="bpst ns">no known source</span> no mission drops it`;
+  if(!live.length) return `<span class="bpst ns">retired</span> only from missions the wiki no longer lists`;
+  const p=live[0], ch=bpChance(p.ch), more=live.length>1?` \u00b7 +${live.length-1} more`:'';
+  return p.open ? `<span class="bpst ok">open now</span> ${esc(p.title)}${ch?' \u00b7 '+ch:''}${more}`
+                : `<span class="bpst no">${fmt(p.gap)} rep to go</span> ${esc(p.title)} \u00b7 ${esc(p.fac)}${more}`;
+}
+function bpPathHTML(row){
+  const owned=bpOwnedRow(row), recv=bpRecv(), d=recv[row[0]]||recv['n:'+row[1].toLowerCase()];
+  const matched=(A().career||{}).contracts_matched||{}, meta=((DATA.bp_catalog||{}).meta||{})[row[0]]||[];
+  const spec=[row[3], row[4], meta[0]&&meta[0]+(meta[1]?' grade '+meta[1]:''), meta[2]].filter(Boolean).map(esc).join(' \u00b7 ');
+  const head=`<div class="bpph">${bpPinBtn(row[0])}<b>${link(wikiURL(bpSkin(row[1])),esc(row[1]),'lk')}</b><span class="bpk">${spec}</span>`+
+    (owned?`<span class="bpok">in your library${d?' since '+ddmm(d):''}</span>`:row[5]?`<span class="bpok">known from the start</span>`:'')+`</div>`;
+  const ps=bpPaths(row);
+  if(!ps.length) return head+`<div class="empty">${row[5] ? 'Available by default. No mission needed.'
+    : 'No mission drops this. It may come from an event (your XenoThreat rewards did) or not be obtainable yet.'}</div>`;
+  return head+`<div class="tline">`+ps.map(p=>{
+    if(p.retired) return `<div class="tev"><span class="td">${bpChance(p.ch)}</span><span class="tw">${esc(p.title)}</span><span class="tv"><span class="bph">retired or unknown mission</span></span></div>`;
+    const m=p.m, stand=m[MIS_F.STAND], done=matched[String(p.mi)]||0;
+    const gate = !p.fac ? `<span class="bph">no faction</span>` : stand ? `${esc(stand)} <span class="bph">\u00b7 ${fmt(p.thr)} rep</span>` : `<span class="bph">no standing needed</span>`;
+    const st = !p.fac||!p.thr ? `<span class="bpst ok">open</span>` : p.open ? `<span class="bpst ok">open at your floor</span>`
+      : `<span class="bpst no">${fmt(p.gap)} more rep with ${esc(p.fac)}</span>`;
+    return `<div class="tev"><span class="td">${bpChance(p.ch)}</span>`+
+      `<span class="tw">${m[MIS_F.URL]?link(m[MIS_F.URL],esc(m[MIS_F.TITLE]),'lk'):esc(m[MIS_F.TITLE])}<span class="bpk">${esc(p.fac||'')}${m[MIS_F.REP]?` \u00b7 +${fmt(m[MIS_F.REP])} rep`:''}${done?` \u00b7 done \u00d7${fmt(done)}`:''}</span></span>`+
+      `<span class="tv">${gate} ${st}</span></div>`; }).join('')+`</div>`;
+}
 function bpPlanHTML(){
   const M=DATA.missions, cat=DATA.bp_catalog; if(!M||!cat) return '';
-  const own=bpOwnedKeys(), matched=(A().career||{}).contracts_matched||{};
   const q=bpPlanQ.trim().toLowerCase();
   const hits=q ? cat.rows.filter(r=>r[1].toLowerCase().includes(q)).slice(0,8) : [];
   const hitsH=hits.map(r=>`<button class="vpill sm ${bpPlanKey===r[0]?'on':''}" data-bpplan="${esc(r[0])}">${esc(r[1])}${r[7]&&r[7].length?'':' <span class="vc">no mission</span>'}</button>`).join('');
   const row=bpPlanKey ? cat.rows.find(r=>r[0]===bpPlanKey) : null;
   let out='';
-  if(row){
-    const owned=own.has(row[0])||own.has('n:'+row[1].toLowerCase());
-    const head=`<div class="bpph"><b>${link(wikiURL(bpSkin(row[1])),esc(row[1]),'lk')}</b><span class="bpk">${esc(row[3])}${row[4]?' · '+esc(row[4]):''}</span>`+
-      (owned?`<span class="bpok">in your library</span>`:row[5]?`<span class="bpok">known from the start</span>`:'')+`</div>`;
-    const uns=row[7]||[];
-    if(!uns.length) out=head+`<div class="empty">${row[5] ? 'Available by default. No mission needed.'
-      : 'No mission drops this. It may come from an event (your XenoThreat rewards did) or not be obtainable yet.'}</div>`;
-    else out=head+`<div class="tline">`+uns.map(([mi,chance])=>{
-      if(typeof mi!=='number') return `<div class="tev"><span class="tw">${esc(String(mi))}</span><span class="tv"><span class="bph">retired or unknown mission</span></span></div>`;
-      const m=M.rows[mi]; const fac=m[MIS_F.FAC], thr=m[MIS_F.THR]||0, stand=m[MIS_F.STAND];
-      const floor=fac?bpFloorOf(fac):0, done=matched[String(mi)]||0;
-      const gate = !fac ? `<span class="bph">no faction</span>` : stand ? `${esc(stand)} <span class="bph">· ${fmt(thr)} rep</span>` : `<span class="bph">no standing needed</span>`;
-      let st;
-      if(!fac||!thr) st=`<span class="bpst ok">open</span>`;
-      else if(floor>=thr) st=`<span class="bpst ok">open at your floor</span>`;
-      else st=`<span class="bpst no">${fmt(thr-floor)} more rep with ${esc(fac)}</span>`;
-      const ch = chance>=1 ? 'guaranteed' : chance>0 ? Math.round(chance*100)+'% drop' : '';
-      return `<div class="tev"><span class="td">${ch}</span>`+
-        `<span class="tw">${m[MIS_F.URL]?link(m[MIS_F.URL],esc(m[MIS_F.TITLE]),'lk'):esc(m[MIS_F.TITLE])}<span class="bpk">${esc(fac||'')}${m[MIS_F.REP]?` · +${fmt(m[MIS_F.REP])} rep`:''}${done?` · done ×${fmt(done)}`:''}</span></span>`+
-        `<span class="tv">${gate} ${st}</span></div>`; }).join('')+`</div>`;
-  } else if(q && !hits.length) out=`<div class="empty">Nothing in the catalogue matches that.</div>`;
-  else if(!q) out=`<div class="empty">Type a blueprint name, or press <i>plan</i> on any row of the list below.</div>`;
+  if(row) out=bpPathHTML(row);
+  else if(q && !hits.length) out=`<div class="empty">Nothing in the catalogue matches that.</div>`;
+  else if(!q) out=`<div class="empty">Type a blueprint name, or click any blueprint on the page.</div>`;
   return `<div class="bpbar"><input class="bpq" id="bpPlanQ" type="search" placeholder="Which blueprint?" value="${esc(bpPlanQ)}" spellcheck="false" autocomplete="off"></div>`+
     (hitsH?`<div class="bpbar" style="margin-top:-4px">${hitsH}</div>`:'')+`<div id="bpPlanOut">${out}</div>`;
+}
+// ---- pinned blueprints: kept in this browser, per account, like your main account
+const BP_PIN_KEY='csr_bp_pins';
+function bpPinMap(){ try{ return JSON.parse(localStorage.getItem(BP_PIN_KEY)||'{}')||{}; }catch(e){ return {}; } }
+function bpPins(){ return bpPinMap()[currentAccount]||[]; }
+function bpTogglePin(k){
+  const m=bpPinMap(), l=(m[currentAccount]||[]).filter(x=>x!==k);
+  if(l.length===(m[currentAccount]||[]).length) l.unshift(k);
+  m[currentAccount]=l; try{ localStorage.setItem(BP_PIN_KEY, JSON.stringify(m)); }catch(e){}
+}
+function bpPinBtn(k){ const on=bpPins().includes(k);
+  return `<button type="button" class="bpin ${on?'on':''}" data-bppin="${esc(k)}" aria-pressed="${on}" title="${on?'Unpin':'Pin it to track it'}">${on?'\u2605':'\u2606'}</button>`; }
+// a result or a pinned blueprint: owned or not at a glance, the next step, the full path on open
+function bpHitRow(row, open, attr){
+  const o=bpOwnedRow(row), recv=bpRecv(), d=recv[row[0]]||recv['n:'+row[1].toLowerCase()];
+  const st=o?['ok','OWNED']:row[5]?['ok','DEFAULT']:bpNoSource(row)?['ns','MISSING']:['no','MISSING'];
+  return `<div class="bphit${o?' own':''}${open?' open':''}"><div class="bph-r" ${attr}="${esc(row[0])}" title="${open?'Close':'Show every mission that drops it'}">`+
+    `<span class="bph-s ${st[0]}">${st[1]}</span>`+
+    `<span class="bph-n"><b>${esc(row[1])}</b><span class="bpk">${esc(row[3])}${row[4]?' \u00b7 '+esc(row[4]):''}</span></span>`+
+    `<span class="bph-p">${o?`received ${d?ddmm(d):''}`:bpBestHTML(row)}</span>${bpPinBtn(row[0])}<span class="bph-c" aria-hidden="true"></span></div>`+
+    (open?`<div class="bph-x">${bpPathHTML(row)}</div>`:'')+`</div>`;
+}
+let bpFindQ='', bpFindOpen='', bpPinOpen='';
+function bpFindHTML(){
+  return `<h3>Find a blueprint <span class="u">\u2014 do you have it, and where it drops</span></h3>`+
+    `<div class="bpbar"><input class="bpq" id="bpFindQ" type="search" placeholder="Name, maker, class or grade\u2026" value="${esc(bpFindQ)}" spellcheck="false" autocomplete="off"></div>`+
+    `<div id="bpFindOut">${bpFindList()}</div>`;
+}
+function bpFindList(){
+  const cat=DATA.bp_catalog, q=bpFindQ.trim().toLowerCase();
+  if(!q) return `<div class="empty">Type a name, maker, class or grade. Each result says owned or missing and where to get it. Open one for every mission that drops it.</div>`;
+  const meta=cat.meta||{}, alias={};
+  ((A().career||{}).blueprints||[]).forEach(b=>{ if(b[6]&&b[7]) alias[b[6]]=b[7]; });
+  const words=q.split(/\s+/).filter(Boolean);
+  const hits=cat.rows.map(r=>{ const hay=[r[1],r[3],r[4],...(meta[r[0]]||[]),alias[r[0]]||''].join(' ').toLowerCase();
+      if(!words.every(w=>hay.includes(w))) return null;
+      const n=r[1].toLowerCase(); return [n===q?0:n.startsWith(q)?1:n.includes(q)?2:3, r]; })
+    .filter(Boolean).sort((a,b)=>a[0]-b[0]||a[1][1].localeCompare(b[1][1]));
+  if(!hits.length) return `<div class="empty">Nothing in the catalogue matches that.</div>`;
+  return hits.slice(0,15).map(([,r])=>bpHitRow(r, bpFindOpen===r[0], 'data-bpfind')).join('')+
+    (hits.length>15?`<div class="bph" style="margin-top:8px">${fmt(hits.length-15)} more. Add a word to narrow it.</div>`:'');
+}
+function bpPinnedHTML(){
+  const cat=DATA.bp_catalog, by={}; cat.rows.forEach(r=>{ by[r[0]]=r; });
+  const rows=bpPins().map(k=>by[k]).filter(Boolean), todo=rows.filter(r=>!bpOwnedRow(r)), got=rows.filter(bpOwnedRow);
+  const h=`<h3>Pinned <span class="u">\u2014 ${rows.length?`${fmt(todo.length)} to get \u00b7 ${fmt(got.length)} got`:'what you\u2019re going after'}</span></h3>`;
+  if(!rows.length) return h+`<div class="empty">Pin a blueprint with \u2606 in search, the planner or the album. It stays here with its next step until it\u2019s in your library.</div>`;
+  return h+todo.concat(got).map(r=>bpHitRow(r, bpPinOpen===r[0], 'data-bppinopen')).join('');
 }
 function bpFloorsHTML(){
   const rows=(A().career||{}).rep_floor||[];
@@ -9540,7 +9639,7 @@ function bpAlbumList(catalog){
       out+=`<div class="agh"><b>${esc(g)}</b><span>${fmt(all.filter(on).length)} of ${fmt(all.length)}</span></div><div class="alb">`; last=g; }
     const m=meta(r), o=on(r), d=recv[r[0]]||recv['n:'+r[1].toLowerCase()], nw=o&&d&&Date.parse(d)>=cut, z=sizeOf(r);
     const st = o ? (nw?'NEW \u00b7 '+ddmm(d).slice(0,6):'OWNED') : r[5] ? 'default' : (r[6]?fmt(r[6])+(r[6]===1?' mission':' missions'):'no known source');
-    out+=`<div class="ac ${o?'on':''} ${nw?'new':''}${!o&&bpNoSource(r)?' ns':''}" data-bpplan="${esc(r[0])}" title="${esc(r[1])} · click for its missions"><div class="pic">${ICON.blueprints}${img[r[0]]?artImg(artUrls(img[r[0]],1)):''}<span class="st">${st}</span></div>`+
+    out+=`<div class="ac ${o?'on':''} ${nw?'new':''}${!o&&bpNoSource(r)?' ns':''}" data-bpplan="${esc(r[0])}" title="${esc(r[1])} \u00b7 click for its missions"><div class="pic">${ICON.blueprints}${bpPinBtn(r[0])}${img[r[0]]?artImg(artUrls(img[r[0]],1)):''}<span class="st">${st}</span></div>`+
       `<div class="bd"><div class="nm">${esc(r[1])}</div><div class="cp">${z!=null?`<i>S${z}</i>`:''}${m[0]?`<i>${BP_CLS_SHORT[m[0]]||esc(m[0])}</i>`:''}`+
       `${m[1]?`<i class="g${esc(m[1])}">${esc(m[1])}</i>`:''}${m[2]?`<i>${esc(m[2])}</i>`:''}</div></div></div>`; });
   out+='</div>';
@@ -9592,7 +9691,8 @@ function secBlueprints(v){
                       : `Received in ${esc(pLabel(current))} <span class="u">— newest first</span>`;
   $('#content').innerHTML=metaLine(v)+
     group(1,'blueprints','Blueprint library','Everything the game has told you it handed over — and what it hasn\u2019t',
-      K+(catalog?`<div id="bpBoard">${bpBoardHTML(catalog)}</div>`:''))+
+      K+(catalog?`<div class="grid2 bphunt"><div class="card" id="bpFind">${bpFindHTML()}</div><div class="card" id="bpPinned">${bpPinnedHTML()}</div></div>`+
+        `<div id="bpBoard">${bpBoardHTML(catalog)}</div>`:''))+
     (DATA.missions && catalog ? group(2,'missions','Planner','Which missions drop a blueprint, what standing they need, and where your completed contracts put you',
       `<div class="grid2"><div class="card"><h3>Plan a blueprint <span class="u">— its missions and their gates</span></h3><div id="bpPlan">${bpPlanHTML()}</div></div>`+
       `<div class="card"><h3>Standing floors <span class="u">— rep your matched completions alone would have earned</span></h3>${bpFloorsHTML()}</div></div>`+
@@ -9610,7 +9710,23 @@ function secBlueprints(v){
   const wirePlan=()=>{
     const c=$('#content');
     if(c && !c.dataset.bpplanWired){ c.dataset.bpplanWired='1';
-      c.addEventListener('click', e=>{ const b=e.target.closest('[data-bpplan]'); if(!b || !c.contains(b) || !$('#bpPlan')) return;
+      c.addEventListener('click', e=>{
+        if(!$('#bpFind') && !$('#bpPlan')) return;
+        const pin=e.target.closest('[data-bppin]');
+        if(pin && c.contains(pin)){ e.preventDefault(); e.stopPropagation();
+          const k=pin.dataset.bppin; bpTogglePin(k); const on=bpPins().includes(k);
+          c.querySelectorAll(`[data-bppin="${CSS.escape(k)}"]`).forEach(x=>{ x.classList.toggle('on',on); x.textContent=on?'\u2605':'\u2606';
+            x.setAttribute('aria-pressed',on); x.title=on?'Unpin':'Pin it to track it'; });
+          const pc=$('#bpPinned'); if(pc) pc.innerHTML=bpPinnedHTML();
+          return; }
+        if(e.target.closest('a')) return;            // a wiki link inside a row opens itself
+        const fo=e.target.closest('[data-bpfind]');
+        if(fo && c.contains(fo)){ bpFindOpen = bpFindOpen===fo.dataset.bpfind ? '' : fo.dataset.bpfind;
+          const o=$('#bpFindOut'); if(o) o.innerHTML=bpFindList(); return; }
+        const po=e.target.closest('[data-bppinopen]');
+        if(po && c.contains(po)){ bpPinOpen = bpPinOpen===po.dataset.bppinopen ? '' : po.dataset.bppinopen;
+          const o=$('#bpPinned'); if(o) o.innerHTML=bpPinnedHTML(); return; }
+        const b=e.target.closest('[data-bpplan]'); if(!b || !c.contains(b) || !$('#bpPlan')) return;
         e.preventDefault();
         bpPlanKey=b.dataset.bpplan; const r=(DATA.bp_catalog.rows||[]).find(x=>x[0]===bpPlanKey); if(r) bpPlanQ=r[1];
         const el=$('#bpPlan'); if(!el) return; el.innerHTML=bpPlanHTML(); wirePlan();
@@ -9648,6 +9764,7 @@ function secBlueprints(v){
     const q=$('#bpAlbQ'); if(q) q.oninput=()=>{ BPA.q=q.value; BPA.n=48; const l=$('#bpAlbList'); if(l){ l.innerHTML=bpAlbumList(catalog); more(); } };
   };
   wireBoard();
+  const fq=$('#bpFindQ'); if(fq) fq.oninput=()=>{ bpFindQ=fq.value; bpFindOpen=''; const o=$('#bpFindOut'); if(o) o.innerHTML=bpFindList(); };
   if(bpLead) mountHero('bp', bpLead.name, bpLead.o===bpLead.t?'Complete armour set':'Closest armour set',
     `${bpLead.o} of ${bpLead.t} pieces`, wikiURL(bpLead.name));
   const months=v.bp_months||[];
