@@ -5012,8 +5012,7 @@ def finalize(agg):
         else:
             gun_named[name] += c
             if name not in gun_meta:
-                tok = (cls or "").split("_")[0].lower()
-                man = tok.upper() if tok in sc_names.WEAPON_MAN else ""
+                man = sc_names.weapon_maker_code(cls).upper()
                 g = sc_names.ITEMS.gun(cls) if sc_names.ITEMS is not None else None
                 gun_meta[name] = list(sc_names.gun_class_labels(cls, name)) + [man, (g or ["", "", ""])[2] or ""]
     # reloads (from AmmoRepool) & carry (stowed/holstered) resolved to gun names,
@@ -5879,7 +5878,8 @@ def _img_cache_path():
 def load_img_cache():
     try:
         d = json.load(open(_img_cache_path(), encoding="utf-8"))
-        _MAN_IMG.update(d.get("man", {}))
+        if d.get("man_v") == _MAN_VER:
+            _MAN_IMG.update(d.get("man", {}))
         _GUN_PICK.update(d.get("pick", {}))
         _WIKI_LEAD.update(d.get("lead", {}))
         csub(f"art cache mounted — {len(_GUN_PICK)} arms · {len(_MAN_IMG)} makers")
@@ -5889,7 +5889,7 @@ def load_img_cache():
 
 def save_img_cache():
     try:
-        json.dump({"man": _MAN_IMG, "pick": _GUN_PICK, "lead": _WIKI_LEAD},
+        json.dump({"man": _MAN_IMG, "man_v": _MAN_VER, "pick": _GUN_PICK, "lead": _WIKI_LEAD},
                   open(_img_cache_path(), "w", encoding="utf-8"))
     except Exception as e:
         cerr(f"could not save image cache: {e}")
@@ -5901,7 +5901,11 @@ _LOGO_NAME_OVERRIDE = {}
 _LOGO_FILE_OVERRIDE = {
     "Volt": "Verified Offworld Laser Technologies svg.svg",   # default JP0704 svg renders black
     "Anvil Aerospace": "AnvilAerospace.svg",                  # emblem, not the wordmark lockup
+    "Sakura Sun": "Sakura Sun - JP0904.svg",                  # the page's lead image is a photo
+    "Vanduul": "VanduulSwarmLogo.png",                        # the page's lead image is a Vanduul
 }
+# bump when the logo choices above change: cached logos are fetched again once
+_MAN_VER = 2
 
 
 def _man_logo(name):

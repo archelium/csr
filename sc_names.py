@@ -33,9 +33,32 @@ WEAPON_MAN = {
     "klwe": "Klaus & Werner", "behr": "Behring", "ksar": "Kastak Arms",
     "gemi": "Gemini", "apar": "Apocalypse Arms", "grin": "Greycat",
     "crlf": "CureLife", "volt": "Volt", "lbco": "Lightning Bolt Co.",
-    "gmni": "Gemini", "ndsl": "Klaus & Werner", "amrs": "Ammo Response",
-    "hdgw": "Hedeby Gunworks",
+    "gmni": "Gemini", "ndsl": "Klaus & Werner", "amrs": "Amon & Reese Co.",
+    "hdgw": "Hedeby Gunworks", "utfl": "UltiFlex", "sasu": "Sakura Sun", "vlk": "Behring",
+    "glsn": "Grey's Market",
 }
+# Grey's Market guns carry no maker in their class (none_...). Their wiki pages give the
+# maker code GLSN, which is Grey's Market. The Deadrig is listed as unknown everywhere.
+NONE_MAKER = {
+    "none_rifle_multi_01": "glsn",          # Killshot Rifle
+    "none_lmg_ballistic_01": "glsn",        # Pulverizer LMG
+    "none_smg_energy_01": "glsn",           # Ripper SMG
+    "none_pistol_ballistic_01": "glsn",     # Tripledown Pistol
+    "none_special_ballistic_01": "glsn",    # Boomtube Rocket Launcher
+}
+
+
+def weapon_maker_code(cls):
+    """The maker code of a weapon class ('behr', 'glsn'), '' when unknown."""
+    c = (cls or "").lower()
+    tok = c.split("_")[0]
+    if tok == "none":
+        for base, code in NONE_MAKER.items():
+            if c == base or c.startswith(base + "_"):
+                return code
+        return ""
+    return tok if tok in WEAPON_MAN else ""
+
 
 # Confirmed weapon/tool model names (base class -> model). Only entries we're
 # confident about; everything else uses the manufacturer + type fallback.

@@ -71,6 +71,11 @@ uses [Semantic Versioning](https://semver.org/) (MAJOR.MINOR.PATCH).
   battery and the Raider Camo Palatino pieces now match.
 
 ### Fixed
+- **Grey's Market guns had no maker or logo.** The Killshot, Pulverizer, Ripper,
+  Tripledown and Boomtube carry no maker in the game data. They now show Grey's Market.
+  UltiFlex and Sakura Sun guns got their makers too, and Amon & Reese replaces the
+  wrong "Ammo Response".
+- Sakura Sun and Vanduul showed a photo where their logo should be.
 - The scope line at the top of each page had no space under it.
 - **Home inventory showed 1% after a session that loaded only part of it.** The game
   logs your home inventory only when you move an item, and only what it has loaded by
