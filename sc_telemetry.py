@@ -782,6 +782,7 @@ class Recorder:
             out = dict(self._live)
             out["state"] = self._st["state"]
             out["channel"] = self._st["channel"]
+            out["reason"] = self._st["reason"]
             out["events"] = list(self._events)
             return out
 

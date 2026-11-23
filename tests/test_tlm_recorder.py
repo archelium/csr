@@ -115,6 +115,7 @@ class RecorderTests(unittest.TestCase):
             lv = rec.live()
             self.assertEqual(lv["state"], "live")
             self.assertEqual(lv["channel"], "LIVE")
+            self.assertEqual(lv["reason"], rec.status()["reason"])
             self.assertEqual(lv["snapshot"]["actor"]["state"]["uec_balance"], 7)
             self.assertNotIn("events", lv["snapshot"])
             self.assertGreater(lv["t"], time.time() - 5)

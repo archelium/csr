@@ -10985,7 +10985,9 @@ document.addEventListener('keydown',e=>{
 });
 
 document.querySelectorAll('#nav a').forEach(a=>{
-  if(!a.dataset.sec) return;   // plain links (Live view) open as-is
+  if(!a.dataset.sec){   // plain links (Live view) open as-is
+    const ls=a.querySelector('span'); if(ls&&a.id==='navLiveView') ls.innerHTML=ICON.satellite;
+    return; }
   const s=a.querySelector('span'); if(s&&ICON[a.dataset.sec]) s.innerHTML=ICON[a.dataset.sec];  // swap emoji → HUD glyph
   a.onclick=(e)=>{ e.preventDefault();
     section=a.dataset.sec; document.querySelectorAll('#nav a').forEach(x=>x.classList.toggle('active',x===a)); render();
@@ -11738,14 +11740,13 @@ LIVE_TEMPLATE = r"""<!doctype html>
 (function(){
   try{ document.documentElement.setAttribute('data-theme', localStorage.getItem('sc_theme') || 'dark'); }catch(e){}
   var LIVE_URL = new URL('/api/telemetry/live', location.href).href;
-  var STATUS_URL = new URL('/api/telemetry/status', location.href).href;
   var $ = function(id){ return document.getElementById(id); };
   var WARN = {pwr:'Power',wpn:'Weapons',thr:'Thrusters',shld:'Shields',cool:'Cooling',
               qdrv:'Quantum',radr:'Radar',prox:'Proximity',hit:'Hit',misl:'Missile'};
   var POWER = {powerplants:'Powerplants',engines:'Engines',weapons:'Weapons',coolers:'Coolers',
                life_support:'Life support',sensors:'Sensors',shield_generators:'Shield generators',
                shield_emitters:'Shield emitters'};
-  var reason = '', reasonAt = 0;
+  var fails = 0;
 
   function esc(s){ return String(s).replace(/[&<>"]/g, function(c){
     return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
@@ -11762,17 +11763,19 @@ LIVE_TEMPLATE = r"""<!doctype html>
 
   function render(d){
     var st = d.state || 'idle';
+    var reason = d.reason || '';
     var snap = d.snapshot || {};
     var veh = (snap.vehicle || {}).state || null;
     var actor = snap.actor || {};
     var vit = actor.vitals || {};
     var ast = actor.state || {};
     var pill = $('tlmPill');
-    pill.textContent = st;
+    pill.textContent = st === 'down' ? 'offline' : st;
     pill.className = 'pill' + (st === 'live' ? ' live' : '');
 
     var msg = '';
-    if(st === 'idle') msg = "Star Citizen isn't running.";
+    if(st === 'down') msg = "Can't reach CSR.";
+    else if(st === 'idle') msg = "Star Citizen isn't running.";
     else if(st === 'waiting') msg = 'Game is starting. Waiting for telemetry.';
     else if(st === 'off') msg = reason === 'schema' ? 'No telemetry schema for this game build.'
       : "Telemetry is off in the game. Turn it on in CSR's Telemetry settings.";
@@ -11835,17 +11838,20 @@ LIVE_TEMPLATE = r"""<!doctype html>
 
     // vitals
     var vi = '<h2>Vitals</h2>';
+    if(!actor.vitals) vi += '<div class="none">—</div>';
+    else {
     vi += bar('Health', pctOf(vit.health), pctOf(vit.health) < .3 ? 'crit' : '');
     vi += bar('Oxygen', pctOf(vit.oxygen), pctOf(vit.oxygen) < .3 ? 'crit' : '');
     vi += bar('Hunger', pctOf(vit.hunger), pctOf(vit.hunger) < .2 ? 'warn' : '');
     vi += bar('Thirst', pctOf(vit.thirst), pctOf(vit.thirst) < .2 ? 'warn' : '');
     vi += row('Heart rate', fmt(vit.heart_rate, 0) + ' bpm');
     vi += row('Body temperature', fmt((vit.body_temperature || {}).current, 1) + ' °C');
+    }
     $('tlmVitals').innerHTML = vi;
 
     // wallet
-    $('tlmWallet').innerHTML = '<h2>Wallet</h2><div class="big">' +
-      Math.round(num(ast.uec_balance)).toLocaleString('en-US') + ' <small>aUEC</small></div>';
+    $('tlmWallet').innerHTML = '<h2>Wallet</h2>' + (actor.state ? '<div class="big">' +
+      Math.round(num(ast.uec_balance)).toLocaleString('en-US') + ' <small>aUEC</small></div>' : '<div class="none">—</div>');
 
     // events
     var ev = (d.events || []).slice(-10).reverse();
@@ -11856,29 +11862,17 @@ LIVE_TEMPLATE = r"""<!doctype html>
     $('tlmEvents').innerHTML = '<h2>Events</h2>' + (li ? '<ul>' + li + '</ul>' : '<div class="none">None yet.</div>');
   }
 
-  function getReason(){
-    var now = Date.now();
-    if(now - reasonAt < 5000) return Promise.resolve();
-    reasonAt = now;
-    return fetch(STATUS_URL, {cache:'no-store'}).then(function(r){ return r.json(); })
-      .then(function(s){ reason = ((s || {}).recorder || {}).reason || ''; })
-      .catch(function(){});
-  }
-
-  var busy = false;
   function tick(){
-    if(!busy){
-      busy = true;
-      fetch(LIVE_URL, {cache:'no-store'}).then(function(r){ return r.json(); })
-        .then(function(d){
-          d = d || {};
-          if(d.state && d.state !== 'live' && d.state !== 'idle') return getReason().then(function(){ render(d); });
-          render(d);
-        })
-        .catch(function(){ render({state:'idle'}); })
-        .then(function(){ busy = false; });
-    }
-    setTimeout(tick, document.visibilityState === 'visible' ? 250 : 2000);
+    var ac = new AbortController();
+    var to = setTimeout(function(){ ac.abort(); }, 3000);
+    fetch(LIVE_URL, {cache:'no-store', signal:ac.signal}).then(function(r){ return r.json(); })
+      .then(function(d){ fails = 0; render(d || {}); })
+      .catch(function(){ fails++; render({state:'down'}); })
+      .then(function(){
+        clearTimeout(to);
+        var wait = fails >= 3 ? 5000 : fails ? 2000 : document.visibilityState === 'visible' ? 250 : 2000;
+        setTimeout(tick, wait);
+      });
   }
   tick();
 })();
