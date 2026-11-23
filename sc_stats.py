@@ -7254,7 +7254,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     cursor:pointer;color:var(--cyan);background:transparent;border:1px solid var(--line);
     border-radius:7px;padding:5px 11px;transition:.13s;white-space:nowrap}
   .chart-reset:hover{border-color:var(--cyan);background:rgba(91,209,230,.09)}
-  .patch-meta{color:var(--muted);font-size:12.5px;margin:2px 0 0}
+  .patch-meta{color:var(--muted);font-size:12.5px;margin:2px 0 20px}
 
   /* app shell: sidebar + main */
   .app{display:flex;min-height:100vh}
@@ -8253,25 +8253,36 @@ nav a::after{background:var(--menu-bg);border-color:var(--glass-line);box-shadow
 .bxtot .bxkey span{display:inline-flex;align-items:center;gap:6px}
 .bxtot .bxkey .bsq{width:14px;height:14px;cursor:default;border-radius:3px}
 .bsq[data-bpplan]:hover,.bdot[data-bpplan]:hover{outline:2px solid var(--cyan);outline-offset:1px}
-/* an in-page app: a menu down the left, one page at a time on the right. Blueprints and Stability */
-.sapp{display:grid;grid-template-columns:220px minmax(0,1fr);gap:20px;align-items:start}
-.stree{position:sticky;top:96px;display:flex;flex-direction:column;border:1px solid var(--line);border-radius:12px;background:var(--tile);padding:10px}
-.stree .t-h{font-family:var(--font-mono);font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--dim);padding:12px 9px 5px}
-.stree button{all:unset;box-sizing:border-box;display:flex;align-items:center;gap:8px;padding:7px 9px;border-radius:7px;font-size:13px;color:var(--muted);cursor:pointer}
-.stree button span{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.stree button b{font-family:var(--font-mono);font-size:11px;font-weight:400;color:var(--dim)}
+/* an in-page app: an icon rail down the left, one page at a time on the right. Blueprints and Stability */
+.sapp{display:grid;grid-template-columns:78px minmax(0,1fr);gap:24px;align-items:start}
+.stree{position:sticky;top:96px;z-index:20;display:flex;flex-direction:column;gap:3px;border:1px solid var(--line);border-radius:14px;background:var(--tile);padding:8px 7px}
+.stree button{all:unset;box-sizing:border-box;position:relative;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;
+  min-height:58px;padding:9px 2px;border-radius:10px;color:var(--muted);cursor:pointer;text-align:center}
+.stree button i{display:grid;place-items:center;width:24px;height:24px}
+.stree button i svg{width:22px;height:22px;display:block}
+.stree button .rl{display:none}
+.stree button b{font-family:var(--font-mono);font-size:10.5px;font-weight:500;line-height:1.1;color:var(--dim);max-width:66px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.stree button b:empty{display:none}
 .stree button b.warn{color:var(--amber)} .stree button b.bad{color:var(--red)} .stree button b.ok{color:var(--green)}
-.stree button:hover{color:var(--txt);background:rgba(255,255,255,.03)}
-.stree button.on{background:var(--tint-cyan);color:var(--cyan)}
+.stree button:hover{color:var(--txt);background:rgba(255,255,255,.04)}
+.stree button.on{background:var(--tint-cyan);color:var(--cyan);box-shadow:inset 3px 0 0 var(--cyan)}
+.stree button.on b{color:var(--cyan)}
 .stree button:focus-visible{outline:2px solid var(--cyan)}
-.stree button.sub{padding-left:20px;font-size:12.5px}
-.stree .t-q{width:100%;box-sizing:border-box;margin-bottom:4px;background:var(--panel2);border:1px solid var(--line);border-radius:7px;padding:7px 9px;color:var(--txt);font:inherit;font-size:12.5px}
-.smain{min-width:0;display:flex;flex-direction:column;gap:20px}
+.stree button::after{content:attr(data-tip);position:absolute;left:calc(100% + 14px);top:50%;transform:translate(-4px,-50%);white-space:nowrap;z-index:40;
+  padding:7px 11px;border-radius:8px;background:var(--panel2);border:1px solid var(--line);color:var(--txt);font-family:var(--font-body);font-size:13px;font-weight:500;
+  box-shadow:0 10px 28px rgba(0,0,0,.45);opacity:0;pointer-events:none;transition:opacity .12s,transform .12s}
+.stree button:hover::after,.stree button:focus-visible::after{opacity:1;transform:translate(0,-50%)}
+@media (prefers-reduced-motion:reduce){ .stree button::after{transition:none} }
+.stree .t-sep{border:0;border-top:1px solid var(--line);margin:5px 8px;width:auto}
+.smain{min-width:0;display:flex;flex-direction:column;gap:24px}
 .smain>*{margin-top:0!important}
 .smain>.phero{margin-bottom:0}
-.sp-h{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap}
-.sp-h h2{margin:0;font-family:var(--font-display);font-size:20px;letter-spacing:.06em;text-transform:uppercase;color:var(--txt)}
-.sp-h>span{font-size:13px;color:var(--muted)}
+.sp-h{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+.sp-h>i{display:grid;place-items:center;width:44px;height:44px;border-radius:12px;background:var(--tint-cyan);color:var(--cyan);flex:none}
+.sp-h>i svg{width:24px;height:24px;display:block}
+.sp-t{display:flex;flex-direction:column;gap:3px;min-width:0}
+.sp-h h2{margin:0;font-family:var(--font-display);font-size:24px;font-weight:600;letter-spacing:.01em;color:var(--txt);line-height:1.15}
+.sp-h .sp-t>span{font-size:14px;color:var(--muted)}
 /* Stability: the live watcher as one line on every page */
 .lstrip>.card{padding:10px 14px;margin:0}
 .lstrip #watchBody{display:flex;align-items:center;gap:10px 16px;flex-wrap:wrap}
@@ -8319,8 +8330,11 @@ nav a::after{background:var(--menu-bg);border-color:var(--glass-line);box-shadow
 @media(max-width:900px){
   .sapp{grid-template-columns:1fr}
   .stree{position:static;flex-direction:row;overflow-x:auto;gap:4px;padding:6px}
-  .stree .t-h,.stree .t-q{display:none}
-  .stree button,.stree button.sub{padding:7px 10px;flex:none}
+  .stree button{flex:none;flex-direction:row;min-height:0;padding:8px 12px;gap:8px}
+  .stree button i,.stree button i svg{width:18px;height:18px}
+  .stree button .rl{display:inline;font-size:13px;white-space:nowrap}
+  .stree button::after,.stree .t-sep{display:none}
+  .stree button.on{box-shadow:inset 0 -2px 0 var(--cyan)}
 }
 .ac[data-bpplan]:hover{border-color:var(--cyan)}
 .alb{display:grid;grid-template-columns:repeat(auto-fill,minmax(168px,1fr));gap:10px}
@@ -8423,7 +8437,7 @@ nav a::after{background:var(--menu-bg);border-color:var(--glass-line);box-shadow
         <div class="pinwrap" id="pinWrap" style="display:none">
           <button class="iconbtn" id="pinBtn" type="button" title="Pinned blueprints" aria-label="Pinned blueprints" aria-haspopup="true" aria-expanded="false">★<span class="bbadge pbadge" id="pinBadge"></span></button>
           <div class="bellmenu pinmenu" id="pinMenu">
-            <div class="bm-head"><span>Pinned blueprints</span><button class="bm-clear" id="pinGo" type="button">Open Blueprints</button></div>
+            <div class="bm-head"><span>Pinned Blueprints</span><button class="bm-clear" id="pinGo" type="button">Open Blueprints</button></div>
             <div class="bm-list" id="pinList"></div>
           </div>
         </div>
@@ -8457,7 +8471,7 @@ nav a::after{background:var(--menu-bg);border-color:var(--glass-line);box-shadow
 
 <div class="modal-back" id="refreshModal">
   <div class="modal">
-    <div class="mh">Refresh data</div>
+    <div class="mh">Refresh Data</div>
     <div class="mb">Pull in your latest sessions. Old log backups never change once Star Citizen has rotated them, so a quick refresh only needs to read what's new.</div>
     <div class="datarow">
       <div class="dcard">
@@ -8476,7 +8490,7 @@ nav a::after{background:var(--menu-bg);border-color:var(--glass-line);box-shadow
 </div>
 <div class="modal-back" id="offlineModal">
   <div class="modal">
-    <div class="mh">CSR isn&rsquo;t running</div>
+    <div class="mh">CSR Isn&rsquo;t Running</div>
     <div class="mb">This page is still showing your last saved dashboard, but the CSR app that scans your logs has been closed — so it can&rsquo;t refresh right now.<br><br>
       Start <b>CSR</b> again, then use Refresh. Everything already on this page stays readable in the meantime.</div>
     <div class="mactions"><button class="mbtn go" id="offClose">Back to dashboard</button></div>
@@ -8489,7 +8503,7 @@ nav a::after{background:var(--menu-bg);border-color:var(--glass-line);box-shadow
 </div>
 <div class="modal-back" id="dataModal">
   <div class="modal data">
-    <div class="mh">Backup &amp; transfer</div>
+    <div class="mh">Backup &amp; Transfer</div>
     <div class="mb">CSR keeps a running <b>archive</b> of every session it has scanned (<span id="dmCount">—</span> on file), so your career survives even if Star Citizen deletes old logs.</div>
     <div class="datarow three">
       <div class="dcard">
@@ -8733,9 +8747,23 @@ const ICON = {
   bell:_SVG('<path d="M18 16.4H6l1.5-2.3V10a4.5 4.5 0 019 0v4.1z"/><path d="M10.2 19a1.9 1.9 0 003.6 0"/><path d="M12 5.5V3.6"/>'),
   star:_SVG('<path d="M12 3.4l2.6 5.7 6.2.7-4.6 4.2 1.3 6.1L12 17l-5.5 3.1 1.3-6.1L3.2 9.8l6.2-.7z"/>'),
   starOn:_SVG('<path d="M12 3.4l2.6 5.7 6.2.7-4.6 4.2 1.3 6.1L12 17l-5.5 3.1 1.3-6.1L3.2 9.8l6.2-.7z" fill="currentColor"/>'),
-  blueprints:_SVG('<rect x="3.5" y="3.5" width="17" height="17" rx="1.8"/><path d="M3.5 9h17"/><path d="M9 9v11.5"/><path d="M12.5 13h5M12.5 16.5h3.5"/>')
+  blueprints:_SVG('<rect x="3.5" y="3.5" width="17" height="17" rx="1.8"/><path d="M3.5 9h17"/><path d="M9 9v11.5"/><path d="M12.5 13h5M12.5 16.5h3.5"/>'),
+  search:_SVG('<circle cx="10.5" cy="10.5" r="6.2"/><path d="M15.2 15.2l5.3 5.3"/>'),
+  helmet:_SVG('<path d="M4 15.5a8 8 0 0116 0V19H4z"/><path d="M7.5 13.2h9l-1 3.3h-7z"/>'),
+  mag:_SVG('<rect x="8" y="2.8" width="8" height="18.4" rx="1.6"/><path d="M8 8.4h8M8 13.6h8"/>')
 };
 function icon(name){ return ICON[name]||''; }
+// one item of a page's side rail: an icon with its count under it, the name as a tooltip.
+// On a phone the rail turns into a row and shows the name.
+function railItem(attrs, ic, label, cnt, on, cls, id){
+  const c=cnt==null?'':String(cnt);
+  return `<button type="button" class="${on?'on':''}" ${attrs} data-tip="${esc(label)}${c?' \u00b7 '+esc(c):''}" aria-label="${esc(label)}${c?', '+esc(c):''}"${on?' aria-current="page"':''}>`+
+    `<i>${icon(ic)}</i><span class="rl">${esc(label)}</span><b class="${cls||''}"${id?` id="${id}"`:''}>${esc(c)}</b></button>`;
+}
+// a page's title inside one of those apps: icon, name, one line under it
+function pageHead(ic, title, sub, extra){
+  return `<div class="sp-h">${ic?`<i>${icon(ic)}</i>`:''}<div class="sp-t"><h2>${esc(title)}</h2>${sub?`<span>${sub}</span>`:''}</div>${extra||''}</div>`;
+}
 
 // ---- external link helpers ----
 const RSI='https://robertsspaceindustries.com';
@@ -8862,9 +8890,9 @@ function showcaseHTML(){
   const guns  = sc.guns.map((g,i)=>showCard(g,i+1,'gun')).join('')  || '<div class="empty">No weapons drawn in this scope.</div>';
   const s0 = sc.ships[0]||{};
   const how = s0.rank==='time' ? 'most time aboard'+(s0.since?' since '+s0.since:'') : 'most-flown';
-  return `<div class="row-title">Signature ships <span class="tag">· ${how} · ${scope} · art from RSI</span></div>`+
+  return `<div class="row-title">Signature Ships <span class="tag">· ${how} · ${scope} · art from RSI</span></div>`+
     `<div class="showcase">${ships}</div>`+
-    `<div class="row-title">Signature guns <span class="tag">· most-drawn · ${scope}</span></div>`+
+    `<div class="row-title">Signature Guns <span class="tag">· most-drawn · ${scope}</span></div>`+
     `<div class="showcase">${guns}</div>`;
 }
 function profileHTML(){
@@ -9101,7 +9129,7 @@ function pbars(el, items, opts={}){
 
 function secOverview(v){
   const reset = current!=='all' ? `<button class="chart-reset" id="patchReset">↩ View career</button>` : '';
-  const chartCard = `<section class="card ov-chart"><h3><span>Playtime by patch <span class="u">— click a bar to filter</span></span>${reset}</h3>`+
+  const chartCard = `<section class="card ov-chart"><h3><span>Playtime by Patch <span class="u">— click a bar to filter</span></span>${reset}</h3>`+
     `<div id="patchChart"></div></section>`;
   $('#content').innerHTML = heroHTML(v)+
     `<div class="row-title">Snapshot <span class="tag">${scopeLabel()}</span></div>`+
@@ -9133,7 +9161,7 @@ function placesHTML(v){
       [icon('cargo'), fmt(out), 'Outposts & facilities', `${fmt(k.Outpost||0)} outposts · ${fmt(k.Facility||0)} facilities`],
       [icon('space'), fmt(st), 'Stations & rest stops', `${fmt(k.Station||0)} stations · ${fmt(k['Rest stop']||0)} rest stops`],
     ])+
-    barsCard('Most visited places','sessions · top 15','placeBars')+
+    barsCard('Most Visited Places','sessions · top 15','placeBars')+
     noteFold(`Logged when you land or dock, and when an inventory or shop screen opens. Flybys don’t show.`);
 }
 function secFlight(v){
@@ -9141,7 +9169,7 @@ function secFlight(v){
   const jps = (v.qt_known!==false && v.sessions) ? (v.qt/v.sessions).toFixed(1) : null;
   const jph = (v.qt_known!==false && v.hours>0) ? (v.qt/v.hours).toFixed(1) : null;
   $('#content').innerHTML=metaLine(v)+
-    group(1,'ship','Ships &amp; hulls','What you flew — hulls, sizes and roles',
+    group(1,'ship','Ships &amp; Hulls','What you flew — hulls, sizes and roles',
       kpiRow([
         [icon('ship'), v.ships_unique, 'Distinct ships', `types piloted`],
         [icon('flight'), fmt(v.ships_flown_total), 'Ship boardings', `sessions × ship`],
@@ -9149,12 +9177,12 @@ function secFlight(v){
         aboardTile(v),
         fleetTile(v.fleet_max),
       ])+
-      cardHTML('Ship size mix','sessions by hull size','sizeChart')+
+      cardHTML('Ship Size Mix','sessions by hull size','sizeChart')+
       `<div class="grid2" style="margin-top:16px">`+
-      barsCard('Most-flown ships', v.ships_rank==='time' ? `hours aboard${v.ships_since?' since '+v.ships_since:''} · sessions · take-offs · seat · first / last` : 'sessions flown · take-offs · aboard · seat · first / last','shipBars')+
-      barsCard('Roles flown','sessions by ship role','roleBars')+`</div>`
+      barsCard('Most-Flown Ships', v.ships_rank==='time' ? `hours aboard${v.ships_since?' since '+v.ships_since:''} · sessions · take-offs · seat · first / last` : 'sessions flown · take-offs · aboard · seat · first / last','shipBars')+
+      barsCard('Roles Flown','sessions by ship role','roleBars')+`</div>`
     )+
-    group(2,'satellite','Travel &amp; navigation','Where you went — quantum travel and the systems you visited',
+    group(2,'satellite','Travel &amp; Navigation','Where you went — quantum travel and the systems you visited',
       kpiRow([
         qtTile(v),
         [icon('planet'), v.systems.length, 'Systems visited', `of 3 in the 'verse`],
@@ -9163,12 +9191,12 @@ function secFlight(v){
         (jph!==null ? [icon('time'), jph, 'Jumps / hour', `travel intensity`]
                     : [icon('time'), 'N/A', 'Jumps / hour', `no jump data`, 'na']),
       ])+
-      barsCard('Systems visited','sessions with location activity there','sysBars')+
+      barsCard('Systems Visited','sessions with location activity there','sysBars')+
       noteFold(
         `Systems come from location names in the log. Fuel and distance aren't logged.`,
         `Stanton, Pyro and Nyx are the only live systems; a session counts for one if any location there shows up. Refuelling is a server-side transaction and the client only logs an error with no amount, so fuel used and refuel spend can't be shown. Fuel pods bought at a shop count under Economy — that's a purchase, not a refuel.`)
     )+
-    group(3,'planet','Where you\u2019ve been','Jurisdictions, armistice zones and hangar requests from the HUD, plus the places you landed',
+    group(3,'planet','Where You\u2019ve Been','Jurisdictions, armistice zones and hangar requests from the HUD, plus the places you landed',
       (v.hud_known ? kpiRow([
         [icon('hall'), fmt(v.hangars||0), 'Hangars requested', 'ASOP hangar calls completed'],
         [icon('planet'), fmt(v.lz_visits||0), 'Landing-zone visits', 'armistice-zone stays, 10 min apart or more'],
@@ -9180,8 +9208,8 @@ function secFlight(v){
         (v.party&&v.party.hours ? [icon('orgs'), v.party.hours+'h', 'In a party', `${fmt(v.party.accepts)} invites accepted · ${fmt(v.party.sessions)} sessions`]
                                 : [icon('orgs'), '0', 'In a party', `no invites accepted (time as host isn’t logged)`, 'na']),
         [icon('warning'), fmt(v.crimestat||0), 'CrimeStat rises', `times your rating went up`],
-      ])+`<div class="grid2">`+barsCard('Jurisdictions entered','sessions · total entries','jurisBars')+
-      barsCard('Pilots you flew with','sessions · jumps under their hands','crewBars')+`</div>`
+      ])+`<div class="grid2">`+barsCard('Jurisdictions Entered','sessions · total entries','jurisBars')+
+      barsCard('Pilots You Flew With','sessions · jumps under their hands','crewBars')+`</div>`
       : `<div class="card"><div class="empty">The HUD notices these come from are only in the log from patch 4.5 onward.</div></div>`)+
       placesHTML(v)+
       noteFold(
@@ -9234,8 +9262,8 @@ function shipKillsHTML(v){
       (k.per10h!=null ? [icon('time'), fmt(k.per10h), 'Per 10 h', `over ${fmt(k.hours)} h logged`]
                       : [icon('time'), 'N/A', 'Per 10 h', `under 1 h logged`, 'na']),
     ])+
-    barsCard('Ships you destroyed','top 10 by name','shipKillBars')+
-    (lost ? `<div class="card" style="margin-top:16px"><h3>Ships you lost <span class="u">— latest ${fmt((k.lost||[]).length)}${k.lost_n>k.lost.length?' of '+fmt(k.lost_n):''}, newest first</span></h3>${lost}</div>` : '')+
+    barsCard('Ships You Destroyed','top 10 by name','shipKillBars')+
+    (lost ? `<div class="card" style="margin-top:16px"><h3>Ships You Lost <span class="u">— latest ${fmt((k.lost||[]).length)}${k.lost_n>k.lost.length?' of '+fmt(k.lost_n):''}, newest first</span></h3>${lost}</div>` : '')+
     `</div>`;
 }
 function secCombat(v){
@@ -9249,19 +9277,19 @@ function secCombat(v){
     `Loadout is ranked by how often you drew each weapon. Your old kills are under `+
     `<a class="clink" onclick="gotoSec('legacy')">Legacy Combat</a> →.`);
   $('#content').innerHTML=metaLine(v)+info+
-    group(1,'ship','Ship combat','Ship kills and losses from the client log',
+    group(1,'ship','Ship Combat','Ship kills and losses from the client log',
       kpiRow([
         [icon('deaths'), v.deaths, 'Ship deaths', `ships you lost`],
         [icon('kills'), dc.collision, 'By collision', `flew into something`],
         [icon('damage'), dc.other, 'Destroyed / other', `shot down, hazards…`],
       ])+
-      cardHTML('How your ship was lost','ship-destruction deaths only','causeChart')+
-      `<div style="margin-top:16px">`+barsCard('Ships you died in most','deaths per ship','deathShips')+`</div>`+
+      cardHTML('How Your Ship Was Lost','ship-destruction deaths only','causeChart')+
+      `<div style="margin-top:16px">`+barsCard('Ships You Died in Most','deaths per ship','deathShips')+`</div>`+
       shipKillsHTML(v)
     )+
-    group(2,'deaths','Gear lost on death','What was on your body when you died, on foot or in a ship',
+    group(2,'deaths','Gear Lost on Death','What was on your body when you died, on foot or in a ship',
       gearLostHTML(v))+
-    group(3,'gun','FPS combat','Your on-foot loadout — ranked by how often you drew each weapon',
+    group(3,'gun','FPS Combat','Your on-foot loadout — ranked by how often you drew each weapon',
       kpiRow([
         [icon('gun'), v.guns_distinct||guns.length, 'Guns carried', `distinct weapons`],
         (v.reloads_total
@@ -9270,22 +9298,22 @@ function secCombat(v){
         [icon('tools'), v.tools_distinct||tools.length, 'Tools carried', `distinct utility`],
       ])+
       `<div class="grid2">`+
-      barsCard('Favorite guns','times drawn','gunBars')+
-      barsCard('Tools & utility','times drawn','toolBars')+`</div>`
+      barsCard('Favorite Guns','times drawn','gunBars')+
+      barsCard('Tools & Utility','times drawn','toolBars')+`</div>`
     )+
-    group(4,'medical','Injuries &amp; treatment','What hurt you, and where you had it fixed',
+    group(4,'medical','Injuries &amp; Treatment','What hurt you, and where you had it fixed',
       ((v.injuries_total||(v.medbed&&v.medbed.n)) ? kpiRow([
         [icon('warning'), fmt(v.injuries_total||0), 'Injuries', `HUD warnings, 4.4 onward`],
         [icon('damage'), fmt(v.injuries_severe||0), 'Severe or worse', `needed a proper bed`],
         [icon('medical'), fmt(v.medbed.n||0), 'Med-bed treatments', `surgeries that went through`],
         [icon('ship'), fmt(v.medbed.ship||0), 'In a ship’s medbay', `the rest in a hospital`],
       ])+`<div class="grid2">`+
-      barsCard('Where it hurt','injury warnings by body part','injBars')+
-      barsCard('What the bed fixed','body parts treated','medBars')+`</div>`
+      barsCard('Where It Hurt','injury warnings by body part','injBars')+
+      barsCard('What the Bed Fixed','body parts treated','medBars')+`</div>`
       : `<div class="card"><div class="empty">No injuries or treatments in this scope. Injury warnings are in the log from 4.4; med-bed surgeries from every patch.</div></div>`)+
       airHTML(v)
     )+
-    group(5,'cargo','Looting &amp; inventory','What you hauled — client-side events, so this spans every patch',
+    group(5,'cargo','Looting &amp; Inventory','What you hauled — client-side events, so this spans every patch',
       kpiRow([
         [icon('cargo'), fmt(v.containers_looted||0), 'Containers looted', lootSub],
         [icon('transfer'), fmt(v.transfers||0), 'Items transferred', `moved between inventories`],
@@ -9324,8 +9352,8 @@ function gearLostHTML(v){
       `trace an on-foot death leaves, so this counts deaths the ship-death figure above can't see. `+
       `Your body itself (head, hair, mobiGlas) is left out.`)+
     `<div class="grid2">`+
-    cardHTML('What you lose','items by kind','glCats')+
-    barsCard('Lost most often','items, across every death','glTop')+`</div>`;
+    cardHTML('What You Lose','items by kind','glCats')+
+    barsCard('Lost Most Often','items, across every death','glTop')+`</div>`;
 }
 
 function renderCombat(v, L, o){
@@ -9338,7 +9366,7 @@ function renderCombat(v, L, o){
   }
   const sh=L.ship, fp=L.fps;
   $('#content').innerHTML=head+metaLine(v)+
-    group(1,'ship','Ship combat','Kills and losses while flying — from the era the log recorded them',
+    group(1,'ship','Ship Combat','Kills and losses while flying — from the era the log recorded them',
       kpiRow([
         [icon('target'), fmt(sh.kill_pvp), 'PvP ship kills', `players downed`],
         [icon('deaths'), fmt(sh.death_pvp), 'PvP ship deaths', `killed by players`],
@@ -9348,10 +9376,10 @@ function renderCombat(v, L, o){
         [icon('kills'), fmt(L.ram_kills), 'Ram kills', `by collision`],
       ])+
       `<div class="grid2">`+
-      barsCard('Deadliest ship weapons','kills dealt','lcWpnS')+
-      barsCard('Ships you rammed with','ram / collision kills','lcRam')+`</div>`
+      barsCard('Deadliest Ship Weapons','kills dealt','lcWpnS')+
+      barsCard('Ships You Rammed With','ram / collision kills','lcRam')+`</div>`
     )+
-    group(2,'gun','FPS combat','Kills and losses on foot',
+    group(2,'gun','FPS Combat','Kills and losses on foot',
       kpiRow([
         [icon('target'), fmt(fp.kill_pvp), 'PvP FPS kills', `players downed`],
         [icon('deaths'), fmt(fp.death_pvp), 'PvP FPS deaths', `killed by players`],
@@ -9359,12 +9387,12 @@ function renderCombat(v, L, o){
         [icon('npc'), fmt(fp.kill_pve), 'PvE FPS kills', `NPCs on foot`],
         [icon('warning'), fmt(L.suicide), 'Suicides', `self-inflicted`],
       ])+
-      barsCard('Deadliest FPS weapons','kills dealt','lcWpnF')
+      barsCard('Deadliest FPS Weapons','kills dealt','lcWpnF')
     )+
     group(3,'members','Rivals',o.rivalsTag,
       `<div class="grid2">`+
-      barsCard('Players you killed most','PvP kills','lcKilled')+
-      barsCard('Players who killed you most','PvP deaths','lcBy')+`</div>`
+      barsCard('Players You Killed Most','PvP kills','lcKilled')+
+      barsCard('Players Who Killed You Most','PvP deaths','lcBy')+`</div>`
     )+
     `<div class="note">${o.note}</div>`;
   hbars($('#lcWpnS'), toItems(L.top_weapons_ship, '#ff9147', true));
@@ -9389,7 +9417,7 @@ function secLegacy(v){
     `Real kills, deaths and K/D — but only from 4.3 and earlier; CIG stopped logging combat client-side in 4.4, which is why `+
     `<a class="clink" onclick="gotoSec('combat')">Combat</a> can only show ship deaths. The toggle keeps the `+
     `<b class="ct">Persistent Universe</b> apart from <b class="ct">Arena Commander</b>, where scores get lopsided by design.`);
-  const prefix=`<div class="row-title">Legacy combat <span class="tag">real PvP / PvE — pre-4.4 patches (4.3 &amp; below)</span></div>`+
+  const prefix=`<div class="row-title">Legacy Combat <span class="tag">real PvP / PvE — pre-4.4 patches (4.3 &amp; below)</span></div>`+
     (anyData ? info : '')+
     `<div class="vtoggle">${pill('pu',icon('space')+' Persistent Universe',pu,puHas)}${pill('ac',icon('combat')+' Arena Commander',ac,acHas)}</div>`;
   const wire=()=>document.querySelectorAll('#content .vpill').forEach(b=>b.onclick=()=>{
@@ -9417,7 +9445,7 @@ function secEconomy(v){
   ]);
   // Always rendered, even at zero. Hiding it when you bought no bulk cargo made the
   // page change shape between patches, which reads as missing data rather than "none".
-  const commRow = group(2,'cargo','Cargo &amp; commodities','Bulk trade goods, split from ordinary item purchases',
+  const commRow = group(2,'cargo','Cargo &amp; Commodities','Bulk trade goods, split from ordinary item purchases',
     kpiRow([
       (comm ? [icon('cargo'), auec(comm), 'Spent on cargo', `${fmt(v.commodity_buys||0)} commodity buys`]
             : [icon('cargo'), '0', 'Spent on cargo', `no bulk cargo bought in this scope`, 'na']),
@@ -9425,8 +9453,8 @@ function secEconomy(v){
     ]));
   $('#content').innerHTML=metaLine(v)+
     group(1,'spend','Spending','Where your aUEC went — every shop purchase your client sent',
-      K+`<div class="grid2">`+barsCard('Top items bought','ranked by aUEC spent · qty shown','itemBars')+
-      barsCard('What you buy','purchases by item category','catBars')+`</div>`)+commRow+
+      K+`<div class="grid2">`+barsCard('Top Items Bought','ranked by aUEC spent · qty shown','itemBars')+
+      barsCard('What You Buy','purchases by item category','catBars')+`</div>`)+commRow+
     noteFold(
       `Spend is real — the log carries the price of every purchase. Balance, earnings and sales aren't logged.`,
       `Purchases are grouped by item category rather than store; the shop codes in the log aren't reliable brand names. Fleet size is your ASOP list read at a terminal, so it includes ships bought with aUEC as well as pledges.`);
@@ -9510,9 +9538,10 @@ let bpSetTab='partial', bpSetAll=false, bpFamAll=false;
 let bpLead=null;
 const BPB={comp:{tab:'all',all:false}, fps:{tab:'all',all:false}, gear:{tab:'all',all:false}, arm:{tab:'all',all:false}};
 // the collection's five pages and the catalogue categories on each
-const BP_GROUPS=[['armour','Armour',['Armor','Flight suits']], ['comp','Ship components',['Ship components']],
-  ['sw','Ship weapons',['Ship weapons']], ['fps','FPS weapons',['FPS weapons']],
-  ['gear','Magazines & gear',['Magazines & batteries','Mining & salvage','Clothing','Flair & decor']]];
+const BP_GROUPS=[['armour','Armour',['Armor','Flight suits']], ['comp','Ship Components',['Ship components']],
+  ['sw','Ship Weapons',['Ship weapons']], ['fps','FPS Weapons',['FPS weapons']],
+  ['gear','Magazines & Gear',['Magazines & batteries','Mining & salvage','Clothing','Flair & decor']]];
+const BP_GROUP_IC={armour:'helmet', comp:'system', sw:'target', fps:'gun', gear:'mag'};
 function bpGroupOf(cat){ const g=BP_GROUPS.find(x=>x[2].includes(cat)); return g?g[0]:'gear'; }
 // which Blueprints page is open, kept in this browser
 const BPV=(()=>{ let o={}; try{ o=JSON.parse(localStorage.getItem('csr_bp_view')||'{}')||{}; }catch(e){}
@@ -9665,7 +9694,7 @@ function bpHitRow(row){
 }
 let bpFindQ='';
 function bpFindHTML(){
-  return `<h3>Find a blueprint <span class="u">\u2014 do you have it, and where it drops</span></h3>`+
+  return `<h3>Find a Blueprint <span class="u">\u2014 do you have it, and where it drops</span></h3>`+
     `<div class="bpbar"><input class="bpq" id="bpFindQ" type="search" placeholder="Name, maker, class or grade\u2026" value="${esc(bpFindQ)}" spellcheck="false" autocomplete="off"></div>`+
     `<div id="bpFindOut">${bpFindList()}</div>`;
 }
@@ -9728,7 +9757,7 @@ function bpBoardHTML(catalog){
     return `<div class="bset"><span class="bsn bxa">${artBox('bp', s.name, 0, 'bxth')}<span>${esc(s.name)}${sub?`<span class="bpk">${esc(sub)}</span>`:''}</span></span>`+
       `<span class="bsl">${sq}</span><span class="bsc">${s.o}<span class="u">/${s.t}</span></span>${tail}</div>`; };
   const more=list.length>LIM?`<button class="foot-link" data-bpsa="1">${bpSetAll?'Show fewer':`Show all ${fmt(list.length)}`}</button>`:'';
-  const setsCard=`<div class="card"><h3>Armour sets <span class="u">— ${fmt(B.complete.length)} complete · ${fmt(B.partial.length)} started · ${fmt(B.untouched.length)} untouched</span></h3>`+
+  const setsCard=`<div class="card"><h3>Armour Sets <span class="u">— ${fmt(B.complete.length)} complete · ${fmt(B.partial.length)} started · ${fmt(B.untouched.length)} untouched</span></h3>`+
     `<div class="bpbar">${tabs}</div><div class="bsets">${shown.map(setRow).join('')||'<div class="empty">Nothing here.</div>'}${more}</div></div>`;
   // --- ship-weapon size ladders
   const fams=(catalog.fams||[]).map(f=>{ const sz=f[2].map(p=>({s:p[0],key:p[1],n:p[2],on:has(p[1],p[2])}));
@@ -9763,7 +9792,7 @@ function bpBoardHTML(catalog){
   const ORDER={partial:0, complete:1, untouched:2};
   const oneRs=(byCatAll['Ship weapons']||[]).filter(r=>singles.some(f=>f.sz.some(p=>p.key===r[0])));
   const oneRow=oneRs.length?row('One-size weapons','one size only',oneRs,oneRs.map(r=>sq(r,'')).join('')).html:'';
-  const ladCard=`<div class="card"><h3>Ship weapons by size <span class="u">— one family per row, S1 to S${maxS}</span></h3>`+
+  const ladCard=`<div class="card"><h3>Ship Weapons by Size <span class="u">— one family per row, S1 to S${maxS}</span></h3>`+
     `<div class="bsets">${started.map(lad).join('')||'<div class="empty">No ladder started yet.</div>'}${restH}${oneRow}</div></div>`;
   const board=(id,title,sub,rows,opt={})=>{ const B=BPB[id];
     if(B.tab!=='all' && !rows.some(x=>x.st===B.tab)) B.tab='all';
@@ -9795,14 +9824,14 @@ function bpBoardHTML(catalog){
     rs.filter(r=>(meta(r)[0]||'')===c).sort((a,b)=>(meta(a)[1]||'Z').localeCompare(meta(b)[1]||'Z')).map(r=>sq(r, meta(r)[1]||'')).join('')+`</span>`).join('')));
   const compHead=`<div class="bset chead"><span class="bsn"></span><span class="bsl">`+cols.map(c=>`<span class="ccol" style="width:${colW(c)}px" title="${c||'No class'}">${CW[c]>4?(c||'Other'):BP_CLS_SHORT[c]}</span>`).join('')+
     `</span><span class="bsc"></span><span class="bsgo dim">letter = grade</span></div>`;
-  const compCard=board('comp','Ship components', `${fmt(cnt('Ship components').o)} of ${fmt(comps.length)} \u00b7 every component by size, class and grade`, compRows, {one:true, head:compHead});
+  const compCard=board('comp','Ship Components', `${fmt(cnt('Ship components').o)} of ${fmt(comps.length)} \u00b7 every component by size, class and grade`, compRows, {one:true, head:compHead});
   // FPS weapons: a row per gun, the base gun first (\u25c6), then its variants
   const fam={}; (byCat['FPS weapons']||[]).forEach(r=>{ const f=r[1].replace(/\s*["\u201c][^"\u201d]*["\u201d]\s*/g,' ').replace(/\s+/g,' ').trim(); (fam[f]=fam[f]||[]).push(r); });
   const fpsRows=Object.entries(fam).map(([f,rs])=>{ rs.sort((a,b)=>(a[1].length-b[1].length)||a[1].localeCompare(b[1]));
     return row(f, rs[0][4], rs, rs.map((r,i)=>sq(r, i?'':'\u25c6')).join('')); })
     .sort((a,b)=>ORDER[a.st]-ORDER[b.st]||b.o-a.o);
   if(BPB.fps.tab==='all' && !BPB.fps.set){ BPB.fps.tab=fpsRows.some(x=>x.st==='partial')?'partial':'all'; BPB.fps.set=1; }
-  const fpsCard=board('fps','FPS weapons', `${fmt(cnt('FPS weapons').o)} of ${fmt(cnt('FPS weapons').t)} \u00b7 a row per gun, \u25c6 the base gun, then its variants`, fpsRows, {lim:16});
+  const fpsCard=board('fps','FPS Weapons', `${fmt(cnt('FPS weapons').o)} of ${fmt(cnt('FPS weapons').t)} \u00b7 a row per gun, \u25c6 the base gun, then its variants`, fpsRows, {lim:16, one:true});
   // everything else, so every blueprint has a row: magazines by maker, mining by maker, the
   // one-size ship weapons, armour and flight-suit pieces outside a set, clothing, decor
   const inSet=new Set((catalog.sets||[]).flatMap(st=>st[3].map(p=>p[1])));
@@ -9815,8 +9844,8 @@ function bpBoardHTML(catalog){
   by((byCat['Flight suits']||[]).filter(r=>!inSet.has(r[0])), r=>r[4]||'Flight suit').forEach(([k,rs])=>add(k, 'Flight suit, no set', rs, arm));
   ['Clothing','Flair & decor'].forEach(c=>add(c, '', byCat[c]||[]));
   Object.keys(byCat).filter(c=>!BP_CATS.includes(c)).forEach(c=>add(c, '', byCat[c]));
-  const gearCard=board('gear','Magazines, mining &amp; more', 'magazines, batteries, mining, clothing and decor', gear, {lim:24});
-  const armCard=arm.length?board('arm','Pieces outside a set', 'armour and flight-suit pieces that aren\u2019t part of a set', arm, {lim:14}):'';
+  const gearCard=board('gear','Magazines, Mining &amp; More', 'magazines, batteries, mining, clothing and decor', gear, {lim:24});
+  const armCard=arm.length?board('arm','Pieces Outside a Set', 'armour and flight-suit pieces that aren\u2019t part of a set', arm, {lim:14}):'';
   return {totals, sets:setsCard, arm:armCard, comp:compCard, lad:ladCard, fps:fpsCard, gear:gearCard};
 }
 // the album: one category at a time, every blueprint a card with its picture
@@ -9901,8 +9930,8 @@ function secBlueprints(v){
   const pills=`<button class="vpill sm ${bpCat==='all'?'on':''}" data-bpc="all">All <span class="vc">${fmt(base.length)}</span></button>`+
     cats.map(([c,n])=>`<button class="vpill sm ${bpCat===c?'on':''}" data-bpc="${esc(c)}">${esc(c)} <span class="vc">${fmt(n)}</span></button>`).join('');
   const bar=`<div class="bpbar">${modes}${pills}<input class="bpq" id="bpQ" type="search" placeholder="Search blueprints…" value="${esc(bpQ)}" spellcheck="false" autocomplete="off"></div>`;
-  const listTitle = bpMode==='missing' ? `Not yet in your library <span class="u">— every catalogue blueprint you haven't been seen to receive</span>`
-    : current==='all' ? `Your library <span class="u">— every blueprint you've received, newest first</span>`
+  const listTitle = bpMode==='missing' ? `Not Yet in Your Library <span class="u">— every catalogue blueprint you haven't been seen to receive</span>`
+    : current==='all' ? `Your Library <span class="u">— every blueprint you've received, newest first</span>`
                       : `Received in ${esc(pLabel(current))} <span class="u">— newest first</span>`;
   // ---- one page at a time, picked from the menu down the left
   const P=catalog?bpBoardHTML(catalog):null;
@@ -9913,22 +9942,20 @@ function secBlueprints(v){
   const grpCats=g=>g[0]==='gear'?g[2].concat(Object.keys(byCat).filter(c=>!BP_CATS.includes(c))):g[2];
   const gcount=g=>{ const rs=grpCats(g).flatMap(c=>byCat[c]||[]); return [rs.filter(on).length, rs.length]; };
   const G=BP_GROUPS.find(x=>x[0]===BPV.grp)||BP_GROUPS[1];
-  const it=(page,label,cnt,grp,id)=>{ const act=BPV.page===page&&(!grp||BPV.grp===grp);
-    return `<button type="button" class="${grp?'sub ':''}${act?'on':''}" data-bpv="${page}"${grp?` data-bpvg="${grp}"`:''}${act?' aria-current="page"':''}>`+
-      `<span>${esc(label)}</span><b${id?` id="${id}"`:''}>${cnt}</b></button>`; };
+  const it=(page,ic,label,cnt,grp,id)=>railItem(`data-bpv="${page}"${grp?` data-bpvg="${grp}"`:''}`, ic, label, cnt,
+    BPV.page===page&&(!grp||BPV.grp===grp), '', id);
   const tree=`<nav class="stree" aria-label="Blueprints">`+
-    (catalog?`<input class="t-q" id="bpTreeQ" type="search" placeholder="Find a blueprint\u2026" value="${esc(bpFindQ)}" spellcheck="false" autocomplete="off" aria-label="Find a blueprint">`+
-      `<div class="t-h">Blueprints</div>`+it('overview','Overview','')+it('find','Find','')+
-      it('pinned','Pinned',bpPins().length?fmt(bpPinTodo()):'',null,'bptPin')+
-      `<div class="t-h">Collection</div>`+BP_GROUPS.map(g=>{ const [o,t]=gcount(g); return it('collection',g[1],`${fmt(o)}/${fmt(t)}`,g[0]); }).join(''):'')+
-    `<div class="t-h">More</div>`+(DATA.missions&&catalog?it('standing','Standing',''):'')+
-    it('library','Your library',fmt(owned.length))+it('history','Unlock history','')+`</nav>`;
+    (catalog?it('overview','overview','Overview','')+it('find','search','Find a Blueprint','')+
+      it('pinned','star','Pinned',bpPins().length?fmt(bpPinTodo()):'',null,'bptPin')+`<hr class="t-sep">`+
+      BP_GROUPS.map(g=>{ const [o,t]=gcount(g); return it('collection',BP_GROUP_IC[g[0]],g[1],`${fmt(o)}/${fmt(t)}`,g[0]); }).join('')+`<hr class="t-sep">`:'')+
+    (DATA.missions&&catalog?it('standing','scales','Standing',''):'')+
+    it('library','blueprints','Your Library',fmt(owned.length))+it('history','calendar','Unlock History','')+`</nav>`;
   const listCard=`<div class="card"><h3>${listTitle}</h3>${bar}<div id="bpList">${bpListHTML(v)}</div></div>`;
   const aboutFold=noteFold(
       `Blueprints the game announced to you, counted once each. The log has no ownership list, so this is a minimum.`,
       `Only the Received Blueprint notice is logged. The library itself sits on CIG\u2019s servers. Blueprints from before 4.7, or from another PC whose logs weren\u2019t imported, won\u2019t appear. Language packs (StarStrings, ScCompLangPack) rename items in the notice. CSR matches them back to the real item and keeps your wording as a search alias. <span class="bpx">\u00d72</span> marks a duplicate drop. PTU and Tech Preview run a copy of your account and get their own libraries. Armour sets are read off the game\u2019s item ids (pieces of one set share a variant number), ship-weapon families off the class with the size removed.${catalog?` Missing is measured against the SC-Wiki\u2019s extraction of the game data (${fmt(catalog.n)} blueprints, ${esc(String(catalog.version||'').split('-')[0])}). That includes blueprints you can\u2019t get yet.`:''}`);
   const recent=owned.slice().sort((a,b)=>String(b[3]).localeCompare(String(a[3]))).slice(0,10);
-  const recentCard=`<div class="card"><h3>Latest unlocks <span class="u">\u2014 newest first</span></h3>`+(recent.length?`<div class="tline bprec">`+
+  const recentCard=`<div class="card"><h3>Latest Unlocks <span class="u">\u2014 newest first</span></h3>`+(recent.length?`<div class="tline bprec">`+
     recent.map(b=>`<div class="tev"${b[6]?` data-bpplan="${esc(b[6])}" title="Show every mission that drops it"`:''}><span class="td">${ddmm(b[3])}</span>`+
       `<span class="tw">${esc(b[0])}<span class="bpk">${esc(b[2]||'')}</span></span><span class="tv"><span class="bph">${esc(b[1])}</span></span></div>`).join('')+`</div>`
     :`<div class="empty">No blueprints received in this scope.</div>`)+`</div>`;
@@ -9938,16 +9965,16 @@ function secBlueprints(v){
   else if(BPV.page==='find') body=`<div class="card" id="bpFind">${bpFindHTML()}</div>`;
   else if(BPV.page==='pinned') body=`<div class="card" id="bpPinned">${bpPinnedHTML()}</div>`;
   else if(BPV.page==='collection'){ const [o,t]=gcount(G);
-    body=`<div class="sp-h"><h2>${esc(G[1])}</h2><span>${fmt(o)} of ${fmt(t)} owned</span>`+
-      `<div class="vt" role="group" aria-label="Show as">${[['rows','Rows'],['cards','Cards']].map(([k,l])=>`<button type="button" data-bpvv="${k}" class="${BPV.view===k?'on':''}" aria-pressed="${BPV.view===k}">${l}</button>`).join('')}</div></div>`+
+    body=pageHead(BP_GROUP_IC[G[0]], G[1], `${fmt(o)} of ${fmt(t)} owned`,
+      `<div class="vt" role="group" aria-label="Show as">${[['rows','Rows'],['cards','Cards']].map(([k,l])=>`<button type="button" data-bpvv="${k}" class="${BPV.view===k?'on':''}" aria-pressed="${BPV.view===k}">${l}</button>`).join('')}</div>`)+
       `<div id="bpBoard">${BPV.view==='cards'?`<div class="card bxalb" id="bpAlbum">${bpAlbumHTML(catalog, grpCats(G))}</div>`
         :{armour:P.sets+P.arm, comp:P.comp, sw:P.lad, fps:P.fps, gear:P.gear}[G[0]]}</div>`; }
-  else if(BPV.page==='standing') body=`<div class="sp-h"><h2>Standing</h2><span>where your completed contracts put you with each faction</span></div>`+
-      `<div class="card"><h3>Standing floors <span class="u">\u2014 rep your matched completions alone would have earned</span></h3>${bpFloorsHTML()}</div>`+
+  else if(BPV.page==='standing') body=pageHead('scales','Standing','Where your completed contracts put you with each faction')+
+      `<div class="card"><h3>Standing Floors <span class="u">\u2014 rep your matched completions alone would have earned</span></h3>${bpFloorsHTML()}</div>`+
       noteFold(`A floor, not your standing. The game never writes reputation to the log. Missions CIG has retired, event bonuses and resets are invisible here.`,
         `Each completed contract in your log is matched to the SC-Wiki\u2019s mission list by its class name and credited with that mission\u2019s reputation. Generated hauling contracts are matched by family. Gates and ladders come from the same data (${esc(String(DATA.missions.version||'').split('-')[0])}). If you know your real rank is higher, the plan is at least that good.`);
   else if(BPV.page==='library') body=listCard+aboutFold;
-  else body=`<div class="grid2">`+cardHTML('Received per month','notifications, not distinct blueprints','bpMonths')+
+  else body=`<div class="grid2">`+cardHTML('Received per Month','notifications, not distinct blueprints','bpMonths')+
       cardHTML(catalog?'Progress by category':'By category', catalog?'owned / in the catalogue':'distinct blueprints in this scope','bpCats')+`</div>`;
   $('#content').innerHTML=metaLine(v)+`<div class="sapp">${tree}<div class="smain" id="bpMain">${body}</div></div>`;
   const content=$('#content');
@@ -9959,7 +9986,8 @@ function secBlueprints(v){
       if(e.target.closest('a')) return;            // a wiki link inside a row opens itself
       const nav=e.target.closest('[data-bpv]');
       if(nav && content.contains(nav)){ BPV.page=nav.dataset.bpv; if(nav.dataset.bpvg) BPV.grp=nav.dataset.bpvg; bpSaveView();
-        secBlueprints(view()); buildToc(); scrollToY(0); return; }
+        secBlueprints(view()); buildToc(); scrollToY(0);
+        if(BPV.page==='find'){ const f=$('#bpFindQ'); if(f) f.focus({preventScroll:true}); } return; }
       const vv=e.target.closest('[data-bpvv]');
       if(vv && content.contains(vv)){ BPV.view=vv.dataset.bpvv; bpSaveView(); secBlueprints(view()); return; }
       const b=e.target.closest('[data-bpplan]');
@@ -9976,8 +10004,11 @@ function secBlueprints(v){
   const q=$('#bpQ'); if(q) q.oninput=()=>{ bpQ=q.value; bpPage=0; draw(); };
   wire();
   // the collection redraws on its own; nothing else on the page depends on its tabs
+  // a card titled like the page repeats the page head: drop its title
+  const dedupe=()=>document.querySelectorAll('#bpBoard > .card > h3').forEach(h=>{
+    if(h.firstChild && h.firstChild.textContent.trim().toLowerCase()===G[1].toLowerCase()) h.style.display='none'; });
   const board=()=>{ const el=$('#bpBoard'); if(!el||!catalog) return; const P2=bpBoardHTML(catalog);
-    el.innerHTML={armour:P2.sets+P2.arm, comp:P2.comp, sw:P2.lad, fps:P2.fps, gear:P2.gear}[G[0]]; wireBoard(); };
+    el.innerHTML={armour:P2.sets+P2.arm, comp:P2.comp, sw:P2.lad, fps:P2.fps, gear:P2.gear}[G[0]]; wireBoard(); dedupe(); };
   const wireBoard=()=>{
     document.querySelectorAll('#bpBoard [data-bpst]').forEach(b=>b.onclick=()=>{ bpSetTab=b.dataset.bpst; bpSetAll=false; board(); });
     document.querySelectorAll('#bpBoard [data-bpsa]').forEach(b=>b.onclick=()=>{ bpSetAll=!bpSetAll; board(); });
@@ -9996,7 +10027,7 @@ function secBlueprints(v){
     pager();
     const q=$('#bpAlbQ'); if(q) q.oninput=()=>{ BPA.q=q.value; BPA.page=0; const l=$('#bpAlbList'); if(l){ l.innerHTML=bpAlbumList(catalog); pager(); } };
   };
-  wireBoard(); wireAlbum();
+  wireBoard(); wireAlbum(); dedupe();
   // the menu's search box and Find's own box share one query
   const findOut=()=>{ const o=$('#bpFindOut'); if(o) o.innerHTML=bpFindList(); };
   const fq=$('#bpFindQ'); if(fq) fq.oninput=()=>{ bpFindQ=fq.value; const t=$('#bpTreeQ'); if(t) t.value=bpFindQ; findOut(); };
@@ -10031,20 +10062,20 @@ function secMissions(v){
   ]);
   const h=v.haul||{};
   const H = h.scu ? `<section class="gsec"><div class="ghead"><div class="gnum">—</div><div class="gic">${icon('cargo')}</div>`+
-      `<div class="gtx"><div class="gt">Cargo hauling</div><div class="gs">SCU delivered on hauling contracts you completed — from the delivery objectives, 4.5 onward</div></div></div><div class="gbody">`+
+      `<div class="gtx"><div class="gt">Cargo Hauling</div><div class="gs">SCU delivered on hauling contracts you completed — from the delivery objectives, 4.5 onward</div></div></div><div class="gbody">`+
       kpiRow([
         [icon('cargo'), fmt(h.scu), 'SCU delivered', `${fmt(h.runs)} contracts · ${fmt(h.sessions)} sessions`],
         [icon('yes'), fmt(h.max), 'Biggest contract', `SCU on one run`],
         [icon('no'), fmt(h.lost), 'SCU not delivered', `contracts that failed or were abandoned`],
         [icon('scales'), fmt(h.runs ? Math.round(h.scu/h.runs) : 0), 'SCU per contract', `average`],
-      ])+`<div class="grid2">`+barsCard('By commodity','SCU delivered','haulComBars')+barsCard('By destination','SCU delivered','haulDestBars')+`</div>`+
+      ])+`<div class="grid2">`+barsCard('By Commodity','SCU delivered','haulComBars')+barsCard('By Destination','SCU delivered','haulDestBars')+`</div>`+
       noteFold(`A contract counts when it completes; the SCU is its delivery target. Partial drops on a run that failed or was abandoned aren’t counted.`)+
       `</div></section>` : '';
   $('#content').innerHTML=metaLine(v)+K+H+
     cardHTML('Outcomes','completed / failed / abandoned','missionChart')+
-    `<div style="margin-top:16px">`+barsCard('Mission types','by contract category','typeBars')+`</div>`+
+    `<div style="margin-top:16px">`+barsCard('Mission Types','by contract category','typeBars')+`</div>`+
     ((v.contracts_named||[]).length ? `<div style="margin-top:16px">`+
-      barsCard('Contracts by name','accepted · completed — as the game titled them (4.5+)','contractBars')+`</div>`+
+      barsCard('Contracts by Name','accepted · completed — as the game titled them (4.5+)','contractBars')+`</div>`+
       noteFold(`Contract names come from the HUD notices (4.5 onward), language-pack tags stripped. Accepted but not completed covers failed, abandoned, lost on log-off, or still open.`) : '');
   splitbar($('#missionChart'), [{label:'Completed',value:m.complete,color:'#4ade80'},{label:'Failed',value:m.fail,color:'#ff5468'},{label:'Abandoned',value:m.abandon,color:'#f4a92a'}], {big:(m.rate||0)+'%', small:m.total+' total'});
   hbars($('#typeBars'), toItems(v.mission_types,'#4ade80'));
@@ -10064,7 +10095,7 @@ const HOURS_PARTS=[['startup','Starting up','#8b9bb4'],['loading','Loading scree
 function hoursCard(v){
   const h=v.hours_split;
   if(!h || !h.total) return '';
-  return `<div class="card" style="margin-top:16px"><h3>Where your hours go <span class="u">— hours by activity</span></h3>`+
+  return `<div class="card" style="margin-top:16px"><h3>Where Your Hours Go <span class="u">— hours by activity</span></h3>`+
     `<div id="hoursChart"></div>`+
     (h.unsplit>0 ? `<div class="bsub">Aboard time is logged from Dec 2025.</div>` : '')+`</div>`;
 }
@@ -10082,13 +10113,13 @@ function secActivity(v){
     [icon('night'), v.longest_h+'h', 'Longest session', `single sitting`],
   ]);
   $('#content').innerHTML=metaLine(v)+K+
-    cardHTML('Playtime by month','hours per calendar month','monthChart')+
+    cardHTML('Playtime by Month','hours per calendar month','monthChart')+
     hoursCard(v)+
-    `<div style="margin-top:16px">`+cardHTML('When you play','sessions started · weekday × hour','heatChart')+`</div>`+
+    `<div style="margin-top:16px">`+cardHTML('When You Play','sessions started · weekday × hour','heatChart')+`</div>`+
     `<div class="grid3" style="margin-top:16px">`+
-    cardHTML('By hour','play start time','hourChart')+
-    cardHTML('By weekday','','dowChart')+
-    barsCard('Session length','how long you play','distBars')+`</div>`;
+    cardHTML('By Hour','play start time','hourChart')+
+    cardHTML('By Weekday','','dowChart')+
+    barsCard('Session Length','how long you play','distBars')+`</div>`;
   const ms=Object.keys(v.months).sort();
   const mitems=ms.map(m=>{const [y,mm]=m.split('-');return {label:MON[+mm-1]+" '"+y.slice(2), value:+(v.months[m]/3600).toFixed(1), disp:(v.months[m]/3600).toFixed(0)+' h', full:m, color:'#3fd0e6'};});
   if(mitems.length) vbars($('#monthChart'), mitems, {h:230, w:Math.max(560,mitems.length*54), rot:true, fmtY:x=>x+'h'});
@@ -10247,7 +10278,7 @@ function settingsHTML(st){
   const specs=Object.keys(st).filter(k=>k.indexOf('SysSpec')===0)
     .sort((a,b)=>a==='SysSpec'?-1:b==='SysSpec'?1:_setName(a).localeCompare(_setName(b)))
     .map(k=>item(k, setTier(k,st[k])||st[k], levelHTML(k,st[k]))).join('');
-  return `<div class="card"><h3>Current graphics settings <span class="u">— read from your profile</span></h3>`+
+  return `<div class="card"><h3>Current Graphics Settings <span class="u">— read from your profile</span></h3>`+
     `<div class="setg2">`+toggles+ups+specs+`</div></div>`;
 }
 // ---- settings guidance ----
@@ -10295,7 +10326,7 @@ function settingsAdvice(v){
     `<div class="ad2">Undo point ${esc(st._csr_prev||'—')}`+
     `${st._csr_original?` · original from ${esc(st._csr_original)}`:''}.</div>`+
     `<div class="row">${rp.join('')}</div></div>`);
-  return `<div class="card"><h3>Change settings <span class="beta">BETA</span> `+
+  return `<div class="card"><h3>Change Settings <span class="beta">BETA</span> `+
     `<span class="u">— use at your own risk</span></h3>`+
     `<div class="bsub" style="margin-bottom:10px">Only the overall preset and the auto-detect flag are `+
     `ever written. <b>Close Star Citizen first.</b> A copy is saved before every change.</div>`+
@@ -10396,7 +10427,7 @@ function lastCrashHTML(v){
   if(c.peak_commit_mb) chips.push(['PEAK COMMIT', gb(c.peak_commit_mb)]);
   if(c.free_mb!=null) chips.push(['FREE AT CRASH', gb(c.free_mb)]);
   if(c.seen>1) chips.push(['TIMES HIT', String(c.seen)]);
-  return `<div class="card"><h3>Your last crash <span class="u">— ${esc(whenStamp(c.at, c.date))}</span></h3>`+
+  return `<div class="card"><h3>Your Last Crash <span class="u">— ${esc(whenStamp(c.at, c.date))}</span></h3>`+
     (where?`<div class="cwhere">${esc(where)}</div>`:'')+
     `<div class="chk ${actionable?'warn':'bad'}" style="margin-top:2px">`+
     `<span class="ci">${icon(actionable?'warning':'bug')}</span><div style="flex:1">`+
@@ -10488,7 +10519,7 @@ function crashListHTML(v){
   const sub=crashFilter
     ? `showing ${esc(crashFilter.label||'')} — <button class="foot-link cclr" data-cflt-clear>clear</button>`
     : 'newest first';
-  return `<div class="card" style="margin-top:16px"><h3>Every crash `+
+  return `<div class="card" style="margin-top:16px"><h3>Every Crash `+
     `<span class="u">— ${sub}</span></h3>`+
     `<div class="tline" id="crashList">${body}${pad}</div>${nav}</div>`;
 }
@@ -10599,7 +10630,7 @@ function crashCausesHTML(v){
     ? `<b>${fmt(b.yours_n)} of ${fmt(tot)}</b> were yours to fix`+
       (last ? (b.yours_quiet ? ` — none of those since ${esc(last)}.` : ` — the last on ${esc(last)}.`) : '.')
     : `All of these are bugs in Star Citizen itself. Nothing on your machine caused them.`;
-  return `<div class="card" style="margin-top:16px"><h3>What has crashed you `+
+  return `<div class="card" style="margin-top:16px"><h3>What Has Crashed You `+
     `<span class="u">— ${fmt(tot)} report${tot===1?'':'s'} from the game itself</span></h3>`+
     `<div class="cbcols">`+
     `<div class="cbcol"><div class="cbh">Yours to fix — ${fmt(b.yours_n)}</div>`+
@@ -10753,7 +10784,7 @@ function newcomerVerdict(v, oc, rated, thin){
 function recentHTML(recent){
   if(!(recent||[]).length) return '';
   return `<div class="card" style="margin-top:16px">`+
-    `<h3>Most recent <span class="u">— newest first</span></h3><div class="tline">`+
+    `<h3>Most Recent <span class="u">— newest first</span></h3><div class="tline">`+
     recent.map((t,i)=>{
       const p=String(t).split('T');
       const prev=recent[i+1];
@@ -10784,7 +10815,7 @@ function bootsHTML(v){
   // bars end up as slivers.
   const trend=(b.trend||[]).length>1
     ? `<div style="margin-top:16px">`+
-      barsCard('Returns to the menu per 10 hours played','by month — quiet months shown at zero','bootTrend')+
+      barsCard('Returns to the Menu per 10 Hours Played','by month — quiet months shown at zero','bootTrend')+
       `</div>`
     : '';
   return kpis+
@@ -10809,7 +10840,7 @@ function softHTML(v){
   const recent=recentHTML(s.recent);
   const trend=(s.trend||[]).length>1
     ? `<div style="margin-top:16px">`+
-      barsCard('Lost your player per 10 hours played','by month — quiet months shown at zero','softTrend')+
+      barsCard('Lost Your Player per 10 Hours Played','by month — quiet months shown at zero','softTrend')+
       `</div>`
     : '';
   return kpis+
@@ -10841,8 +10872,8 @@ function serversHTML(v){
       `different server in the same session — after a 30k, a crash recovery or a shard switch from the menu. `+
       `Rejoining the server you were on isn't counted.`)+
     `<div class="grid2">`+
-    cardHTML('Joins by region','share of '+fmt(s.joins)+' joins','regionChart')+
-    ((A().order||[]).length>1 ? barsCard('Sessions with a hop, by patch','% of sessions that joined a server','hopsByPatch')
+    cardHTML('Joins by Region','share of '+fmt(s.joins)+' joins','regionChart')+
+    ((A().order||[]).length>1 ? barsCard('Sessions with a Hop, by Patch','% of sessions that joined a server','hopsByPatch')
       : '<div class="card"><div class="empty">Only one patch in this scope.</div></div>')+
     `</div>`;
 }
@@ -10876,12 +10907,12 @@ function inventoryHTML(v){
       `Over <b>100%</b> the game counts the inventory as overloaded. Sort sends the whole inventory in one request `+
       `and fails once that request is too big. Anything over 1 MB is dropped.`+
       (i.rewards ? ` Reward items announced in this scope: <b>${fmt(i.rewards)}</b>.` : ''))+
-    (h && h.series.length ? cardHTML('Home inventory per session',
+    (h && h.series.length ? cardHTML('Home Inventory per Session',
         `% full, last ${fmt(h.series.length)} sessions that read it · grey: partial load`,'invBySession')+
         noteFold(`The game logs your home inventory only when you move an item, and only what it has loaded by then. Sometimes that's part of it. Partial loads are grey and skipped.`,
           `A reading counts as partial when the highest reading in the week before it and the highest in the week after are both at least twice as big. The newest reading has no week after yet and is judged on the one before it. A real clear-out stays low afterwards and isn't flagged.`)
       : '<div class="card"><div class="empty">No capacity readings in this scope.</div></div>')+
-    (i.others.length ? barsCard('Other locations','highest % full in the last week each was read','invOthers')
+    (i.others.length ? barsCard('Other Locations','highest % full in the last week each was read','invOthers')
       : '<div class="card"><div class="empty">No other inventories read.</div></div>');
 }
 // Loading screens: the game logs how long each one stayed up. PU = Stanton, Pyro, Nyx.
@@ -10902,8 +10933,8 @@ function loadingHTML(v){
       `The game logs how long each loading screen stayed up. Hung screens over 15 min are left out`+
       (l.hung ? `, ${fmt(l.hung)} here` : '')+`.`)+
     `<div class="grid2">`+
-    barsCard('Median load by destination','seconds','loadByDest')+
-    ((A().order||[]).length>1 ? barsCard('Median PU load by patch','seconds','loadByPatch')
+    barsCard('Median Load by Destination','seconds','loadByDest')+
+    ((A().order||[]).length>1 ? barsCard('Median PU Load by Patch','seconds','loadByPatch')
       : '<div class="card"><div class="empty">Only one patch in this scope.</div></div>')+
     `</div>`;
 }
@@ -11010,7 +11041,7 @@ function secSystem(v, STAB){
 
   const hasPatchTrend=(A().order||[]).length>1;
   const st=(C()||{}).settings;
-  const shareCard = `<div class="card" style="margin-top:16px"><h3>Share your setup `+
+  const shareCard = `<div class="card" style="margin-top:16px"><h3>Share Your Setup `+
     `<span class="u">— paste into Discord so others have something to compare against</span></h3>`+
     `<div class="bsub">Nothing is uploaded. CSR has no server — this is just text for you to copy.</div>`+
     `<div class="sharebox"><textarea id="shareTxt" readonly></textarea>`+
@@ -11031,50 +11062,48 @@ function secSystem(v, STAB){
     const PAGES=['overview','crashes','menu','lost','outcomes','servers','inventory'];
     if(!PAGES.includes(SV.page)) SV.page='overview';
     const hp=inv&&inv.home?Math.round(inv.home.pct):null, top=sv&&sv.regions&&sv.regions[0];
-    const it=(page,label,cnt,cls)=>{ const on=SV.page===page;
-      return `<button type="button" class="${page==='overview'||page==='crashes'?'':'sub '}${on?'on':''}" data-sv="${page}"${on?' aria-current="page"':''}>`+
-        `<span>${label}</span><b class="${cls||''}">${cnt}</b></button>`; };
+    const it=(page,ic,label,cnt,cls)=>railItem(`data-sv="${page}"`, ic, label, cnt, SV.page===page, cls);
     const tree=`<nav class="stree" aria-label="Stability">`+
-      `<div class="t-h">Stability</div>`+it('overview','Overview','')+it('crashes','Crashes',fmt(oc.crash||0))+
-      `<div class="t-h">Disconnects</div>`+it('menu','Back to the menu',b?fmt(b.n):'0',b&&b.n?'warn':'ok')+
-      it('lost','Lost your player',sf?fmt(sf.n):'0',sf&&sf.n?'warn':'ok')+
-      `<div class="t-h">Your sessions</div>`+it('outcomes','Session outcomes',rated?(thin?`${fmt(oc.clean||0)}/${fmt(rated)}`:okPct):'')+
-      it('servers','Servers',top?esc(top[0]):'')+it('inventory','Home inventory',hp!=null?hp+'%':'',hp!=null?invCls(hp):'')+`</nav>`;
-    const head=(t,sub)=>`<div class="sp-h"><h2>${t}</h2><span>${sub}</span></div>`;
-    const rough=hasPatchTrend?barsCard('Rough sessions by patch','% ending badly','roughByPatch')
+      it('overview','overview','Overview','')+it('crashes','bug','Crashes',fmt(oc.crash||0))+`<hr class="t-sep">`+
+      it('menu','quit','Back to the Menu',b?fmt(b.n):'0',b&&b.n?'warn':'ok')+
+      it('lost','space','Lost Your Player',sf?fmt(sf.n):'0',sf&&sf.n?'warn':'ok')+`<hr class="t-sep">`+
+      it('outcomes','pulse','Session Outcomes',rated?(thin?`${fmt(oc.clean||0)}/${fmt(rated)}`:okPct):'')+
+      it('servers','satellite','Servers',top?top[0]:'')+it('inventory','cargo','Home Inventory',hp!=null?hp+'%':'',hp!=null?invCls(hp):'')+`</nav>`;
+    const head=(ic,t,sub)=>pageHead(ic,t,sub);
+    const rough=hasPatchTrend?barsCard('Rough Sessions by Patch','% ending badly','roughByPatch')
       :'<div class="card"><div class="empty">Only one patch in this scope.</div></div>';
     let body='';
-    if(SV.page==='overview') body=(rated?kpiRow([
+    if(SV.page==='overview') body=head('overview','Overview','Headline numbers, your last crash and what has crashed you')+(rated?kpiRow([
         [icon('yes'), thin?`${fmt(oc.clean||0)}/${fmt(rated)}`:okPct, 'Sessions ended normally', thin?'too few rated sessions for a rate':`${fmt(oc.clean||0)} of ${fmt(rated)}`],
         [icon('bug'), fmt(oc.crash||0), 'Crashes', lc&&lc.date?`last ${ddmm(lc.date)}`:'the game reported these itself'],
         [icon('no'), b&&b.per10h!=null?b.per10h.toFixed(2):'0', 'Back to menu per 10 h', b?`${fmt(b.n)} in all`:'none in this scope'],
         [icon('satellite'), sv?sv.hop_pct+'%':'N/A', 'Sessions with a server hop', sv?`${fmt(sv.hop_sessions)} of ${fmt(sv.sessions)}`:'no server joins here', sv?'':'na'],
       ]):'')+`<div class="grid2 stov">${lastCrashHTML(v)}${rated?rough:''}</div>`+crashCausesHTML(v)+NOTE;
-    else if(SV.page==='crashes') body=head('Crashes','What Star Citizen said went wrong')+lastCrashHTML(v)+crashCausesHTML(v)+crashListHTML(v);
-    else if(SV.page==='menu') body=head('Back to the main menu','Returned to the front end mid-session and carried on. A server drop or an exit to menu.')+bootsHTML(v);
-    else if(SV.page==='lost') body=head('Lost your player','The game kept running but your client had no player entity. No body, nothing responds.')+softHTML(v);
-    else if(SV.page==='servers') body=head('Servers','Which region you played on, and how often you changed server mid-session')+serversHTML(v);
-    else if(SV.page==='inventory') body=head('Home inventory','How full your home inventory is, and whether Sort still works')+inventoryHTML(v);
-    else body=head('Session outcomes','How your sessions ended')+(rated ? stabKpis+ctx+newcomerVerdict(v,oc,rated,thin)+stabNote+
-        `<div class="grid2">`+cardHTML('How sessions ended','share of '+fmt(rated)+' sessions','outcomeChart')+rough+`</div>`
+    else if(SV.page==='crashes') body=head('bug','Crashes','What Star Citizen said went wrong')+lastCrashHTML(v)+crashCausesHTML(v)+crashListHTML(v);
+    else if(SV.page==='menu') body=head('quit','Back to the Main Menu','Returned to the front end mid-session and carried on. A server drop or an exit to menu.')+bootsHTML(v);
+    else if(SV.page==='lost') body=head('space','Lost Your Player','The game kept running but your client had no player entity. No body, nothing responds.')+softHTML(v);
+    else if(SV.page==='servers') body=head('satellite','Servers','Which region you played on, and how often you changed server mid-session')+serversHTML(v);
+    else if(SV.page==='inventory') body=head('cargo','Home Inventory','How full your home inventory is, and whether Sort still works')+inventoryHTML(v);
+    else body=head('pulse','Session Outcomes','How your sessions ended')+(rated ? stabKpis+ctx+newcomerVerdict(v,oc,rated,thin)+stabNote+
+        `<div class="grid2">`+cardHTML('How Sessions Ended','share of '+fmt(rated)+' sessions','outcomeChart')+rough+`</div>`
         : `<div class="card"><div class="empty">No completed sessions rated yet.</div></div>`);
     stabHTML=metaLine(v)+`<div class="sapp">${tree}<div class="smain" id="stMain"><div class="lstrip">${watchHTML()}</div>${body}</div></div>`;
   }
   $('#content').innerHTML = STAB ? stabHTML : (metaLine(v)+
-    group(1,'system','Your machine','What the game reports your rig as',
+    group(1,'system','Your Machine','What the game reports your rig as',
       specs+changeCard+driverCard)+
-    group(2,'yes','Configuration check','What you are running, and anything measurably wrong',
+    group(2,'yes','Configuration Check','What you are running, and anything measurably wrong',
       settingsHTML(st)+
       `<div style="margin-top:16px">`+healthHTML(r,st)+`</div>`+
       `<div style="margin-top:16px">`+settingsAdvice(v)+`</div>`)+
     group(3,'pulse','Performance','Frame rate the game recorded for itself',
       fpsHTML(v) || `<div class="card"><div class="empty">No frame-rate statistics in this scope.</div></div>`)+
-    group(4,'time','Loading screens','How long each screen stayed up, and the launch before it',
+    group(4,'time','Loading Screens','How long each screen stayed up, and the launch before it',
       loadingHTML(v))+
-    group(5,'system','Hardware score','Star Citizen’s own benchmark — comparable between machines',
+    group(5,'system','Hardware Score','Star Citizen’s own benchmark — comparable between machines',
       benchKpis+benchNote+
       (pi&&hasPatchTrend?`<div style="margin-top:16px">`+
-        barsCard('Score per patch','differences this small are noise','gpuByPatch')+`</div>`:'')+
+        barsCard('Score per Patch','differences this small are noise','gpuByPatch')+`</div>`:'')+
       shareCard)+
     `${NOTE}`);
 
@@ -11269,7 +11298,7 @@ function secOrgs(v){
     return `<div class="org-card">${logo}<div><div class="oname">${nm}</div><div class="osub">${kind} · [${esc(o.sid)}]${rank}</div></div>${mem}</div>`;
   }).join('') || '<div class="empty">No public orgs found.</div>';
   $('#content').innerHTML =
-    group(1,'profile','Citizen record','Your public RSI profile',profileHTML())+
+    group(1,'profile','Citizen Record','Your public RSI profile',profileHTML())+
     group(2,'orgs','Organizations','Public affiliations, as anyone can see them on RSI',
       `<div class="orgs">${orgs}</div>`)+
     `<div class="note">This is the same public information any player can see on your RSI profile — including affiliate orgs, which is how someone can spot an affiliation you didn't announce.</div>`;
@@ -11296,7 +11325,7 @@ function buildToc(){
   const el=$('#sideToc'); if(!el) return;
   const gs=[...document.querySelectorAll('#content .gsec[id]')];
   if(gs.length<3){ el.hidden=true; el.innerHTML=''; return; }
-  el.innerHTML='<div class="toc-h">On this page</div>'+gs.map(g=>
+  el.innerHTML='<div class="toc-h">On This Page</div>'+gs.map(g=>
     `<button type="button" data-g="${g.id}"><i>${esc((g.querySelector('.gnum')||{}).textContent||'')}</i>`+
     `${esc((g.querySelector('.gt')||{}).textContent||'')}</button>`).join('');
   el.hidden=false;

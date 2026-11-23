@@ -8,13 +8,15 @@ uses [Semantic Versioning](https://semver.org/) (MAJOR.MINOR.PATCH).
 ## [Unreleased]
 
 ### Added
-- **Blueprints has its own menu.** A menu down the left of the page: Overview, Find,
-  Pinned, one page per collection (Armour, Ship components, Ship weapons, FPS weapons,
-  Magazines & gear) with your count on each, Standing, Your library and Unlock history.
-  One page on screen at a time. CSR remembers the page you were on.
-- **Stability has the same menu.** Overview, Crashes, Back to the menu, Lost your
-  player, Session outcomes, Servers and Home inventory, each with its number in the
-  menu. The Overview has the four headline numbers, your last crash, rough sessions by
+- **Blueprints has its own menu.** An icon rail down the left of the page: Overview,
+  Find a Blueprint, Pinned, one page per collection (Armour, Ship Components, Ship
+  Weapons, FPS Weapons, Magazines & Gear) with your count under each icon, Standing, Your
+  Library and Unlock History. Hover an icon for its name. One page on screen at a time,
+  each with its own title. CSR remembers the page you were on. On a phone the rail is a
+  row with names.
+- **Stability has the same menu.** Overview, Crashes, Back to the Menu, Lost Your
+  Player, Session Outcomes, Servers and Home Inventory, each with its number under the
+  icon. The Overview has the four headline numbers, your last crash, rough sessions by
   patch and what has crashed you. Clicking a cause opens Crashes filtered to it.
 - **Live monitoring is one line** at the top of every Stability page: game state and
   each channel's idle time.
@@ -51,10 +53,13 @@ uses [Semantic Versioning](https://semver.org/) (MAJOR.MINOR.PATCH).
   XenoThreat rewards did.
 
 ### Changed
+- Titles and menus are in title case. Small words (a, and, of, to, per, with…) stay
+  lowercase.
 - **Crafting catalogue updated to 4.10.3**: 1,628 blueprints. The Skarnov rifle and its
   battery and the Raider Camo Palatino pieces now match.
 
 ### Fixed
+- The scope line at the top of each page had no space under it.
 - **Home inventory showed 1% after a session that loaded only part of it.** The game
   logs your home inventory only when you move an item, and only what it has loaded by
   then. A reading under half of the ones around it is now a partial load. The headline
