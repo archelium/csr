@@ -14,6 +14,8 @@ Rules that hold throughout:
 import glob
 import json
 import os
+import threading
+import zlib
 from datetime import datetime, timedelta
 
 import sc_telemetry as tlm
@@ -465,6 +467,7 @@ def combine(entries):
 # --- index, retention, matching, career ----------------------------------------------
 
 INDEX_NAME = "index.json"
+_index_lock = threading.Lock()
 CAREER_SERIES_MAX = 400
 MATCH_SLACK = 120       # seconds after a session's end that a recording may still start
 OPEN_WINDOW = 60        # a session ending this close to now may still be running
@@ -492,7 +495,7 @@ def load_index(root):
 def save_index(root, idx):
     os.makedirs(root, exist_ok=True)
     path = os.path.join(root, INDEX_NAME)
-    tmp = path + ".tmp"
+    tmp = "%s.%d.%d.tmp" % (path, os.getpid(), threading.get_ident())
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(idx, f)
     os.replace(tmp, path)
@@ -502,28 +505,46 @@ def _skipped(path, skip):
     return os.path.basename(path) in skip or path in skip
 
 
+def _summarize_safe(path):
+    """Index entry for a recording, an `empty` marker when it has no rows, None when it
+    can't be read this run."""
+    try:
+        entry = summarize(path)
+        if entry is not None:
+            return entry
+        header, _rows = tlm.read_recording(path)
+    except (OSError, ValueError, EOFError, zlib.error):
+        return None
+    if not header:      # unreadable, not just empty
+        return None
+    return {"file": os.path.basename(path), "channel": header.get("channel"),
+            "started": header.get("started"), "v": SUMMARY_VERSION, "empty": True}
+
+
+def _current(idx, name):
+    cur = idx.get(name)
+    return cur is not None and cur.get("v", 0) >= SUMMARY_VERSION
+
+
 def refresh_index(root, skip=frozenset()):
     """Summarize recordings that are new or have an older summary version. Saves and returns
     the index. Entries whose file is gone stay as they are."""
-    idx = load_index(root)
-    changed = False
-    for path in recording_files(root):
-        if _skipped(path, skip):
-            continue
-        name = os.path.basename(path)
-        cur = idx.get(name)
-        if cur is not None and cur.get("v", 0) >= SUMMARY_VERSION:
-            continue
-        try:
-            entry = summarize(path)
-        except (OSError, ValueError, EOFError):
-            entry = None
-        if entry is not None:
-            idx[name] = entry
-            changed = True
-    if changed:
-        save_index(root, idx)
-    return idx
+    with _index_lock:
+        idx = load_index(root)
+        changed = False
+        for path in recording_files(root):
+            if _skipped(path, skip):
+                continue
+            name = os.path.basename(path)
+            if _current(idx, name):
+                continue
+            entry = _summarize_safe(path)
+            if entry is not None:
+                idx[name] = entry
+                changed = True
+        if changed:
+            save_index(root, idx)
+        return idx
 
 
 def _file_started(path, idx):
@@ -534,23 +555,43 @@ def _file_started(path, idx):
         return _parse_iso((idx.get(name) or {}).get("started"))
 
 
+def _delete_indexed(idx, path):
+    """Delete a recording once its summary is in the index. Keeps the file when it can't be
+    summarized. Returns (deleted, index changed)."""
+    name = os.path.basename(path)
+    changed = False
+    if not _current(idx, name):
+        entry = _summarize_safe(path)
+        if entry is None:
+            return False, False
+        idx[name] = entry
+        changed = True
+    try:
+        os.remove(path)
+    except OSError:
+        return False, changed
+    return True, changed
+
+
 def apply_retention(root, keep_days, now, skip=frozenset()):
     """Delete recordings older than keep_days. Index entries stay. Returns files deleted."""
     if not keep_days:
         return 0
     cutoff = now - timedelta(days=keep_days)
-    idx = load_index(root)
     n = 0
-    for path in recording_files(root):
-        if _skipped(path, skip):
-            continue
-        started = _file_started(path, idx)
-        if started is not None and started < cutoff:
-            try:
-                os.remove(path)
-                n += 1
-            except OSError:
-                pass
+    with _index_lock:
+        idx = load_index(root)
+        changed = False
+        for path in recording_files(root):
+            if _skipped(path, skip):
+                continue
+            started = _file_started(path, idx)
+            if started is not None and started < cutoff:
+                done, ch = _delete_indexed(idx, path)
+                n += done
+                changed = changed or ch
+        if changed:
+            save_index(root, idx)
     return n
 
 
@@ -566,14 +607,17 @@ def disk_usage(root):
 
 def delete_all_recordings(root, skip=frozenset()):
     n = 0
-    for path in recording_files(root):
-        if _skipped(path, skip):
-            continue
-        try:
-            os.remove(path)
-            n += 1
-        except OSError:
-            pass
+    with _index_lock:
+        idx = load_index(root)
+        changed = False
+        for path in recording_files(root):
+            if _skipped(path, skip):
+                continue
+            done, ch = _delete_indexed(idx, path)
+            n += done
+            changed = changed or ch
+        if changed:
+            save_index(root, idx)
     return n
 
 
@@ -589,15 +633,17 @@ def match(sessions, idx, now=None):
             continue
         ch = s.get("channel") or "LIVE"
         rows.append((s, ch, start, start + timedelta(seconds=s.get("dur") or 0)))
-        if ch not in latest or start > latest[ch]:
-            latest[ch] = start
+        if ch not in latest or start > latest[ch][0]:
+            latest[ch] = (start, s)
     windows = []
     for s, ch, start, end in rows:
-        is_open = abs((now - end).total_seconds()) <= OPEN_WINDOW and start == latest[ch]
+        is_open = abs((now - end).total_seconds()) <= OPEN_WINDOW and latest[ch][1] is s
         windows.append((s, ch, start, None if is_open else end + timedelta(seconds=MATCH_SLACK)))
     matched = {}
     unmatched = []
     for entry in sorted(idx.values(), key=lambda e: e.get("started") or ""):
+        if entry.get("empty"):
+            continue
         started = _parse_iso(entry.get("started"))
         best = None
         if started is not None:

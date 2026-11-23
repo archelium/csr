@@ -3,6 +3,7 @@ import json
 import os
 import sys
 import tempfile
+import threading
 import unittest
 from datetime import datetime, timedelta
 from unittest import mock
@@ -21,13 +22,14 @@ class IndexBase(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.root = self.tmp.name
 
-    def rec(self, started, steps, channel="LIVE"):
+    def rec(self, started, steps, channel="LIVE", groups=None):
         """Write a real recording named after its local start time."""
         os.makedirs(os.path.join(self.root, channel), exist_ok=True)
         path = os.path.join(self.root, channel, started.strftime("%Y%m%d-%H%M%S") + ".jsonl.gz")
         header = {"v": 1, "channel": channel, "build": "1",
                   "started": started.isoformat(timespec="seconds")}
-        w = tlm.RecordingWriter(path, header, "full", tlm.DEFAULT_GROUPS)
+        w = tlm.RecordingWriter(path, header, "full",
+                                tlm.DEFAULT_GROUPS if groups is None else groups)
         for t, flat in steps:
             w.add(t, flat, [])
         w.close()
@@ -60,12 +62,71 @@ class IndexTests(IndexBase):
     def test_retention_keeps_summaries(self):
         now = datetime(2026, 11, 24, 12, 0, 0)
         self.rec(now - timedelta(days=40), W2)
-        self.rec(now - timedelta(days=10), W2)
+        new = self.rec(now - timedelta(days=10), W2)
         st.refresh_index(self.root)
         self.assertEqual(st.apply_retention(self.root, 30, now), 1)
-        self.assertEqual(len(st.recording_files(self.root)), 1)
+        self.assertEqual(st.recording_files(self.root), [new])
         self.assertEqual(len(st.load_index(self.root)), 2)
         self.assertEqual(st.apply_retention(self.root, None, now), 0)
+
+    def test_retention_indexes_before_delete(self):
+        now = datetime(2026, 11, 24, 12, 0, 0)
+        old = self.rec(now - timedelta(days=40), W2)
+        self.assertEqual(st.load_index(self.root), {})
+        self.assertEqual(st.apply_retention(self.root, 30, now), 1)
+        self.assertFalse(os.path.exists(old))
+        self.assertIn(os.path.basename(old), st.load_index(self.root))
+
+    def test_retention_keeps_unreadable_file(self):
+        now = datetime(2026, 11, 24, 12, 0, 0)
+        bad = os.path.join(self.root, "LIVE", (now - timedelta(days=40)).strftime("%Y%m%d-%H%M%S")
+                           + ".jsonl.gz")
+        os.makedirs(os.path.dirname(bad))
+        with open(bad, "wb") as f:
+            f.write(b"not gzip")
+        self.assertEqual(st.apply_retention(self.root, 30, now), 0)
+        self.assertTrue(os.path.exists(bad))
+
+    def test_delete_all_indexes_first(self):
+        p = self.rec(datetime(2026, 11, 24, 19, 0, 0), W2)
+        self.assertEqual(st.delete_all_recordings(self.root), 1)
+        self.assertFalse(os.path.exists(p))
+        self.assertEqual(st.load_index(self.root)[os.path.basename(p)]["sum"]["uec_end"], 200)
+
+    def test_refresh_threads(self):
+        self.rec(datetime(2026, 11, 24, 19, 0, 0), W2)
+        self.rec(datetime(2026, 11, 24, 20, 0, 0), W2)
+        names = ["20261124-190000.jsonl.gz", "20261124-200000.jsonl.gz"]
+        for _ in range(5):
+            if os.path.exists(os.path.join(self.root, "index.json")):
+                os.remove(os.path.join(self.root, "index.json"))
+            ts = [threading.Thread(target=st.refresh_index, args=(self.root, {n}))
+                  for n in reversed(names)]
+            for t in ts:
+                t.start()
+            for t in ts:
+                t.join()
+            self.assertEqual(sorted(st.load_index(self.root)), sorted(names))
+
+    def test_empty_recording_indexed_once(self):
+        p = self.rec(datetime(2026, 11, 24, 19, 0, 0), [])
+        idx = st.refresh_index(self.root)
+        e = idx[os.path.basename(p)]
+        self.assertTrue(e["empty"])
+        self.assertEqual(e["v"], st.SUMMARY_VERSION)
+        with mock.patch.object(st, "summarize", side_effect=AssertionError):
+            st.refresh_index(self.root)
+        s = {"start": datetime(2026, 11, 24, 19, 0, 0), "dur": 600.0}
+        m, un = st.match([s], idx, datetime(2026, 12, 1))
+        self.assertEqual((m, un), ({}, []))
+
+    def test_refresh_survives_bad_file(self):
+        bad = os.path.join(self.root, "LIVE", "20261124-180000.jsonl.gz")
+        os.makedirs(os.path.dirname(bad))
+        with open(bad, "wb") as f:
+            f.write(b"not gzip")
+        self.rec(datetime(2026, 11, 24, 19, 0, 0), W2)
+        self.assertEqual(list(st.refresh_index(self.root)), ["20261124-190000.jsonl.gz"])
 
     def test_usage_and_delete_all(self):
         p = self.rec(datetime(2026, 11, 24, 19, 0, 0), W2)
@@ -125,6 +186,15 @@ class MatchTests(IndexBase):
         self.assertEqual(m, {})
         self.assertEqual(len(un), 1)
 
+    def test_open_session_same_start_one_match(self):
+        self.rec(datetime(2026, 11, 24, 21, 50, 0), W2)
+        now = datetime(2026, 11, 24, 21, 30, 0)
+        a = {"start": datetime(2026, 11, 24, 19, 0, 0), "dur": 9000.0 - 20}
+        b = {"start": datetime(2026, 11, 24, 19, 0, 0), "dur": 9000.0 - 10}
+        m, un = st.match([a, b], self.idx(), now)
+        self.assertEqual(sum(len(v) for v in m.values()), 1)
+        self.assertEqual(un, [])
+
     def test_attach_does_not_mutate(self):
         self.rec(datetime(2026, 11, 24, 19, 0, 0), W2)
         s = {"start": datetime(2026, 11, 24, 19, 0, 0), "dur": 600.0}
@@ -137,6 +207,36 @@ class MatchTests(IndexBase):
 
 class CareerTests(unittest.TestCase):
     def test_coverage_per_stat(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        base = IndexBase()
+        base.root = tmp.name
+        t_b = datetime(2026, 11, 24, 21, 0, 0)
+        t_a = datetime(2026, 11, 24, 19, 0, 0)
+        # B: old summary version, file expired, only the wallet group
+        base.rec(t_b, W2, groups=["wallet"])
+        st.refresh_index(tmp.name)
+        for p in st.recording_files(tmp.name):
+            os.remove(p)
+        # A: recorded after a version bump, flight and wallet
+        base.rec(t_a, [(0, {SPEED: 50, WALLET: 5, "vehicle.state.flight.instruments.g_meter.current": 4.0}),
+                       (5, {SPEED: 50, WALLET: 5, "vehicle.state.flight.instruments.g_meter.current": 4.0})],
+                 groups=["flight", "wallet"])
+        with mock.patch.object(st, "SUMMARY_VERSION", 2):
+            idx = st.refresh_index(tmp.name)
+        self.assertEqual(sorted(e["v"] for e in idx.values()), [1, 2])
+        sessions = [{"start": t_a, "dur": 600.0}, {"start": t_b, "dur": 600.0}]
+        att, un = st.attach(sessions, idx, datetime(2026, 12, 1))
+        self.assertEqual(un, [])
+        acc = st.new_acc()
+        for s in att:
+            st.fold_tlm(acc, s.get("_tlm"))
+        out = st.finalize_tlm(acc, 2)
+        self.assertEqual(out["n_tlm"], 2)
+        self.assertEqual(out["stats"]["max_g"], {"v": 4.0, "n": 1})
+        self.assertEqual(out["stats"]["uec_end"]["n"], 2)
+
+    def test_fold_basic(self):
         acc = st.new_acc()
         st.fold_tlm(acc, {"max_g": 4.0, "uec_end": 500, "dist_m": 100.0,
                           "uec_series": [["2026-11-24T19:00:00", 5]], "warn": {"pwr": 1}})
