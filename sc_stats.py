@@ -6161,10 +6161,11 @@ TLM_MEMBER_MAX = 256 * 1024 ** 2
 TLM_TOTAL_MAX = 8 * 1024 ** 3
 ARCHIVE_MEMBER_MAX = 256 * 1024 ** 2
 TLM_ENTRIES_MAX = 100000
+TLM_SUM_MAX = 256 * 1024
 
 
 def _safe_name(rx, name):
-    return (isinstance(name, str) and bool(rx.match(name))
+    return (isinstance(name, str) and bool(rx.fullmatch(name))
             and not _WIN_RESERVED.match(name.split(".")[0]))
 
 
@@ -6184,13 +6185,18 @@ def _clean_entry(e):
             if v is not None and not (isinstance(v, str) and len(v) <= 64):
                 return None
         elif k == "groups":
-            if not isinstance(v, list) or any(g not in _TLM_GROUP_NAMES for g in v):
+            if not isinstance(v, list) or any(not isinstance(g, str) or g not in _TLM_GROUP_NAMES for g in v):
                 return None
         elif k == "v":
             if not isinstance(v, int) or isinstance(v, bool):
                 return None
         elif k == "sum":
             if not isinstance(v, dict):
+                return None
+            try:
+                if len(json.dumps(v)) > TLM_SUM_MAX:
+                    return None
+            except (TypeError, ValueError):
                 return None
         elif k == "empty":
             if not isinstance(v, bool):

@@ -178,6 +178,25 @@ class Import(BackupBase):
         self.assertNotIn("evil", idx["20260501-100000.jsonl.gz"])
         self.assertNotIn("__proto__", idx["20260501-100000.jsonl.gz"])
 
+    def test_unhashable_groups_rejected_import_continues(self):
+        es = [{"file": "20260501-100000.jsonl.gz", "groups": [[1]]},
+              {"file": "20260502-100000.jsonl.gz", "groups": [{}]},
+              {"file": "20260503-100000.jsonl.gz", "groups": ["flight"]}]
+        self.assertEqual(sc_stats.import_telemetry(es, {}, root=self.root_b), 1)
+
+    def test_trailing_newline_rejected(self):
+        self.assertEqual(sc_stats.import_telemetry(
+            [{"file": "20260501-100000.jsonl.gz
+"}, {"file": "20260502-100000.jsonl.gz", "channel": "LIVE
+"}],
+            {"LIVE
+/a.jsonl.gz": b"x", "LIVE/b.jsonl.gz
+": b"x"}, root=self.root_b), 0)
+
+    def test_big_sum_rejected(self):
+        e = {"file": "20260501-100000.jsonl.gz", "sum": {"a": "x" * 300000}}
+        self.assertEqual(sc_stats.import_telemetry([e], {}, root=self.root_b), 0)
+
     def test_existing_entries_untouched(self):
         name = "20260501-100000.jsonl.gz"
         before = dict(st.load_index(self.root)[name])
