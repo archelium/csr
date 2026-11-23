@@ -6137,15 +6137,10 @@ def export_zip_file(root=None, archive_file=None):
 
 
 def export_payload(include_recordings, root=None, archive_file=None):
-    """(body, content type, filename). JSON carries the archive plus the telemetry
-    summaries. With recordings it is a zip of that JSON and the recording files."""
+    """(body, content type, filename) for the JSON export: the archive plus the telemetry
+    summaries. The zip with recordings is streamed from export_zip_file instead."""
     if include_recordings:
-        tmp, name = export_zip_file(root, archive_file)
-        try:
-            with open(tmp, "rb") as f:
-                return f.read(), "application/zip", name
-        finally:
-            os.remove(tmp)
+        raise ValueError("use export_zip_file for recordings")
     root = root or sc_tlm_stats.tlm_dir(app_dir())
     obj = _archive_object(archive_file)
     obj["telemetry"] = list(sc_tlm_stats.load_index(root).values())
@@ -6154,48 +6149,122 @@ def export_payload(include_recordings, root=None, archive_file=None):
             "CSR-archive-%s.json" % stamp)
 
 
+class ImportTooLarge(ValueError):
+    pass
+
+
+_TOO_LARGE = "Import stopped. A recording in the zip is too large."
+_WIN_RESERVED = re.compile(r"^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$", re.I)
+_TLM_ENTRY_KEYS = ("file", "channel", "started", "ended", "build", "groups", "v", "sum", "empty")
+_TLM_GROUP_NAMES = frozenset([g for g, _ in sc_telemetry.GROUPS] + ["other", "force_feedback"])
+TLM_MEMBER_MAX = 256 * 1024 ** 2
+TLM_TOTAL_MAX = 8 * 1024 ** 3
+ARCHIVE_MEMBER_MAX = 256 * 1024 ** 2
+TLM_ENTRIES_MAX = 100000
+
+
+def _safe_name(rx, name):
+    return (isinstance(name, str) and bool(rx.match(name))
+            and not _WIN_RESERVED.match(name.split(".")[0]))
+
+
+def _clean_entry(e):
+    """Whitelisted, type-checked copy of an imported index entry. None when it fails."""
+    if not isinstance(e, dict) or not _safe_name(_TLM_FILE_RE, e.get("file")):
+        return None
+    out = {"file": e["file"]}
+    for k in _TLM_ENTRY_KEYS[1:]:
+        if k not in e:
+            continue
+        v = e[k]
+        if k == "channel":
+            if v is not None and not _safe_name(_TLM_CHANNEL_RE, v):
+                return None
+        elif k in ("started", "ended", "build"):
+            if v is not None and not (isinstance(v, str) and len(v) <= 64):
+                return None
+        elif k == "groups":
+            if not isinstance(v, list) or any(g not in _TLM_GROUP_NAMES for g in v):
+                return None
+        elif k == "v":
+            if not isinstance(v, int) or isinstance(v, bool):
+                return None
+        elif k == "sum":
+            if not isinstance(v, dict):
+                return None
+        elif k == "empty":
+            if not isinstance(v, bool):
+                return None
+        out[k] = v
+    return out
+
+
+def _copy_bounded(src, out, limit):
+    """Copy at most `limit` bytes. Returns the count. ImportTooLarge when there is more."""
+    n = 0
+    while True:
+        chunk = src.read(1024 * 1024)
+        if not chunk:
+            return n
+        n += len(chunk)
+        if n > limit:
+            raise ImportTooLarge(_TOO_LARGE)
+        out.write(chunk)
+
+
 def import_telemetry(entries, files, root=None):
     """Add index entries and recording files that are not there yet (same file name).
-    `files` maps "<channel>/<file>" to bytes or a callable returning a binary stream.
-    Returns how many recordings were added."""
+    `files` maps "<channel>/<file>" to bytes or a callable returning (stream, header size).
+    Returns how many recordings were added. Raises ImportTooLarge past the size limits
+    (what was added before stays)."""
     root = root or sc_tlm_stats.tlm_dir(app_dir())
     added = set()
+    total = 0
     with sc_tlm_stats._index_lock:
         idx = sc_tlm_stats.load_index(root)
-        have = {os.path.basename(p) for p in sc_tlm_stats.recording_files(root)}
-        for e in entries if isinstance(entries, list) else []:
-            name = e.get("file") if isinstance(e, dict) else None
-            if (not isinstance(name, str) or not _TLM_FILE_RE.match(name)
-                    or name in idx):
-                continue
-            idx[name] = e
-            added.add(name)
-        for key, src in (files or {}).items():
-            chan, _sep, name = str(key).partition("/")
-            if (not _TLM_CHANNEL_RE.match(chan) or not _TLM_FILE_RE.match(name)
-                    or name in have):
-                continue
-            d = os.path.join(root, chan)
-            os.makedirs(d, exist_ok=True)
-            dest, tmp = os.path.join(d, name), os.path.join(d, name + ".import.tmp")
-            try:
-                with open(tmp, "wb") as out:
-                    if isinstance(src, (bytes, bytearray)):
-                        out.write(src)
-                    else:
-                        with src() as r:
-                            shutil.copyfileobj(r, out)
-                os.replace(tmp, dest)
-            except OSError:
+        try:
+            have = {os.path.basename(p) for p in sc_tlm_stats.recording_files(root)}
+            for e in (entries[:TLM_ENTRIES_MAX] if isinstance(entries, list) else []):
+                c = _clean_entry(e)
+                if c is not None and c["file"] not in idx:
+                    idx[c["file"]] = c
+                    added.add(c["file"])
+            for key, src in (files or {}).items():
+                chan, _sep, name = str(key).partition("/")
+                if (not _safe_name(_TLM_CHANNEL_RE, chan) or not _safe_name(_TLM_FILE_RE, name)
+                        or name in have):
+                    continue
+                d = os.path.join(root, chan)
+                os.makedirs(d, exist_ok=True)
+                dest, tmp = os.path.join(d, name), os.path.join(d, name + ".import.tmp")
                 try:
-                    os.remove(tmp)
-                except OSError:
-                    pass
-                continue
-            have.add(name)
-            added.add(name)
-        if added:
-            sc_tlm_stats.save_index(root, idx)
+                    with open(tmp, "wb") as out:
+                        if isinstance(src, (bytes, bytearray)):
+                            if len(src) > TLM_MEMBER_MAX or total + len(src) > TLM_TOTAL_MAX:
+                                raise ImportTooLarge(_TOO_LARGE)
+                            out.write(src)
+                            total += len(src)
+                        else:
+                            stream, declared = src()
+                            with stream:
+                                if declared > TLM_MEMBER_MAX or total + declared > TLM_TOTAL_MAX:
+                                    raise ImportTooLarge(_TOO_LARGE)
+                                total += _copy_bounded(
+                                    stream, out, min(TLM_MEMBER_MAX, TLM_TOTAL_MAX - total))
+                    os.replace(tmp, dest)
+                except Exception as ex:
+                    try:
+                        os.remove(tmp)
+                    except OSError:
+                        pass
+                    if not isinstance(ex, OSError):
+                        raise
+                    continue
+                have.add(name)
+                added.add(name)
+        finally:
+            if added:
+                sc_tlm_stats.save_index(root, idx)
     return len(added)
 
 
@@ -6207,22 +6276,31 @@ def import_zip_file(path, root=None, archive_file=None, merge=True):
         arch = [i for i in z.infolist() if _ARCHIVE_MEMBER_RE.match(i.filename)]
         if not arch:
             raise ValueError("no CSR archive in that zip")
-        if arch[0].file_size > 1024 ** 3:
+        if arch[0].file_size > ARCHIVE_MEMBER_MAX:
             raise ValueError("archive file too large")
-        text = z.read(arch[0]).decode("utf-8", "replace")
+        with z.open(arch[0]) as f:
+            raw = f.read(ARCHIVE_MEMBER_MAX + 1)
+        if len(raw) > ARCHIVE_MEMBER_MAX:
+            raise ValueError("archive file too large")
+        try:
+            obj = json.loads(raw.decode("utf-8", "replace"))
+            sessions = [_deser_session(x) for x in obj.get("sessions", [])]
+            entries = obj.get("telemetry")
+        except Exception:
+            raise ValueError("that archive can't be read")
+        del raw
+        added = total = 0
+        if merge:
+            added, total = import_archive_file(sessions)
         files = {}
         for i in z.infolist():
             parts = i.filename.split("/")
             if (len(parts) == 3 and parts[0] == "telemetry" and not i.is_dir()
-                    and _TLM_CHANNEL_RE.match(parts[1]) and _TLM_FILE_RE.match(parts[2])):
+                    and _safe_name(_TLM_CHANNEL_RE, parts[1])
+                    and _safe_name(_TLM_FILE_RE, parts[2])):
                 files["%s/%s" % (parts[1], parts[2])] = (
-                    lambda n=i.filename: z.open(n))
-        try:
-            entries = json.loads(text).get("telemetry")
-        except Exception:
-            raise ValueError("that archive can't be read")
+                    lambda n=i: (z.open(n), n.file_size))
         n = import_telemetry(entries, files, root=root)
-    added, total = import_archive_file(text) if merge else (0, 0)
     return {"added": added, "total": total, "telemetry": n}
 
 
@@ -13203,14 +13281,18 @@ def serve(out_path, port=7878, explicit_logs=None, open_browser=True,
                     except Exception:
                         tl = None
                     n = import_telemetry(tl, {}, root=tlm_root)
-                    if n:
-                        sc_tlm_stats.refresh_index(tlm_root, skip=tlm_skip())
                 except Exception as e:
                     self._send(200, json.dumps({"ok": False, "error": str(e)}))
                     return
+                note = None
+                if n:
+                    try:
+                        sc_tlm_stats.refresh_index(tlm_root, skip=tlm_skip())
+                    except Exception as e:
+                        note = "Recordings imported, index update failed: %s" % e
                 do_generate()                      # rebuild the dashboard from the merged archive
                 self._send(200, json.dumps({"ok": True, "added": added, "total": total,
-                                            "telemetry": n,
+                                            "telemetry": n, "note": note,
                                             "log_count": state["log_count"]}))
             elif p == "/api/import-zip":           # backup zip with recordings
                 try:
@@ -13221,9 +13303,13 @@ def serve(out_path, port=7878, explicit_logs=None, open_browser=True,
                 if tmp is None:
                     self._send(200, json.dumps({"ok": False, "error": "file is empty or over 2 GB"}))
                     return
+                note = None
                 try:
                     res = import_zip_file(tmp, root=tlm_root)
-                    sc_tlm_stats.refresh_index(tlm_root, skip=tlm_skip())
+                    try:
+                        sc_tlm_stats.refresh_index(tlm_root, skip=tlm_skip())
+                    except Exception as e:
+                        note = "Recordings imported, index update failed: %s" % e
                 except zipfile.BadZipFile:
                     self._send(200, json.dumps({"ok": False, "error": "not a zip file"}))
                     return
@@ -13233,7 +13319,8 @@ def serve(out_path, port=7878, explicit_logs=None, open_browser=True,
                 finally:
                     os.remove(tmp)
                 do_generate()
-                self._send(200, json.dumps({"ok": True, **res, "log_count": state["log_count"]}))
+                self._send(200, json.dumps({"ok": True, **res, "note": note,
+                                            "log_count": state["log_count"]}))
             elif p == "/api/console":
                 try:
                     want = bool(json.loads(self._body() or "{}").get("show"))

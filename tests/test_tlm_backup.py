@@ -6,6 +6,7 @@ import sys
 import tempfile
 import unittest
 import zipfile
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import sc_stats  # noqa: E402
@@ -29,7 +30,12 @@ class BackupBase(IndexBase):
         st.refresh_index(self.root)
 
     def payload(self, rec):
-        return sc_stats.export_payload(rec, root=self.root, archive_file=self.arch)
+        if not rec:
+            return sc_stats.export_payload(False, root=self.root, archive_file=self.arch)
+        tmp, name = sc_stats.export_zip_file(self.root, self.arch)
+        self.addCleanup(lambda: os.path.exists(tmp) and os.remove(tmp))
+        with open(tmp, "rb") as f:
+            return f.read(), "application/zip", name
 
 
 class Export(BackupBase):
@@ -97,6 +103,96 @@ class Import(BackupBase):
             z.writestr("hello.txt", b"x")
         with self.assertRaises(ValueError):
             sc_stats.import_zip_file(zpath, root=self.root_b, archive_file=None, merge=False)
+
+    def _zip(self, members):
+        zpath = os.path.join(self.other.name, "t.zip")
+        with zipfile.ZipFile(zpath, "w") as z:
+            z.writestr("CSR-archive-2026-01-01.json", json.dumps({"sessions": []}))
+            for k, v in members.items():
+                z.writestr(k, v)
+        return zpath
+
+    def _imp(self, zpath):
+        return sc_stats.import_zip_file(zpath, root=self.root_b, archive_file=None, merge=False)
+
+    def test_member_over_limit_stops(self):
+        zpath = self._zip({"telemetry/LIVE/a.jsonl.gz": b"x" * 100,
+                           "telemetry/LIVE/b.jsonl.gz": b"x" * 10})
+        with mock.patch.object(sc_stats, "TLM_MEMBER_MAX", 50):
+            with self.assertRaises(sc_stats.ImportTooLarge) as cm:
+                self._imp(zpath)
+        self.assertIn("too large", str(cm.exception))
+        self.assertEqual(st.recording_files(self.root_b), [])
+        self.assertEqual([f for d in os.listdir(self.root_b) if os.path.isdir(os.path.join(self.root_b, d))
+                          for f in os.listdir(os.path.join(self.root_b, d))], [])
+
+    def test_lying_header_is_caught(self):
+        zpath = self._zip({"telemetry/LIVE/a.jsonl.gz": b"x" * 100})
+        real = zipfile.ZipInfo
+        orig = sc_stats.zipfile.ZipFile.infolist
+
+        def liar(zf):
+            out = orig(zf)
+            for i in out:
+                if i.filename.startswith("telemetry/"):
+                    i.file_size = 1
+            return out
+        with mock.patch.object(sc_stats, "TLM_MEMBER_MAX", 50),                 mock.patch.object(zipfile.ZipFile, "infolist", liar):
+            with self.assertRaises((sc_stats.ImportTooLarge, zipfile.BadZipFile)):
+                self._imp(zpath)
+        self.assertEqual(st.recording_files(self.root_b), [])
+        self.assertEqual(os.listdir(os.path.join(self.root_b, "LIVE")), [])
+
+    def test_understated_size_caught_while_copying(self):
+        src = {"LIVE/a.jsonl.gz": lambda: (io.BytesIO(b"x" * 100), 1)}
+        with mock.patch.object(sc_stats, "TLM_MEMBER_MAX", 50):
+            with self.assertRaises(sc_stats.ImportTooLarge):
+                sc_stats.import_telemetry([], src, root=self.root_b)
+        self.assertEqual(os.listdir(os.path.join(self.root_b, "LIVE")), [])
+
+    def test_total_limit(self):
+        zpath = self._zip({"telemetry/LIVE/a.jsonl.gz": b"x" * 40,
+                           "telemetry/LIVE/b.jsonl.gz": b"x" * 40})
+        with mock.patch.object(sc_stats, "TLM_TOTAL_MAX", 60):
+            with self.assertRaises(sc_stats.ImportTooLarge):
+                self._imp(zpath)
+
+    def test_archive_member_cap(self):
+        zpath = self._zip({})
+        with mock.patch.object(sc_stats, "ARCHIVE_MEMBER_MAX", 5):
+            with self.assertRaises(ValueError):
+                self._imp(zpath)
+
+    def test_entry_whitelist(self):
+        good = {"file": "20260501-100000.jsonl.gz", "channel": "LIVE", "started": "2026-05-01T10:00:00",
+                "ended": None, "build": "1", "groups": ["flight"], "v": 3, "sum": {"a": 1},
+                "evil": "x", "__proto__": {}}
+        bad_type = {"file": "20260502-100000.jsonl.gz", "v": "3"}
+        bad_group = {"file": "20260503-100000.jsonl.gz", "groups": ["nope"]}
+        bad_chan = {"file": "20260504-100000.jsonl.gz", "channel": "../x"}
+        self.assertEqual(sc_stats.import_telemetry(
+            [good, bad_type, bad_group, bad_chan, "x", {"file": "CON.jsonl.gz"}], {},
+            root=self.root_b), 1)
+        idx = st.load_index(self.root_b)
+        self.assertEqual(list(idx), ["20260501-100000.jsonl.gz"])
+        self.assertNotIn("evil", idx["20260501-100000.jsonl.gz"])
+        self.assertNotIn("__proto__", idx["20260501-100000.jsonl.gz"])
+
+    def test_existing_entries_untouched(self):
+        name = "20260501-100000.jsonl.gz"
+        before = dict(st.load_index(self.root)[name])
+        sc_stats.import_telemetry([{"file": name, "v": 99}], {}, root=self.root)
+        self.assertEqual(st.load_index(self.root)[name], before)
+
+    def test_entry_cap(self):
+        with mock.patch.object(sc_stats, "TLM_ENTRIES_MAX", 2):
+            es = [{"file": "2026050%d-100000.jsonl.gz" % i} for i in range(5)]
+            self.assertEqual(sc_stats.import_telemetry(es, {}, root=self.root_b), 2)
+
+    def test_reserved_names(self):
+        files = {"LIVE/nul.jsonl.gz": b"x", "LIVE/COM1.jsonl.gz": b"x", "con/ok.jsonl.gz": b"x",
+                 "LIVE/lpt9.jsonl.gz": b"x", "LIVE/fine.jsonl.gz": b"x"}
+        self.assertEqual(sc_stats.import_telemetry([], files, root=self.root_b), 1)
 
 
 if __name__ == "__main__":
