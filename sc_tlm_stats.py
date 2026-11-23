@@ -11,6 +11,8 @@ Rules that hold throughout:
   last row carries the end time, so unchanged stretches count in full.
 - Records (max/min) include the `^` / `_` peaks. Totals are exact, only the series is thinned.
 """
+import glob
+import json
 import os
 from datetime import datetime, timedelta
 
@@ -458,3 +460,209 @@ def combine(entries):
                     merged[k] = merged.get(k, 0) + v
             out[key] = merged
     return _round(out)
+
+
+# --- index, retention, matching, career ----------------------------------------------
+
+INDEX_NAME = "index.json"
+CAREER_SERIES_MAX = 400
+MATCH_SLACK = 120       # seconds after a session's end that a recording may still start
+OPEN_WINDOW = 60        # a session ending this close to now may still be running
+
+
+def tlm_dir(app_dir):
+    d = os.path.join(app_dir, "telemetry")
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
+def recording_files(root):
+    return sorted(glob.glob(os.path.join(root, "*", "*.jsonl.gz")))
+
+
+def load_index(root):
+    try:
+        with open(os.path.join(root, INDEX_NAME), "r", encoding="utf-8") as f:
+            idx = json.load(f)
+    except (OSError, ValueError):
+        return {}
+    return idx if isinstance(idx, dict) else {}
+
+
+def save_index(root, idx):
+    os.makedirs(root, exist_ok=True)
+    path = os.path.join(root, INDEX_NAME)
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(idx, f)
+    os.replace(tmp, path)
+
+
+def _skipped(path, skip):
+    return os.path.basename(path) in skip or path in skip
+
+
+def refresh_index(root, skip=frozenset()):
+    """Summarize recordings that are new or have an older summary version. Saves and returns
+    the index. Entries whose file is gone stay as they are."""
+    idx = load_index(root)
+    changed = False
+    for path in recording_files(root):
+        if _skipped(path, skip):
+            continue
+        name = os.path.basename(path)
+        cur = idx.get(name)
+        if cur is not None and cur.get("v", 0) >= SUMMARY_VERSION:
+            continue
+        try:
+            entry = summarize(path)
+        except (OSError, ValueError, EOFError):
+            entry = None
+        if entry is not None:
+            idx[name] = entry
+            changed = True
+    if changed:
+        save_index(root, idx)
+    return idx
+
+
+def _file_started(path, idx):
+    name = os.path.basename(path)
+    try:
+        return datetime.strptime(name.split(".")[0], "%Y%m%d-%H%M%S")
+    except ValueError:
+        return _parse_iso((idx.get(name) or {}).get("started"))
+
+
+def apply_retention(root, keep_days, now, skip=frozenset()):
+    """Delete recordings older than keep_days. Index entries stay. Returns files deleted."""
+    if not keep_days:
+        return 0
+    cutoff = now - timedelta(days=keep_days)
+    idx = load_index(root)
+    n = 0
+    for path in recording_files(root):
+        if _skipped(path, skip):
+            continue
+        started = _file_started(path, idx)
+        if started is not None and started < cutoff:
+            try:
+                os.remove(path)
+                n += 1
+            except OSError:
+                pass
+    return n
+
+
+def disk_usage(root):
+    total = 0
+    for path in recording_files(root):
+        try:
+            total += os.path.getsize(path)
+        except OSError:
+            pass
+    return total
+
+
+def delete_all_recordings(root, skip=frozenset()):
+    n = 0
+    for path in recording_files(root):
+        if _skipped(path, skip):
+            continue
+        try:
+            os.remove(path)
+            n += 1
+        except OSError:
+            pass
+    return n
+
+
+def match(sessions, idx, now=None):
+    """Assign index entries to sessions. Returns ({id(session): [entries]}, unmatched).
+    Times are local naive on both sides."""
+    now = now or datetime.now()
+    rows = []
+    latest = {}
+    for s in sessions:
+        start = s.get("start")
+        if start is None:
+            continue
+        ch = s.get("channel") or "LIVE"
+        rows.append((s, ch, start, start + timedelta(seconds=s.get("dur") or 0)))
+        if ch not in latest or start > latest[ch]:
+            latest[ch] = start
+    windows = []
+    for s, ch, start, end in rows:
+        is_open = abs((now - end).total_seconds()) <= OPEN_WINDOW and start == latest[ch]
+        windows.append((s, ch, start, None if is_open else end + timedelta(seconds=MATCH_SLACK)))
+    matched = {}
+    unmatched = []
+    for entry in sorted(idx.values(), key=lambda e: e.get("started") or ""):
+        started = _parse_iso(entry.get("started"))
+        best = None
+        if started is not None:
+            ch = entry.get("channel") or "LIVE"
+            for s, wch, start, limit in windows:
+                if wch == ch and start <= started and (limit is None or started <= limit):
+                    if best is None or start > best[1]:
+                        best = (s, start)
+        if best is None:
+            unmatched.append(entry)
+        else:
+            matched.setdefault(id(best[0]), []).append(entry)
+    return matched, unmatched
+
+
+def attach(sessions, idx, now=None):
+    """Copies of sessions with `_tlm` where recordings matched. Inputs are not changed."""
+    matched, unmatched = match(sessions, idx, now)
+    out = []
+    for s in sessions:
+        entries = matched.get(id(s))
+        if entries:
+            s = dict(s)
+            s["_tlm"] = combine(entries)
+        out.append(s)
+    return out, unmatched
+
+
+# career folding. Same per-key rules as combine().
+
+def new_acc():
+    return {"n_tlm": 0, "vals": {}, "n": {}, "series": []}
+
+
+def fold_tlm(acc, s_tlm):
+    """Fold one session's combined summary into the career accumulator, in session order."""
+    if s_tlm is None:
+        return
+    acc["n_tlm"] += 1
+    vals, cnt = acc["vals"], acc["n"]
+    for key, v in s_tlm.items():
+        if key == "uec_series":
+            acc["series"].extend(v)
+            continue
+        if key in DICT_ADD_KEYS:
+            cur = vals.setdefault(key, {})
+            for k, x in v.items():
+                cur[k] = cur.get(k, 0) + x
+        elif key in ADD_KEYS:
+            vals[key] = vals.get(key, 0) + v
+        elif key in MAX_KEYS:
+            vals[key] = max(vals[key], v) if key in vals else v
+        elif key in MIN_KEYS:
+            vals[key] = min(vals[key], v) if key in vals else v
+        elif key == "uec_start":
+            vals.setdefault(key, v)
+        elif key == "uec_end":
+            vals[key] = v
+        else:
+            continue
+        cnt[key] = cnt.get(key, 0) + 1
+
+
+def finalize_tlm(acc, sessions):
+    rounded = _round(acc["vals"])
+    stats = {k: {"v": v, "n": acc["n"][k]} for k, v in rounded.items()}
+    return {"n_sessions": sessions, "n_tlm": acc["n_tlm"], "stats": stats,
+            "wallet_series": _thin(acc["series"], CAREER_SERIES_MAX)}
