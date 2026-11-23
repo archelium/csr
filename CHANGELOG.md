@@ -12,6 +12,7 @@ uses [Semantic Versioning](https://semver.org/) (MAJOR.MINOR.PATCH).
   CSR opens on **Since 4.8 wipe**. **Before 4.8 wipe** holds everything earlier. Patches
   go by number, previews and unversioned builds by date. Players who started after the
   wipe see Career only, since it's the same thing.
+  Playtime by Patch fades the patches outside the chosen side of the wipe.
 - **Every page has a menu across the top.** Each section of a page is a tab with its
   icon, its name and its headline number. Only the open tab shows, so pages are a
   fraction of the length. The menu sticks under the top bar and CSR remembers the open

@@ -7990,6 +7990,9 @@ nav a::after{background:var(--menu-bg);border-color:var(--glass-line);box-shadow
   background:linear-gradient(180deg,var(--amber),color-mix(in srgb,var(--amber) 25%,transparent))}
 .pb-bar.sel .pb-val,.pb-bar.sel .pb-x{color:var(--amber)}
 .pb-bars.has-sel .pb-bar:not(.sel) .pb-col{opacity:.45}
+/* a wipe scope: the patches outside it stay, faded */
+.pb-bar.out .pb-col{opacity:.18}
+.pb-bar.out .pb-val,.pb-bar.out .pb-x{opacity:.4}
 .pb-tip{display:none;position:absolute;top:-8px;left:50%;transform:translate(-50%,-100%);z-index:20;width:max-content;max-width:260px;
   padding:9px 11px;border-radius:10px;background:var(--menu-bg);border:1px solid var(--glass-line);box-shadow:var(--menu-shadow);
   font-family:var(--font-mono);font-size:12px;line-height:1.5;color:var(--muted);text-align:left;white-space:normal;pointer-events:none}
@@ -9218,6 +9221,15 @@ function pFeature(p){
 }
 // the scope CSR opens on: since the latest wipe when there was play before it, else the career
 const isEra = k => /^(since|pre)-/.test(k||'');
+// is patch k inside wipe scope e? By number, else by when it was first played
+function inEra(e, k){
+  const m=/^(since|pre)-(.+)$/.exec(e||''); if(!m) return true;
+  const n=s=>{ const p=String(s).split('.').map(Number); return p.length>=2&&p.every(x=>!isNaN(x)) ? p[0]*1000+p[1] : null; };
+  const a=n(k), w=n(m[2]); let after;
+  if(a!=null && w!=null) after=a>=w;
+  else { const f=(A().patches[k]||{}).first, s=((A().eras||{})['since-'+m[2]]||{}).first; after=!!(f&&s&&f>=s); }
+  return m[1]==='since' ? after : !after;
+}
 function defaultScope(){ return Object.keys(A().eras||{}).find(k=>k.startsWith('since-'))||'all'; }
 // full label for headings and the dropdown
 function pLabel(p){
@@ -9325,8 +9337,9 @@ function clusterHTML(v){
 function pbars(el, items, opts={}){
   const max=niceMax(Math.max(1,...items.map(d=>d.value))), peak=Math.max(...items.map(d=>d.value));
   const grid=[0,.25,.5,.75,1].map(f=>`<div class="pb-gl" style="bottom:calc(30px + (100% - 58px) * ${f})"><span>${opts.fmtY?opts.fmtY(max*f):Math.round(max*f)}</span></div>`).join('');
-  const bars=items.map((d,i)=>{ const h=Math.max(1.5, 100*d.value/max).toFixed(2), sel=d.key===opts.sel;
-    return `<button type="button" class="pb-bar${sel?' sel':''}" data-i="${i}" aria-pressed="${sel}" aria-label="${esc(d.full)}: ${esc(d.disp)}. ${sel?'Selected — press to view career':'Filter to this patch'}">`+
+  const bars=items.map((d,i)=>{ const h=Math.max(1.5, 100*d.value/max).toFixed(2), sel=d.key===opts.sel,
+      out=opts.inScope && !opts.inScope(d.key);
+    return `<button type="button" class="pb-bar${sel?' sel':''}${out?' out':''}" data-i="${i}" aria-pressed="${sel}" aria-label="${esc(d.full)}: ${esc(d.disp)}. ${sel?'Selected — press to view career':'Filter to this patch'}">`+
       `<span class="pb-tip" role="tooltip"><b>${esc(d.disp)}</b> · ${esc(d.full)}</span>`+
       `<span class="pb-trk"><span class="pb-val" style="bottom:calc(${h}% + 6px)">${d.value===peak?'<i class="pb-peak">PEAK</i>':''}${esc(d.disp)}</span>`+
       `<span class="pb-col" style="height:${h}%"></span></span><span class="pb-x" title="${esc(d.full)}">${esc(d.label)}</span></button>`; }).join('');
@@ -9351,6 +9364,7 @@ function secOverview(v){
   };
   const items = A().patch_playtime.map(([k,h])=>({key:k, label:pShort(k), value:h, disp:fmt(Math.round(h))+' h', full:pfull(k)}));
   pbars($('#patchChart'), items, {sel: (current==='all'||isEra(current))?null:current, fmtY:x=>Math.round(x)+'h',
+    inScope: isEra(current) ? k=>inEra(current, k) : null,
     onClick:(it)=>{ current = (current===it.key) ? defaultScope() : it.key; renderPatches(); render(); }});
   const rb=$('#patchReset'); if(rb) rb.onclick=()=>{ current=defaultScope(); renderPatches(); render(); };
 }
