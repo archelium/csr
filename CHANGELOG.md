@@ -23,6 +23,11 @@ uses [Semantic Versioning](https://semver.org/) (MAJOR.MINOR.PATCH).
 - **Click any blueprint for its missions.** Every square, set piece, ladder dot and album
   card opens the planner on it: the missions that drop it, the standing each needs, the
   drop chance and a wiki link per mission.
+- **Blueprints with no known source are marked.** The catalogue lists every craftable
+  blueprint in the game files. 920 of 1,628 have no mission and aren't given by default.
+  Their squares are dashed, their cards say "no known source", and the totals split what
+  you're missing into "from missions" and "no known source". Some come from events: your
+  XenoThreat rewards did.
 
 ### Changed
 - **Crafting catalogue updated to 4.10.3**: 1,628 blueprints. The Skarnov rifle and its

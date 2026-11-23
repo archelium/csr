@@ -8141,6 +8141,14 @@ nav a::after{background:var(--menu-bg);border-color:var(--glass-line);box-shadow
 .chead .ccol{font-family:var(--font-mono);font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
 .bsq.on.new{background:var(--amber);border-color:var(--amber)}
 [data-bpplan]{cursor:pointer}
+.bsq.ns,.bdot.ns{border-style:dashed;opacity:.45}
+.ac.ns .st{border-style:dashed}
+.ac.ns:not(.on) .pic img{opacity:.6}
+.bxr-m{font-family:var(--font-mono);font-size:10.5px;color:var(--dim);margin-top:6px;display:flex;flex-direction:column;line-height:1.35}
+.bxr-m span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bxtot .bxkey{display:flex;flex-wrap:wrap;gap:16px;margin-top:12px;font-family:var(--font-mono);font-size:11px;color:var(--muted)}
+.bxtot .bxkey span{display:inline-flex;align-items:center;gap:6px}
+.bxtot .bxkey .bsq{width:14px;height:14px;cursor:default;border-radius:3px}
 .bsq[data-bpplan]:hover,.bdot[data-bpplan]:hover{outline:2px solid var(--cyan);outline-offset:1px}
 .ac[data-bpplan]:hover{border-color:var(--cyan)}
 .alb{display:grid;grid-template-columns:repeat(auto-fill,minmax(168px,1fr));gap:10px}
@@ -9324,6 +9332,11 @@ const BP_CLASSES=['Military','Civilian','Industrial','Stealth','Competition','']
 const BP_CLS_SHORT={Military:'MIL', Civilian:'CIV', Industrial:'IND', Stealth:'STL', Competition:'CMP', '':'Other'};
 const BP_CATS=['Armor','Ship components','FPS weapons','Ship weapons','Flight suits','Magazines & batteries','Mining & salvage','Clothing','Flair & decor'];
 // when each blueprint first arrived, by catalogue key and by name
+// The SC-Wiki records two sources for a blueprint: given by default, or the missions that
+// drop it. With neither, it may come from an event (the XenoThreat batch did) or not be
+// obtainable yet.
+function bpNoSource(r){ return !!r && !r[5] && !(r[6] || (r[7]||[]).length); }
+const BP_NOSRC_TIP=' \u00b7 no known source: no mission drops it';
 function bpRecv(){ const m={}; ((A().career||{}).blueprints||[]).forEach(r=>{ if(r[6]) m[r[6]]=r[3]; m['n:'+r[0].toLowerCase()]=r[3]; }); return m; }
 // ---- the planner ----
 // A blueprint drops from missions; a mission needs a standing with a faction; a
@@ -9347,7 +9360,8 @@ function bpPlanHTML(){
     const head=`<div class="bpph"><b>${link(wikiURL(bpSkin(row[1])),esc(row[1]),'lk')}</b><span class="bpk">${esc(row[3])}${row[4]?' · '+esc(row[4]):''}</span>`+
       (owned?`<span class="bpok">in your library</span>`:row[5]?`<span class="bpok">known from the start</span>`:'')+`</div>`;
     const uns=row[7]||[];
-    if(!uns.length) out=head+`<div class="empty">No unlocking mission is listed for this blueprint${row[5]?' — it is available by default':''}.</div>`;
+    if(!uns.length) out=head+`<div class="empty">${row[5] ? 'Available by default. No mission needed.'
+      : 'No mission drops this. It may come from an event (your XenoThreat rewards did) or not be obtainable yet.'}</div>`;
     else out=head+`<div class="tline">`+uns.map(([mi,chance])=>{
       if(typeof mi!=='number') return `<div class="tev"><span class="tw">${esc(String(mi))}</span><span class="tv"><span class="bph">retired or unknown mission</span></span></div>`;
       const m=M.rows[mi]; const fac=m[MIS_F.FAC], thr=m[MIS_F.THR]||0, stand=m[MIS_F.STAND];
@@ -9378,6 +9392,8 @@ const BP_SLOTS={'Armor':['Helmet','Core','Arms','Legs','Backpack'], 'Flight suit
 function bpBoardHTML(catalog){
   const own=bpOwnedKeys(); const has=(k,n)=>own.has(k)||own.has('n:'+(n||'').toLowerCase());
   // --- armour sets
+  const RK={}; catalog.rows.forEach(r=>{ RK[r[0]]=r; });
+  const ns=k=>bpNoSource(RK[k]);
   const sets=(catalog.sets||[]).map(s=>{ const pcs=s[3].map(p=>({si:p[0],key:p[1],n:p[2],on:has(p[1],p[2])}));
     const o=pcs.filter(p=>p.on).length; return {name:s[0],cat:s[1],w:s[2],pcs,o,t:pcs.length}; });
   const B={partial:sets.filter(s=>s.o&&s.o<s.t), complete:sets.filter(s=>s.o===s.t), untouched:sets.filter(s=>!s.o)};
@@ -9392,7 +9408,8 @@ function bpBoardHTML(catalog){
   const setRow=s=>{ const labels=BP_SLOTS[s.cat]||[];
     const sq=labels.map((L,i)=>{ const p=s.pcs.filter(x=>x.si===i);
       if(!p.length) return `<i class="bsq na" title="no ${L.toLowerCase()} in the catalogue for this set"></i>`;
-      return p.map(x=>`<i class="bsq ${x.on?'on':''}" data-bpplan="${esc(x.key)}" title="${esc(x.n)} — ${x.on?'owned':'missing'} · click for its missions">${L[0]}</i>`).join(''); }).join('');
+      return p.map(x=>{ const n=!x.on&&ns(x.key);
+        return `<i class="bsq ${x.on?'on':''}${n?' ns':''}" data-bpplan="${esc(x.key)}" title="${esc(x.n)} — ${x.on?'owned':'missing'}${n?BP_NOSRC_TIP:' · click for its missions'}">${L[0]}</i>`; }).join(''); }).join('');
     const togo=s.pcs.filter(p=>!p.on).map(p=>labels[p.si]||'').filter(Boolean);
     const tail= s.o===s.t ? `<span class="bsgo done">complete</span>`
       : s.o ? `<span class="bsgo" title="${esc(togo.join(', '))}">${esc(togo.join(', '))} to go</span>`
@@ -9412,7 +9429,8 @@ function bpBoardHTML(catalog){
   const started=ladders.filter(f=>f.o), rest=ladders.filter(f=>!f.o);
   const lad=f=>{ const dots=Array.from({length:maxS},(_,i)=>i+1).map(s=>{ const p=f.sz.find(x=>x.s===s);
       if(!p) return `<i class="bdot na"></i>`;
-      return `<i class="bdot ${p.on?'on':''}" data-bpplan="${esc(p.key)}" title="${esc(p.n)} — ${p.on?'owned':'missing'} · click for its missions">${s}</i>`; }).join('');
+      const n=!p.on&&ns(p.key);
+      return `<i class="bdot ${p.on?'on':''}${n?' ns':''}" data-bpplan="${esc(p.key)}" title="${esc(p.n)} — ${p.on?'owned':'missing'}${n?BP_NOSRC_TIP:' · click for its missions'}">${s}</i>`; }).join('');
     return `<div class="blad"><span class="bsn bxa">${artBox('bp', f.name, 0, 'bxth')}<span>${esc(f.name)}<span class="bpk">${esc(f.kind)}</span></span></span><span class="bsl">${dots}</span><span class="bsc">${f.o}<span class="u">/${f.t}</span></span></div>`; };
   const restH=rest.length?(bpFamAll?rest.map(lad).join(''):'')+`<button class="foot-link" data-bpfa="1">${bpFamAll?'Hide':'Show'} the ${fmt(rest.length)} you haven\u2019t started</button>`:'';
   const singlesOwned=singles.filter(f=>f.o).length;
@@ -9426,7 +9444,8 @@ function bpBoardHTML(catalog){
   const on=r=>has(r[0],r[1]), fresh=r=>{ const d=recv[r[0]]||recv['n:'+r[1].toLowerCase()]; return d && Date.parse(d)>=cut; };
   const sq=(r,label)=>{ const m=meta(r), o=on(r);
     const t=[r[1], m[0]&&m[0]+(m[1]?' grade '+m[1]:''), m[2]].filter(Boolean).join(' \u00b7 ')+(o?' \u2014 owned':' \u2014 missing');
-    return `<i class="bsq ${o?(fresh(r)?'on new':'on'):''}" data-bpplan="${esc(r[0])}" title="${esc(t)} · click for its missions">${esc(label||'')}</i>`; };
+    const n=!o&&bpNoSource(r);
+    return `<i class="bsq ${o?(fresh(r)?'on new':'on'):''}${n?' ns':''}" data-bpplan="${esc(r[0])}" title="${esc(t)}${n?BP_NOSRC_TIP:' \u00b7 click for its missions'}">${esc(label||'')}</i>`; };
   const pic=rs=>{ const img=catalog.img||{}, r=rs.find(x=>on(x)&&img[x[0]])||rs.find(x=>img[x[0]]);
     return `<span class="bxth ph">${ICON.blueprints}${r?artImg(artUrls(img[r[0]],0)):''}</span>`; };
   const status=rs=>{ const o=rs.filter(on).length; return o===rs.length?'complete':o?'partial':'untouched'; };
@@ -9445,12 +9464,16 @@ function bpBoardHTML(catalog){
     return `<div class="card bxboard${opt.one?' one':''}"><h3>${title} <span class="u">\u2014 ${sub}</span></h3><div class="bpbar">${tabs}</div>`+
       `<div class="bsets">${opt.head||''}${cut2.map(x=>x.html).join('')||'<div class="empty">Nothing here.</div>'}${more}</div></div>`; };
   const byCat={}; catalog.rows.forEach(r=>(byCat[r[3]]=byCat[r[3]]||[]).push(r));
-  const cnt=c=>{ const rs=byCat[c]||[]; return {o:rs.filter(on).length, t:rs.length}; };
+  const cnt=c=>{ const rs=byCat[c]||[], miss=rs.filter(r=>!on(r));
+    return {o:rs.filter(on).length, t:rs.length, ns:miss.filter(bpNoSource).length, mi:miss.filter(r=>!bpNoSource(r)).length}; };
   // collection totals
   const totals=`<div class="card bxtot"><h3>Collection <span class="u">\u2014 every blueprint in the game, ${fmt(catalog.rows.length)} in all</span></h3><div class="bxr">`+
     BP_CATS.filter(c=>byCat[c]).map(c=>{ const k=cnt(c), p=k.t?Math.round(100*k.o/k.t):0;
       return `<div class="bxr-c"><div class="bxr-n">${esc(c)}</div><div class="bxr-v"><b>${fmt(k.o)}</b><span>/${fmt(k.t)}</span><em>${p}%</em></div>`+
-        `<div class="bxr-b"><i style="width:${Math.max(p,1)}%"></i></div></div>`; }).join('')+`</div></div>`;
+        `<div class="bxr-b"><i style="width:${Math.max(p,1)}%"></i></div>`+
+        `<div class="bxr-m" title="Missing: ${fmt(k.mi)} that a mission drops, ${fmt(k.ns)} with no known source"><span>${fmt(k.mi)} from missions</span><span>${fmt(k.ns)} no known source</span></div></div>`; }).join('')+
+      `</div><div class="bxkey"><span><i class="bsq on"></i>owned</span><span><i class="bsq on new"></i>this month</span>`+
+      `<span><i class="bsq"></i>missing, a mission drops it</span><span><i class="bsq ns"></i>missing, no known source</span></div></div>`;
   // ship components: a row per type and size, a fixed column per class, the grade on each square
   const comps=byCat['Ship components']||[], runs=[];
   [...new Set(comps.map(typeOf))].forEach(t=>{ const rt=comps.filter(r=>typeOf(r)===t);
@@ -9516,8 +9539,8 @@ function bpAlbumList(catalog){
     if(g!==last){ if(last!==null) out+='</div>'; const all=rs.filter(x=>grp(x)===g);
       out+=`<div class="agh"><b>${esc(g)}</b><span>${fmt(all.filter(on).length)} of ${fmt(all.length)}</span></div><div class="alb">`; last=g; }
     const m=meta(r), o=on(r), d=recv[r[0]]||recv['n:'+r[1].toLowerCase()], nw=o&&d&&Date.parse(d)>=cut, z=sizeOf(r);
-    const st = o ? (nw?'NEW \u00b7 '+ddmm(d).slice(0,6):'OWNED') : r[5] ? 'default' : (r[6]?fmt(r[6])+(r[6]===1?' mission':' missions'):'missing');
-    out+=`<div class="ac ${o?'on':''} ${nw?'new':''}" data-bpplan="${esc(r[0])}" title="${esc(r[1])} · click for its missions"><div class="pic">${ICON.blueprints}${img[r[0]]?artImg(artUrls(img[r[0]],1)):''}<span class="st">${st}</span></div>`+
+    const st = o ? (nw?'NEW \u00b7 '+ddmm(d).slice(0,6):'OWNED') : r[5] ? 'default' : (r[6]?fmt(r[6])+(r[6]===1?' mission':' missions'):'no known source');
+    out+=`<div class="ac ${o?'on':''} ${nw?'new':''}${!o&&bpNoSource(r)?' ns':''}" data-bpplan="${esc(r[0])}" title="${esc(r[1])} · click for its missions"><div class="pic">${ICON.blueprints}${img[r[0]]?artImg(artUrls(img[r[0]],1)):''}<span class="st">${st}</span></div>`+
       `<div class="bd"><div class="nm">${esc(r[1])}</div><div class="cp">${z!=null?`<i>S${z}</i>`:''}${m[0]?`<i>${BP_CLS_SHORT[m[0]]||esc(m[0])}</i>`:''}`+
       `${m[1]?`<i class="g${esc(m[1])}">${esc(m[1])}</i>`:''}${m[2]?`<i>${esc(m[2])}</i>`:''}</div></div></div>`; });
   out+='</div>';
