@@ -4599,6 +4599,8 @@ def blank_patch():
         "sk_lost": [], "sk_sessions": 0, "sk_kill_sessions": 0, "vd_secs": 0,
         # home inventory: [local date, start, inv dict] per session that logged anything
         "inv": [],
+        # telemetry recordings matched to these sessions (sc_tlm_stats career accumulator)
+        "tlm": sc_tlm_stats.new_acc(),
     }
 
 
@@ -4606,6 +4608,7 @@ def fold(agg, s):
     if s.get("handle"):
         _KNOWN_HANDLES.add(s["handle"].lower().strip())
     agg["sessions"] += 1
+    sc_tlm_stats.fold_tlm(agg["tlm"], s.get("_tlm"), s.get("start"))
     agg["seconds"] += s["dur"]
     agg["longest"] = max(agg["longest"], s["dur"])
     if s.get("limited"):
@@ -5530,6 +5533,7 @@ def finalize(agg):
     boot_sum = _episode_summary(agg["boots"], agg["boot_sessions"], agg)
     soft_sum = _episode_summary(agg["softs"], agg["soft_sessions"], agg)
     return {
+        "tlm": sc_tlm_stats.finalize_tlm(agg["tlm"], agg["sessions"]),
         "boots": boot_sum,
         "soft": soft_sum,
         "servers": _server_summary(agg),
@@ -5916,6 +5920,15 @@ def scan_channels(channels, reuse=None):
 def build_from_sessions(sessions, fresh_profile=False):
     """Bucket already-scanned sessions by their stored channel → per-channel
     datasets. Sessions come from the archive (accumulated) + this run's scan."""
+    global _TLM_UNMATCHED
+    # copies carry `_tlm`, the archive's own dicts stay as they are. Telemetry never
+    # fails the page: a bad index leaves the cards out.
+    try:
+        sessions, _TLM_UNMATCHED = sc_tlm_stats.attach(
+            sessions, sc_tlm_stats.load_index(sc_tlm_stats.tlm_dir(app_dir())))
+    except Exception as e:
+        cwarn(f"telemetry stats skipped: {e}")
+        _TLM_UNMATCHED = []
     buckets = defaultdict(list)
     for s in sessions:
         buckets[s.get("channel") or "LIVE"].append(s)
@@ -9360,6 +9373,175 @@ function placesHTML(v){
     barsCard('Most visited places','sessions · top 15','placeBars')+
     noteFold(`Logged when you land or dock, and when an inventory or shop screen opens. Flybys don’t show.`);
 }
+// ==== telemetry cards ====
+// From recordings matched to sessions (v.tlm). A stat a recording didn't have is absent:
+// its tile is left out, never shown as 0. Coverage is counted per stat.
+const tlmStats = v => (v.tlm && v.tlm.stats) || {};
+const tlmSess = n => `${fmt(n)} ${n===1?'session':'sessions'}`;
+const tlmTanks = x => (!x ? '0' : x>=10 ? fmt(Math.round(x)) : x>=1 ? x.toFixed(1) : x.toFixed(2))+' tanks';
+const tlmNum = x => fmt(+x.toFixed(2));
+// tiles: {k: key or [keys], ic, label, f(values...)}. opts.keys: stats used by opts.body.
+function tlmCard(title, sub, tiles, v, opts={}){
+  const t=v.tlm, st=tlmStats(v);
+  if(!t || !t.n_tlm) return '';
+  const ks=x=>[].concat(x.k);
+  const shown=tiles.filter(x=>ks(x).every(k=>st[k]));
+  const used=(opts.keys||[]).filter(k=>st[k]);
+  const ns=shown.flatMap(x=>ks(x).map(k=>st[k].n)).concat(used.map(k=>st[k].n));
+  if(!ns.length) return '';
+  const top=Math.max(...ns);
+  const minis=shown.map(x=>{
+    const n=Math.min(...ks(x).map(k=>st[k].n));
+    return miniTile(icon(x.ic), x.f(...ks(x).map(k=>st[k].v)), x.label+(n<top?` (${tlmSess(n)})`:''));
+  }).join('');
+  return `<div class="card"${opts.id?` id="${opts.id}"`:''}><h3>${title}${sub?` <span class="u">— ${sub}</span>`:''}</h3>`+
+    (minis?`<div class="minis">${minis}</div>`:'')+(used.length&&opts.body?opts.body:'')+
+    `<div class="bsub">From ${fmt(top)} of ${fmt(t.n_sessions)} sessions with telemetry</div></div>`;
+}
+// One group per page holding that page's telemetry cards. Nothing when no card has data.
+function tlmGroup(n, ic, cards){
+  return cards ? group(n, ic, 'Telemetry', 'From your telemetry recordings', cards) : '';
+}
+function tlmPair(a, b){
+  return a&&b ? `<div class="grid2" style="margin-top:16px">${a}${b}</div>` : (a||b ? `<div style="margin-top:16px">${a||b}</div>` : '');
+}
+// split bar of durations in seconds. Minutes under 2 h, hours above.
+function tlmSplit(el, parts, small){
+  if(!el) return;
+  const total=parts.reduce((a,p)=>a+(p.value||0),0), u=total>=7200?3600:60;
+  splitbar(el, parts.map(p=>({...p, value:Math.round((p.value||0)/u*10)/10})),
+    {big:loadSecs(total), small:small+(u===60?' · minutes':' · hours')});
+}
+// running balance as a step line, points evenly spaced, dates under it
+function stepLine(el, pts){
+  if(!el) return;
+  if(pts.length<2){ el.innerHTML='<div class="empty">No balance changes yet.</div>'; return; }
+  const W=560, H=200, padL=64, padR=12, padT=14, padB=26, plotW=W-padL-padR, plotH=H-padT-padB;
+  const vals=pts.map(p=>p[1]);
+  let lo=Math.min(...vals), hi=Math.max(...vals);
+  if(hi===lo){ hi+=1; lo-=1; }
+  const r=hi-lo;
+  const yf=n=>Math.abs(n)>=1e6&&r>=1e5 ? (n/1e6).toFixed(r>=1e6?1:2)+'M'
+    : Math.abs(n)>=1e3&&r>=100 ? (n/1e3).toFixed(r>=1e3?0:1)+'k' : fmt(Math.round(n));
+  const x=i=>padL+plotW*i/(pts.length-1), y=val=>padT+plotH*(1-(val-lo)/r);
+  let s=`<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet">`;
+  for(let g=0; g<=4; g++){
+    const val=lo+r*g/4, yy=y(val).toFixed(1);
+    s+=`<line x1="${padL}" y1="${yy}" x2="${W-padR}" y2="${yy}" style="stroke:var(--grid)"/>`+
+       `<text class="axis" x="${padL-6}" y="${(+yy+3).toFixed(1)}" text-anchor="end">${yf(val)}</text>`;
+  }
+  let d=`M${x(0).toFixed(1)} ${y(vals[0]).toFixed(1)}`;
+  for(let i=1;i<pts.length;i++) d+=` H${x(i).toFixed(1)} V${y(vals[i]).toFixed(1)}`;
+  s+=`<path d="${d}" fill="none" style="stroke:var(--cyan)" stroke-width="2"/>`;
+  if(pts.length<=120) pts.forEach((p,i)=>{
+    s+=`<circle cx="${x(i).toFixed(1)}" cy="${y(p[1]).toFixed(1)}" r="2.5" style="fill:var(--cyan)"><title>${esc(ddmm(p[0].slice(0,10)))} ${esc(p[0].slice(11,16))}: ${fmt(p[1])} aUEC</title></circle>`;
+  });
+  const marks=[...new Set([0, Math.floor((pts.length-1)/2), pts.length-1])];
+  marks.forEach(i=>{
+    const anchor=i===0?'start':i===pts.length-1?'end':'middle';
+    s+=`<text class="axis" x="${x(i).toFixed(1)}" y="${H-6}" text-anchor="${anchor}">${esc(ddmm(pts[i][0].slice(0,10)))}</text>`;
+  });
+  el.innerHTML=s+'</svg>';
+}
+function tlmWallet(v){
+  return tlmCard('Wallet', 'aUEC', [
+    {k:'uec_end', ic:'credits', label:current==='all'?'Balance now':'Latest balance', f:auec},
+    {k:'uec_earned', ic:'credits', label:'Earned', f:auec},
+    {k:'uec_spent', ic:'spend', label:'Spent', f:auec},
+    {k:['uec_earned','uec_spent'], ic:'scales', label:'Net', f:(e,s)=>(e>s?'+':e<s?'−':'')+auec(Math.abs(e-s))},
+    {k:'uec_max_rise', ic:'credits', label:'Biggest rise', f:auec},
+    {k:'uec_max_drop', ic:'spend', label:'Biggest drop', f:auec},
+  ], v, {id:'tlm-wallet', keys:['uec_end'], body:`<div id="tlmWalletChart"></div>`});
+}
+function tlmWalletMount(v){ stepLine($('#tlmWalletChart'), (v.tlm||{}).wallet_series||[]); }
+const IFCS_NAMES={ifcs_esp:'ESP', ifcs_g_safe:'G-safe', ifcs_g_safe_disabled_by_boost:'G-safe off on boost',
+  ifcs_core:'IFCS core', advanced_hud_enabled_scm:'Advanced HUD (SCM)', advanced_hud_enabled_nav:'Advanced HUD (NAV)',
+  ifcs_spacebreak_enables_boost:'Spacebrake boost'};
+const ifcsName=k=>IFCS_NAMES[k] || (s=>s.charAt(0).toUpperCase()+s.slice(1))(k.replace(/^ifcs_/,'').replace(/_/g,' '));
+function tlmFlightCards(v){
+  const km=m=>(m>=100000 ? fmt(Math.round(m/1000)) : (m/1000).toFixed(1))+' km';
+  const rec=tlmCard('Flight records', '', [
+    {k:'top_speed', ic:'flight', label:'Top speed', f:x=>fmt(Math.round(x))+' m/s'},
+    {k:'max_g', ic:'pulse', label:'Max G', f:x=>x.toFixed(1)+' G'},
+    {k:'dist_m', ic:'space', label:'Distance flown', f:km},
+    {k:'takeoffs', ic:'flight', label:'Take-offs', f:fmt},
+    {k:'landings', ic:'planet', label:'Landings', f:fmt},
+    {k:'gear_cycles', ic:'tools', label:'Gear cycles', f:fmt},
+    {k:'t_boost', ic:'time', label:'Boost time', f:loadSecs},
+    {k:'n_boost_critical', ic:'warning', label:'Boost ran out', f:fmt},
+    {k:'h2_used', ic:'cargo', label:'Hydrogen used', f:tlmTanks},
+    {k:'qt_used', ic:'satellite', label:'Quantum fuel used', f:tlmTanks},
+  ], v, {id:'tlm-flight', keys:['t_nav','t_scm'], body:`<div id="tlmModes"></div>`});
+  const fly=tlmCard('How you fly', 'share of flight time', [], v,
+    {id:'tlm-ifcs', keys:['t_ifcs'], body:`<div class="bars" id="tlmIfcs"></div>`});
+  const wpn=tlmCard('Weapons', 'presets by time used', [], v,
+    {id:'tlm-presets', keys:['presets'], body:`<div class="bars" id="tlmPresets"></div>`});
+  return rec+tlmPair(fly, wpn);
+}
+function tlmFlightMount(v){
+  const st=tlmStats(v);
+  if(st.t_nav||st.t_scm) tlmSplit($('#tlmModes'), [
+    {label:'NAV', value:(st.t_nav||{}).v, color:'#b98bff'},
+    {label:'SCM', value:(st.t_scm||{}).v, color:'#42d0e6'}], 'flying');
+  const fi=$('#tlmIfcs');
+  if(fi && st.t_ifcs){
+    const den=(st.t_flying_ifcs||{}).v||0;
+    hbars(fi, Object.entries(st.t_ifcs.v).filter(([,s])=>s>0).sort((a,b)=>b[1]-a[1]).map(([k,s])=>{
+      const pct=den ? Math.min(100, Math.round(100*s/den)) : 0;
+      return {label:ifcsName(k), value:pct, disp:pct+'%', title:loadSecs(s)};
+    }));
+  }
+  const pr=$('#tlmPresets');
+  if(pr && st.presets) hbars(pr, Object.entries(st.presets.v).sort((a,b)=>b[1]-a[1])
+    .map(([k,s])=>({label:k, value:s, disp:loadSecs(s), color:'#f4a92a'})));
+}
+const LIGHT_NAMES={misl:'Missile', hit:'Hit', prox:'Proximity', shld:'Shields', pwr:'Power', wpn:'Weapons',
+  thr:'Thrusters', cool:'Cooling', qdrv:'Quantum drive', radr:'Radar'};
+const LIGHT_FIRST=['misl','hit','prox'];
+function tlmCombatCards(v){
+  return tlmCard('Warnings &amp; countermeasures', 'warnings by light', [
+    {k:'cm_used', ic:'target', label:'Decoys used', f:x=>fmt(x.DECOY||0)},
+    {k:'cm_used', ic:'satellite', label:'Noise used', f:x=>fmt(x.NOISE||0)},
+  ], v, {id:'tlm-warn', keys:['warn'], body:`<div class="bars" id="tlmWarn"></div>`});
+}
+function tlmCombatMount(v){
+  const el=$('#tlmWarn'), w=(tlmStats(v).warn||{}).v;
+  if(!el || !w) return;
+  const rank=k=>{ const i=LIGHT_FIRST.indexOf(k); return i<0?99:i; };
+  hbars(el, Object.entries(w).sort((a,b)=>rank(a[0])-rank(b[0]) || b[1]-a[1])
+    .map(([k,n])=>({label:LIGHT_NAMES[k]||k, value:n, disp:fmt(n), color:'#ff9147'})));
+}
+function tlmActivityCards(v){
+  const body=tlmCard('On foot &amp; in seat', 'time split', [], v,
+    {id:'tlm-body', keys:['t_on_foot','t_eva','t_seated','t_pilot','t_gunner','t_crew'],
+     body:`<div class="grid2"><div id="tlmLoco"></div><div id="tlmCrew"></div></div>`});
+  const temp=x=>Math.round(x)+' °C';
+  const surv=tlmCard('Survival', '', [
+    {k:'n_downed', ic:'medical', label:'Times downed', f:fmt},
+    {k:'n_dead', ic:'deaths', label:'Deaths', f:fmt},
+    {k:'t_no_air', ic:'warning', label:'Out of air', f:loadSecs},
+    {k:'min_health', ic:'medical', label:'Lowest health', f:x=>fmt(Math.round(x))},
+    {k:'t_starving', ic:'time', label:'Starving', f:loadSecs},
+    {k:'t_dehydrated', ic:'time', label:'Dehydrated', f:loadSecs},
+    {k:'max_radiation', ic:'warning', label:'Peak radiation', f:tlmNum},
+    {k:'max_intox', ic:'pulse', label:'Peak intoxication', f:tlmNum},
+    {k:'max_ext_temp', ic:'day', label:'Hottest surroundings', f:temp},
+    {k:'min_ext_temp', ic:'night', label:'Coldest surroundings', f:temp},
+  ], v, {id:'tlm-survival'});
+  return tlmPair(body, surv);
+}
+function tlmActivityMount(v){
+  const st=tlmStats(v), s=k=>(st[k]||{}).v;
+  if(st.t_on_foot||st.t_eva||st.t_seated) tlmSplit($('#tlmLoco'), [
+    {label:'On foot', value:s('t_on_foot'), color:'#4ade80'},
+    {label:'EVA', value:s('t_eva'), color:'#b98bff'},
+    {label:'Seated', value:s('t_seated'), color:'#42d0e6'}], 'on foot, EVA, seated');
+  if(st.t_pilot||st.t_gunner||st.t_crew) tlmSplit($('#tlmCrew'), [
+    {label:'Pilot', value:s('t_pilot'), color:'#42d0e6'},
+    {label:'Gunner', value:s('t_gunner'), color:'#ff9147'},
+    {label:'Crew', value:s('t_crew'), color:'#f4a92a'}], 'pilot, gunner, crew');
+}
+
 function secFlight(v){
   // per-session/per-hour rates only mean something where jumps were actually logged
   const jps = (v.qt_known!==false && v.sessions) ? (v.qt/v.sessions).toFixed(1) : null;
@@ -9410,8 +9592,10 @@ function secFlight(v){
       placesHTML(v)+
       noteFold(
         `From the HUD notices the game writes to the log, 4.5 onward.`,
-        `A jurisdiction is who owns the space: UEE for open Stanton space, the four corporations for their planets, Ungoverned, Rough &amp; Ready and People\u2019s Alliance for Pyro, Klescher for prison. Armistice-zone notices fire at every hangar door, so entries within ten minutes count as one visit. The calibration notice names the pilot, so a jump someone else started is a crew jump. Party time runs from accepting an invite to leaving the group; a party you host leaves no trace.`))
+        `A jurisdiction is who owns the space: UEE for open Stanton space, the four corporations for their planets, Ungoverned, Rough &amp; Ready and People\u2019s Alliance for Pyro, Klescher for prison. Armistice-zone notices fire at every hangar door, so entries within ten minutes count as one visit. The calibration notice names the pilot, so a jump someone else started is a crew jump. Party time runs from accepting an invite to leaving the group; a party you host leaves no trace.`))+
+    tlmGroup(4,'pulse',tlmFlightCards(v))
   ;
+  tlmFlightMount(v);
   const byTime = v.ships_rank==='time';
   const shipItems=(v.ships_top||[]).map(([n,c,first,last,to,aboard,seat])=>({label:n, full:n,
     value: byTime ? aboard : c, href:wikiURL(n),
@@ -9516,7 +9700,9 @@ function secCombat(v){
         [icon('deaths'), fmt(v.corpse_loots||0), 'Corpse loots (approx.)', `gear stripped off NPC bodies`],
       ])
     )+
+    tlmGroup(6,'warning',tlmCombatCards(v))+
     `${NOTE}`;
+  tlmCombatMount(v);
   hbars($('#gunBars'), toItems(guns.map(w=>[w[0],w[1]]), null, true), {art:'gun'});
   hbars($('#toolBars'), toItems(tools.map(w=>[w[0],w[1]]), null, true).map(x=>({...x,tool:true})), {art:'item'});
   splitbar($('#causeChart'), [{label:'Collision',value:dc.collision,color:'#ff9147'},{label:'Destroyed / other',value:dc.other,color:'#ff5468'}], {big:v.deaths, small:'ship deaths'});
@@ -9651,6 +9837,7 @@ function secEconomy(v){
     group(1,'spend','Spending','Where your aUEC went — every shop purchase your client sent',
       K+`<div class="grid2">`+barsCard('Top items bought','ranked by aUEC spent · qty shown','itemBars')+
       barsCard('What you buy','purchases by item category','catBars')+`</div>`)+commRow+
+    tlmGroup(3,'credits',tlmWallet(v))+
     noteFold(
       `Spend is real — the log carries the price of every purchase. Balance, earnings and sales aren't logged.`,
       `Purchases are grouped by item category rather than store; the shop codes in the log aren't reliable brand names. Fleet size is your ASOP list read at a terminal, so it includes ships bought with aUEC as well as pledges.`);
@@ -9661,6 +9848,7 @@ function secEconomy(v){
   const topShip=bought.find(d=>d.ak==='ship'), lead=topShip||bought[0];
   if(lead) mountHero(lead.ak, lead.label, topShip?'Biggest ship purchase':'Top purchase', lead.disp, lead.href);
   hbars($('#catBars'), (v.buy_cats||[]).map(([n,c])=>({label:n, value:c, disp:fmt(c)+' buys'})));
+  tlmWalletMount(v);
 }
 
 // ---- Blueprints (4.7+) ----
@@ -10008,7 +10196,8 @@ function secActivity(v){
     `<div class="grid3" style="margin-top:16px">`+
     cardHTML('By hour','play start time','hourChart')+
     cardHTML('By weekday','','dowChart')+
-    barsCard('Session length','how long you play','distBars')+`</div>`;
+    barsCard('Session length','how long you play','distBars')+`</div>`+
+    tlmGroup(1,'activity',tlmActivityCards(v));
   const ms=Object.keys(v.months).sort();
   const mitems=ms.map(m=>{const [y,mm]=m.split('-');return {label:MON[+mm-1]+" '"+y.slice(2), value:+(v.months[m]/3600).toFixed(1), disp:(v.months[m]/3600).toFixed(0)+' h', full:m, color:'#3fd0e6'};});
   if(mitems.length) vbars($('#monthChart'), mitems, {h:230, w:Math.max(560,mitems.length*54), rot:true, fmtY:x=>x+'h'});
@@ -10018,6 +10207,7 @@ function secActivity(v){
   vbars($('#hourChart'), v.by_hour.map((c,i)=>({label:(i%3===0?String(i):''), value:c, full:i+':00', disp:c+' sessions', color:'#b98bff'})), {h:210, maxbw:16});
   vbars($('#dowChart'), v.by_dow.map((c,i)=>({label:DOW[i], value:c, full:DOW[i], disp:c+' sessions', color:'#f4a92a'})), {h:210});
   hbars($('#distBars'), (v.session_dist||[]).map(([n,c])=>({label:n, value:c, disp:fmt(c)})));
+  tlmActivityMount(v);
 }
 
 // ---- System & Stability ----

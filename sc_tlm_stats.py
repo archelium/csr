@@ -675,15 +675,18 @@ def attach(sessions, idx, now=None):
 # career folding. Same per-key rules as combine().
 
 def new_acc():
-    return {"n_tlm": 0, "vals": {}, "n": {}, "series": []}
+    return {"n_tlm": 0, "vals": {}, "n": {}, "series": [], "at": {}}
 
 
-def fold_tlm(acc, s_tlm):
-    """Fold one session's combined summary into the career accumulator, in session order."""
+def fold_tlm(acc, s_tlm, at=None):
+    """Fold one session's combined summary into the career accumulator. `at` is the
+    session's start: uec_start and uec_end come from the earliest and latest session.
+    Without it, fold order decides."""
     if s_tlm is None:
         return
     acc["n_tlm"] += 1
     vals, cnt = acc["vals"], acc["n"]
+    ats = acc["at"]
     for key, v in s_tlm.items():
         if key == "uec_series":
             acc["series"].extend(v)
@@ -698,17 +701,29 @@ def fold_tlm(acc, s_tlm):
             vals[key] = max(vals[key], v) if key in vals else v
         elif key in MIN_KEYS:
             vals[key] = min(vals[key], v) if key in vals else v
-        elif key == "uec_start":
-            vals.setdefault(key, v)
-        elif key == "uec_end":
-            vals[key] = v
+        elif key in ("uec_start", "uec_end"):
+            prev = ats.get(key)
+            if key not in vals:
+                take = True
+            elif at is None or prev is None:
+                take = key == "uec_end"
+            else:
+                take = at < prev if key == "uec_start" else at >= prev
+            if take:
+                vals[key] = v
+                ats[key] = at
         else:
             continue
         cnt[key] = cnt.get(key, 0) + 1
+    # flight time of the sessions that have IFCS time, the base for IFCS shares
+    if "t_ifcs" in s_tlm and "t_flying" in s_tlm:
+        vals["t_flying_ifcs"] = vals.get("t_flying_ifcs", 0) + s_tlm["t_flying"]
+        cnt["t_flying_ifcs"] = cnt.get("t_flying_ifcs", 0) + 1
 
 
 def finalize_tlm(acc, sessions):
     rounded = _round(acc["vals"])
     stats = {k: {"v": v, "n": acc["n"][k]} for k, v in rounded.items()}
     return {"n_sessions": sessions, "n_tlm": acc["n_tlm"], "stats": stats,
-            "wallet_series": _thin(acc["series"], CAREER_SERIES_MAX)}
+            "wallet_series": _thin(sorted(acc["series"], key=lambda p: p[0]),
+                                   CAREER_SERIES_MAX)}

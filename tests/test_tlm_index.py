@@ -252,6 +252,15 @@ class CareerTests(unittest.TestCase):
         self.assertEqual(out["wallet_series"], [["2026-11-24T19:00:00", 5]])
         json.dumps(out)
 
+    def test_ifcs_share_base(self):
+        """IFCS shares divide by flight time of the sessions that had settings on."""
+        acc = st.new_acc()
+        st.fold_tlm(acc, {"t_flying": 100.0, "t_ifcs": {"ifcs_esp": 50.0}})
+        st.fold_tlm(acc, {"t_flying": 300.0})
+        s = st.finalize_tlm(acc, 2)["stats"]
+        self.assertEqual(s["t_flying"]["v"], 400.0)
+        self.assertEqual(s["t_flying_ifcs"], {"v": 100.0, "n": 1})
+
     def test_records_and_first_last(self):
         acc = st.new_acc()
         st.fold_tlm(acc, {"max_g": 3.0, "uec_end": 10})
@@ -261,6 +270,68 @@ class CareerTests(unittest.TestCase):
         self.assertEqual(s["max_g"]["v"], 5.5)
         self.assertEqual(s["min_health"], {"v": 10, "n": 2})
         self.assertEqual(s["uec_start"]["v"], 7)
+
+
+class BuildTests(unittest.TestCase):
+    """Career folding through the real page build."""
+
+    def session(self, start, patch):
+        import sc_stats
+        with tempfile.TemporaryDirectory() as d:
+            p = os.path.join(d, "Game.log")
+            with open(p, "w", encoding="utf-8") as fh:
+                fh.write("<2026-11-24T10:00:00.000Z> Log started\n"
+                         "<2026-11-24T10:00:01.000Z> [Notice] <Legacy login response> "
+                         "Handle[archelium] login ok\n"
+                         "<2026-11-24T11:00:00.000Z> end\n")
+            base = sc_stats.scan_log(p)
+        return dict(base, start=start, dur=3600.0, patch=patch, channel="LIVE")
+
+    def entry(self, started, sum_):
+        return {"file": started.strftime("%Y%m%d-%H%M%S") + ".jsonl.gz", "channel": "LIVE",
+                "started": started.isoformat(timespec="seconds"), "v": st.SUMMARY_VERSION,
+                "sum": sum_}
+
+    def test_build_account_folds_tlm(self):
+        import copy
+        import sc_stats
+        t1 = datetime(2026, 11, 20, 19, 0, 0)
+        t2 = datetime(2026, 11, 22, 19, 0, 0)
+        t3 = datetime(2026, 11, 23, 19, 0, 0)
+        # archive order is not time order: the later session comes first
+        sessions = [self.session(t2, "4.3"), self.session(t1, "4.3"),
+                    self.session(t3, "4.2")]
+        before = copy.deepcopy(sessions)
+        idx = {}
+        for t, s in ((t1, {"max_g": 5.0, "dist_m": 100.0, "uec_start": 10, "uec_end": 50,
+                           "uec_series": [[t1.isoformat(), 50]]}),
+                     (t2, {"max_g": 9.0, "dist_m": 200.0, "uec_start": 50, "uec_end": 70,
+                           "uec_series": [[t2.isoformat(), 70]]}),
+                     (datetime(2026, 11, 1, 12, 0, 0), {"max_g": 1.0})):
+            e = self.entry(t, s)
+            idx[e["file"]] = e
+        with tempfile.TemporaryDirectory() as d:
+            root = os.path.join(d, "telemetry")
+            os.makedirs(root)
+            st.save_index(root, idx)
+            with mock.patch.object(sc_stats, "app_dir", return_value=d), \
+                    mock.patch.object(sc_stats, "fetch_profile_cached", return_value=(None, [])):
+                data = sc_stats.build_from_sessions(sessions)
+        self.assertEqual(sessions, before)
+        acct = data["ch"]["LIVE"]["acct"]["archelium"]
+        tl = acct["career"]["tlm"]
+        self.assertEqual((tl["n_sessions"], tl["n_tlm"]), (3, 2))
+        self.assertEqual(tl["stats"]["max_g"], {"v": 9.0, "n": 2})
+        self.assertEqual(tl["stats"]["dist_m"]["v"], 300.0)
+        # first and last by session time, not by fold order
+        self.assertEqual(tl["stats"]["uec_start"]["v"], 10)
+        self.assertEqual(tl["stats"]["uec_end"]["v"], 70)
+        self.assertEqual([p[1] for p in tl["wallet_series"]], [50, 70])
+        self.assertEqual(acct["patches"]["4.2"]["tlm"]["n_tlm"], 0)
+        self.assertEqual(acct["patches"]["4.3"]["tlm"]["n_tlm"], 2)
+        self.assertEqual([e["file"] for e in sc_stats._TLM_UNMATCHED],
+                         ["20261101-120000.jsonl.gz"])
+        json.dumps(data, default=str)
 
 
 if __name__ == "__main__":
