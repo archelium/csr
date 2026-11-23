@@ -47,7 +47,7 @@ import sc_names
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
-CSR_VERSION = "1.10.0"
+CSR_VERSION = "1.11.0"
 CSR_CONTACT = "support@archelium.com"      # publisher/contact (archelium.com)
 # Bump whenever scan_log() learns to extract something new or fixes an extraction bug.
 # A quick refresh reuses archived sessions only when they were parsed by THIS version,
@@ -475,6 +475,54 @@ def save_config(cfg):
         json.dump(cfg, open(config_path(), "w", encoding="utf-8"), indent=2)
     except Exception as e:
         cerr(f"could not save config: {e}")
+
+
+# What you choose in the page that should outlive the browser: pinned blueprints (per
+# account) and your main account (per channel). Kept apart from csr_config.json, which
+# a folder change rewrites whole.
+PREFS_NAME = "csr_prefs.json"
+PREF_KEYS = ("pins", "main")
+
+
+def prefs_path():
+    return os.path.join(app_dir(), PREFS_NAME)
+
+
+def load_prefs():
+    try:
+        d = json.load(open(prefs_path(), encoding="utf-8"))
+    except Exception:
+        d = {}
+    return {k: d.get(k) if isinstance(d.get(k), dict) else {} for k in PREF_KEYS}
+
+
+def save_prefs(prefs):
+    try:
+        json.dump({k: prefs.get(k) or {} for k in PREF_KEYS}, open(prefs_path(), "w", encoding="utf-8"), indent=2)
+        return True
+    except Exception as e:
+        cerr(f"could not save preferences: {e}")
+        return False
+
+
+def merge_prefs(base, incoming):
+    """Fold another set of prefs into base: pins are added per account, existing order
+    first. A channel's main account is only taken when base has none."""
+    out = {k: dict(base.get(k) or {}) for k in PREF_KEYS}
+    for acct, keys in ((incoming or {}).get("pins") or {}).items():
+        if not isinstance(keys, list):
+            continue
+        have = list(out["pins"].get(acct) or [])
+        out["pins"][acct] = have + [k for k in keys if isinstance(k, str) and k not in have]
+    for ch, acct in ((incoming or {}).get("main") or {}).items():
+        if isinstance(acct, str) and acct and not out["main"].get(ch):
+            out["main"][ch] = acct
+    return out
+
+
+def prefs_script(prefs):
+    """The prefs as a JS literal, safe inside a <script>."""
+    return json.dumps(prefs, ensure_ascii=False).replace("</", "<\\/")
 
 
 def _cache_fetched(path):
@@ -2252,10 +2300,10 @@ def _purchase_category(cls):
 # HUD's display strings, matched back to item ids through the wiki item index; about
 # nine in ten resolve, and the id then decides the category (an id is immune to a
 # weapon maker called "…Arms"). The rest are judged from the name.
-_BP_COMP_A = re.compile(r'^(MIL|IND|CIV|STL|CMP)-(\d)([A-D])\s+"(.+)"\s*$', re.I)   # MIL-2A "JS-400"
-_BP_COMP_B = re.compile(r'^(Mil|Ind|Civ|Stl|Cmp)/(\d)/([A-D])\s+(.+?)\s*$', re.I)    # Mil/2/A FR-76
+_BP_COMP_A = re.compile(r'^(MIL|IND|CIV|STL|STH|CMP)-(\d)([A-D])\s+"(.+)"\s*$', re.I)   # MIL-2A "JS-400"
+_BP_COMP_B = re.compile(r'^(Mil|Ind|Civ|Stl|Sth|Cmp)/(\d)/([A-D])\s+(.+?)\s*$', re.I)    # Mil/2/A FR-76, Sth/2/A Umbra
 _BP_CLASS = {"mil": "Military", "ind": "Industrial", "civ": "Civilian",
-             "stl": "Stealth", "cmp": "Competition"}
+             "stl": "Stealth", "sth": "Stealth", "cmp": "Competition"}
 _BP_COMP_KIND = (("cool_", "Cooler"), ("shld_", "Shield generator"), ("powr_", "Power plant"),
                  ("radr_", "Radar"), ("qdrv_", "Quantum drive"), ("fuel_", "Fuel nozzle"),
                  ("qtank", "Quantum fuel tank"), ("fueltank", "Fuel tank"))
@@ -2713,8 +2761,18 @@ def _bp_catalog_payload():
             i = idx.get((dbg or "").lower())
             un.append([i if i is not None else title, chance])
         rows.append([r["k"], r["n"], r["c"], cat, kind, 1 if r["d"] else 0, r["m"], un])
+    # per blueprint, from the item catalogue: [class, grade, maker] and where its picture lives
+    meta, img = {}, {}
+    if ITEMS.ok:
+        for r in rows:
+            c = (r[2] or "").lower()
+            if ITEMS.meta.get(c):
+                meta[r[0]] = ITEMS.meta[c]
+            d = art_src(ITEMS.imgs.get(c))
+            if d:
+                img[r[0]] = d
     return {"version": BPS.version, "n": len(rows), "rows": rows,
-            "sets": _bp_sets(rows), "fams": _bp_families(rows)}
+            "sets": _bp_sets(rows), "fams": _bp_families(rows), "meta": meta, "img": img}
 
 
 def _pretty_shop(name, cats=None):
@@ -4687,19 +4745,53 @@ def _loading_summary(agg):
     }
 
 
+INV_PART_DAYS = 7        # a reading is judged against the week either side of it
+INV_SERIES = 80          # sessions in the per-session chart
+
+
+def _inv_when(st):
+    try:
+        return datetime.fromisoformat(st[:19]) if st else None
+    except ValueError:
+        return None
+
+
+def inv_partial_flags(reads):
+    """reads: [(datetime or None, used)] in time order -> [bool], True for a partial load.
+
+    The game logs an inventory's used capacity only when you move an item, and only what
+    the client has loaded by then. Some sessions load part of it, so the reading dips far
+    below the real figure. A reading is partial when the highest reading in the week before
+    it and the highest in the week after are both at least twice as big. A reading with
+    nothing in the week after is judged on the reading just before it. A real clear-out
+    stays low afterwards and isn't flagged."""
+    w = timedelta(days=INV_PART_DAYS)
+    out = []
+    for i, (t, u) in enumerate(reads):
+        if t is None:
+            out.append(False)
+            continue
+        prior = [x for tt, x in reads[:i] if tt and timedelta(0) <= t - tt <= w]
+        after = [x for tt, x in reads[i + 1:] if tt and timedelta(0) <= tt - t <= w]
+        before = (max(prior) if after else prior[-1]) if prior else 0
+        out.append(before > 0 and before >= 2 * u and (not after or max(after) >= 2 * u))
+    return out
+
+
 def _inventory_summary(agg):
     """The home inventory: the location read in the most sessions. A session's figure is
-    its maximum reading, since an inventory dips while its pages load. None when no
+    its maximum reading, since an inventory dips while its pages load. Sessions that
+    loaded only part of it are flagged and skipped for the headline. None when no
     session logged an inventory line."""
     rows = sorted(agg["inv"], key=lambda r: r[1])
     if not rows:
         return None
-    seen, codes, latest = Counter(), defaultdict(Counter), {}
-    for d, _st, inv in rows:
+    seen, codes, reads = Counter(), defaultdict(Counter), defaultdict(list)
+    for d, st, inv in rows:
         for loc, (used, cap, code) in inv["locs"].items():
             if cap > 0:
                 seen[loc] += 1
-                latest[loc] = (d, used, cap)
+                reads[loc].append((_inv_when(st), d, used, cap))
                 if code:
                     codes[loc][code] += 1
 
@@ -4708,14 +4800,22 @@ def _inventory_summary(agg):
 
     home = home_loc = None
     if seen:
-        loc = home_loc = max(seen, key=lambda k: (seen[k], latest[k][0] or "", k))
-        d, used, cap = latest[loc]
+        loc = home_loc = max(seen, key=lambda k: (seen[k], reads[k][-1][1] or "", k))
+        rs = reads[loc]
+        part = inv_partial_flags([(t, u) for t, _d, u, _c in rs])
+        full = [r for r, p in zip(rs, part) if not p] or rs
+        _t, d, used, cap = full[-1]
+        last = rs[-1]
+        latest = ({"used": round(last[2] / 1e6), "pct": round(100 * last[2] / last[3], 1), "date": last[1]}
+                  if part[-1] else None)
         months = {}
-        for rd, _st, inv in rows:
-            r = inv["locs"].get(loc)
-            if rd and r and r[1] > 0:
+        for (_t, rd, u, c), p in zip(rs, part):
+            if rd and not p:
                 ym = rd[:7]
-                months[ym] = max(months.get(ym, 0), 100 * r[0] / r[1])
+                months[ym] = max(months.get(ym, 0), 100 * u / c)
+        series = [[rd, round(100 * u / c, 1), round(u / 1e6), 1 if p else 0]
+                  for (_t, rd, u, c), p in zip(rs, part)][-INV_SERIES:]
+        flagged = [r[1] for r, p in zip(rs, part) if p]
         ok = fail = 0
         for _d, _st, inv in rows:
             tally = inv["sorts"].get(loc)
@@ -4724,8 +4824,9 @@ def _inventory_summary(agg):
                 fail += tally[1]
         home = {"name": label(loc), "used": round(used / 1e6), "cap": round(cap / 1e6),
                 "pct": round(100 * used / cap, 1), "date": d, "sessions": seen[loc],
+                "latest": latest, "partial": [len(flagged), len(rs), flagged[-1] if flagged else None],
                 "months": [[k, round(v, 1)] for k, v in sorted(months.items())],
-                "sorts": [ok, fail]}
+                "series": series, "sorts": [ok, fail]}
     req = None
     for d, _st, inv in reversed(rows):
         if inv["budget"]:
@@ -4733,8 +4834,16 @@ def _inventory_summary(agg):
             req = {"kb": round(size / 1000), "pct": round(100 * size / INV_CAP_BYTES, 1), "date": d}
             break
     hard = [d for d, _st, inv in rows for b in inv["budget"] if b[1]]
-    others = [[label(k), round(100 * u / c, 1), d] for k, (d, u, c) in latest.items()
-              if k != home_loc]
+    # other places: the highest reading in the week up to the last one, so one partial
+    # load doesn't stand for the whole place
+    others = []
+    for k, rs in reads.items():
+        if k == home_loc:
+            continue
+        t_last = rs[-1][0]
+        recent = [r for r in rs if t_last is None or (r[0] and t_last - r[0] <= timedelta(days=INV_PART_DAYS))] or rs[-1:]
+        _t, d, u, c = max(recent, key=lambda r: r[2] / r[3])
+        others.append([label(k), round(100 * u / c, 1), d])
     others.sort(key=lambda r: (-r[1], r[0]))
     return {"home": home, "req": req, "hard": [len(hard), hard[-1] if hard else None],
             "rewards": sum(inv["rewards"] for _d, _st, inv in rows), "others": others[:5]}
@@ -4951,8 +5060,7 @@ def finalize(agg):
         else:
             gun_named[name] += c
             if name not in gun_meta:
-                tok = (cls or "").split("_")[0].lower()
-                man = tok.upper() if tok in sc_names.WEAPON_MAN else ""
+                man = sc_names.weapon_maker_code(cls).upper()
                 g = sc_names.ITEMS.gun(cls) if sc_names.ITEMS is not None else None
                 gun_meta[name] = list(sc_names.gun_class_labels(cls, name)) + [man, (g or ["", "", ""])[2] or ""]
     # reloads (from AmmoRepool) & carry (stowed/holstered) resolved to gun names,
@@ -5299,8 +5407,59 @@ def patch_key(k):
         return (2, 0, 0, "") if k == UNKNOWN_PATCH else (1, 0, 0, str(k))
 
 
+# Persistent-universe wipes: the patch that reset everyone's progress. CSR opens on the
+# stats since the latest one, and keeps the ones before it as their own scope.
+WIPES = ["4.8"]
+
+
+def _ver_at_least(patch, wipe):
+    """True/False for a numbered patch against a wipe's version, None when the patch has
+    no number (a feature preview, an unversioned build)."""
+    try:
+        a = tuple(int(x) for x in str(patch).split(".")[:2])
+        b = tuple(int(x) for x in str(wipe).split(".")[:2])
+    except ValueError:
+        return None
+    return a >= b if len(a) == 2 else None
+
+
+def split_by_wipe(sessions, wipe):
+    """(after, before) lists of sessions. Numbered patches go by version. A session
+    without one goes by date, against the first session on the wipe patch or later.
+    Both lists come back empty when nothing was played on or after the wipe."""
+    starts = [s["start"] for s in sessions if s.get("start") and _ver_at_least(s.get("patch"), wipe)]
+    if not starts:
+        return [], []
+    w0 = min(starts)
+    after, before = [], []
+    for s in sessions:
+        v = _ver_at_least(s.get("patch"), wipe)
+        if v is None:
+            v = bool(s.get("start") and s["start"] >= w0)
+        (after if v else before).append(s)
+    return after, before
+
+
+def build_eras(sessions):
+    """{'since-4.8': stats, 'pre-4.8': stats} for the latest wipe. Empty when there was
+    no play before it (then the career is the same thing) or none after it."""
+    wipe = WIPES[-1] if WIPES else None
+    if not wipe:
+        return {}
+    after, before = split_by_wipe(sessions, wipe)
+    if not after or not before:
+        return {}
+    eras = {}
+    for key, part in ((f"since-{wipe}", after), (f"pre-{wipe}", before)):
+        agg = blank_patch()
+        for s in part:
+            fold(agg, s)
+        eras[key] = finalize(agg)
+    return eras
+
+
 def build_account(sessions, handle, fresh_profile=False):
-    """Aggregate one account's sessions into {career, patches, showcase, profile...}."""
+    """Aggregate one account's sessions into {career, patches, eras, showcase, profile...}."""
     per_patch = defaultdict(blank_patch)
     career = blank_patch()
     for s in sessions:
@@ -5317,12 +5476,14 @@ def build_account(sessions, handle, fresh_profile=False):
     order = sorted(patches.keys(),
                    key=lambda k: (patches[k].get("first") or "9999", patch_key(k)))
     career_f = finalize(career)
+    eras = build_eras(sessions)
     prof, orgs = fetch_profile_cached(handle, force=fresh_profile)
     months = sorted({m for k in patches for m in patches[k]["months"]})
     return {
         "career": career_f, "patches": patches, "order": order, "months": months,
         "patch_playtime": [[k, patches[k]["hours"]] for k in order],
-        "showcase": build_showcase(career_f, patches, order),
+        "eras": eras,
+        "showcase": build_showcase(career_f, patches, order, eras),
         "profile": prof,
         "orgs": orgs,
     }
@@ -5818,7 +5979,8 @@ def _img_cache_path():
 def load_img_cache():
     try:
         d = json.load(open(_img_cache_path(), encoding="utf-8"))
-        _MAN_IMG.update(d.get("man", {}))
+        if d.get("man_v") == _MAN_VER:
+            _MAN_IMG.update(d.get("man", {}))
         _GUN_PICK.update(d.get("pick", {}))
         _WIKI_LEAD.update(d.get("lead", {}))
         csub(f"art cache mounted — {len(_GUN_PICK)} arms · {len(_MAN_IMG)} makers")
@@ -5828,7 +5990,7 @@ def load_img_cache():
 
 def save_img_cache():
     try:
-        json.dump({"man": _MAN_IMG, "pick": _GUN_PICK, "lead": _WIKI_LEAD},
+        json.dump({"man": _MAN_IMG, "man_v": _MAN_VER, "pick": _GUN_PICK, "lead": _WIKI_LEAD},
                   open(_img_cache_path(), "w", encoding="utf-8"))
     except Exception as e:
         cerr(f"could not save image cache: {e}")
@@ -5840,7 +6002,11 @@ _LOGO_NAME_OVERRIDE = {}
 _LOGO_FILE_OVERRIDE = {
     "Volt": "Verified Offworld Laser Technologies svg.svg",   # default JP0704 svg renders black
     "Anvil Aerospace": "AnvilAerospace.svg",                  # emblem, not the wordmark lockup
+    "Sakura Sun": "Sakura Sun - JP0904.svg",                  # the page's lead image is a photo
+    "Vanduul": "VanduulSwarmLogo.png",                        # the page's lead image is a Vanduul
 }
+# bump when the logo choices above change: cached logos are fetched again once
+_MAN_VER = 2
 
 
 def _man_logo(name):
@@ -5943,12 +6109,14 @@ def _view_showcase(v):
     return {"ships": ships, "guns": guns}
 
 
-def build_showcase(career, patches, order):
-    """Top-3 ships + guns with artwork & classification, per patch AND career."""
+def build_showcase(career, patches, order, eras=None):
+    """Top-3 ships + guns with artwork & classification, per patch, era AND career."""
     cstep("retrieving hull & armament imagery from the fleet registry")
     out = {"all": _view_showcase(career)}
     for k in order:
         out[k] = _view_showcase(patches[k])
+    for k, v in (eras or {}).items():
+        out[k] = _view_showcase(v)
     return out
 
 
@@ -6856,6 +7024,9 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
   /* fixed stamp column: line 2 and the details indent to exactly where line 1's text starts */
   .crow .td{flex:none;width:120px;min-width:120px}
   .crow .cl2{align-items:center;min-height:24px;padding-left:var(--cin)}
+  .crow .cl1{align-items:center}
+  .crow .cl1 .tw .cs{color:var(--dim)}
+  .crow .cl1 .tv{flex:none;white-space:nowrap}
   .crow .cl1 .tw{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted)}
   .crow .cs{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
     font-size:12px;color:var(--dim)}
@@ -7190,7 +7361,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     cursor:pointer;color:var(--cyan);background:transparent;border:1px solid var(--line);
     border-radius:7px;padding:5px 11px;transition:.13s;white-space:nowrap}
   .chart-reset:hover{border-color:var(--cyan);background:rgba(91,209,230,.09)}
-  .patch-meta{color:var(--muted);font-size:12.5px;margin:2px 0 0}
+  .patch-meta{color:var(--muted);font-size:12.5px;margin:2px 0 20px}
 
   /* app shell: sidebar + main */
   .app{display:flex;min-height:100vh}
@@ -7867,6 +8038,9 @@ nav a::after{background:var(--menu-bg);border-color:var(--glass-line);box-shadow
   background:linear-gradient(180deg,var(--amber),color-mix(in srgb,var(--amber) 25%,transparent))}
 .pb-bar.sel .pb-val,.pb-bar.sel .pb-x{color:var(--amber)}
 .pb-bars.has-sel .pb-bar:not(.sel) .pb-col{opacity:.45}
+/* a wipe scope: the patches outside it stay, faded */
+.pb-bar.out .pb-col{opacity:.18}
+.pb-bar.out .pb-val,.pb-bar.out .pb-x{opacity:.4}
 .pb-tip{display:none;position:absolute;top:-8px;left:50%;transform:translate(-50%,-100%);z-index:20;width:max-content;max-width:260px;
   padding:9px 11px;border-radius:10px;background:var(--menu-bg);border:1px solid var(--glass-line);box-shadow:var(--menu-shadow);
   font-family:var(--font-mono);font-size:12px;line-height:1.5;color:var(--muted);text-align:left;white-space:normal;pointer-events:none}
@@ -7973,12 +8147,6 @@ nav a::after{background:var(--menu-bg);border-color:var(--glass-line);box-shadow
 :root[data-theme="light"] .bgrid td.full b,:root[data-theme="light"] .bgrid td.full span{color:#fff}
 .bgrid td.na{border-color:transparent}
 
-/* 4. Planner: "Plan a blueprint" no longer stretches to the height of Standing floors
-      (it was ~600px of empty card before a search). */
-.grid2:has(#bpPlan){align-items:start}
-/* ...and stays in view (sticky under the topbar) while you scroll Standing floors */
-.grid2:has(#bpPlan)>.card:first-child{position:sticky;top:104px}
-#bpPlanQ{width:100%}
 .bppl{font-size:11px}
 
 /* 5. Library list: date column, name and category align on one baseline grid */
@@ -7987,14 +8155,12 @@ nav a::after{background:var(--menu-bg);border-color:var(--glass-line);box-shadow
 #bpList .tev .tv{margin-left:0}
 
 /* ==== spec 6: HUD polish (Nov 2026) ==== */
-/* type baseline: one scale, nothing under 12px, mono for numbers and labels only,
-   notes wrap at a readable width on any window */
+/* type baseline: one scale, nothing under 12px, mono for numbers and labels only */
 :root{--fs-xs:12px;--fs-sm:13px;--fs-md:14px}
 .kpi .l{font-size:var(--fs-xs);letter-spacing:.08em}
 .kpi .s,.gs,.card h3 .u{font-family:var(--font-display);font-size:var(--fs-sm);letter-spacing:0;
   text-transform:none;color:var(--muted)}
 .callout{font-size:var(--fs-md);line-height:1.6}
-.callout>div{max-width:82ch}
 .patch-meta,.foot-disc,.side-foot,.bppl{font-size:var(--fs-xs)}
 .bar-row .nm{font-size:var(--fs-md)}
 .bar-row .vv{font-size:var(--fs-sm)}
@@ -8056,9 +8222,9 @@ nav a::after{background:var(--menu-bg);border-color:var(--glass-line);box-shadow
 /* ---- page art (layout B): a hero on the page's #1, top-3 picture tiles, row thumbnails.
    A subject with no picture keeps its slot: the list's icon on a dark panel, same size,
    so rows stay aligned and the ranking never skips anyone. */
-.phero{position:relative;height:340px;border-radius:var(--r-lg,12px);overflow:hidden;margin:6px 0 26px;
+.phero{position:relative;height:290px;border-radius:var(--r-lg,12px);overflow:hidden;margin:6px 0 16px;
   border:1px solid rgba(91,209,230,.24);background:#070b11 linear-gradient(135deg,#0d1824,#070b11)}
-.phero.nok{height:230px}
+.phero.nok{height:190px}
 .phero .phi{position:absolute;inset:0}
 .phero .phi>img{object-position:center 45%}
 .phi>img,.bgi>img,.bthumb>img,.bxth>img,.sig-art>img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:block}
@@ -8068,14 +8234,14 @@ nav a::after{background:var(--menu-bg);border-color:var(--glass-line);box-shadow
 .phero::after{content:"";position:absolute;inset:0;pointer-events:none;
   background:linear-gradient(90deg,rgba(7,11,17,.96) 0%,rgba(7,11,17,.8) 32%,rgba(7,11,17,.18) 72%,rgba(7,11,17,0) 100%),
              linear-gradient(0deg,rgba(7,11,17,.92),rgba(7,11,17,0) 48%)}
-.phero .ph-tx{position:absolute;left:32px;top:28px;z-index:2;max-width:70%}
+.phero .ph-tx{position:absolute;left:32px;top:22px;z-index:2;max-width:70%}
 .phero .ph-eb{font-family:var(--font-mono);font-size:var(--fs-xs,12px);letter-spacing:.16em;text-transform:uppercase;color:#f4a92a}
 .phero .ph-t{font-family:var(--font-display);font-size:34px;font-weight:700;line-height:1.1;margin-top:8px;color:#fff;
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .phero .ph-t a{color:inherit;text-decoration:none}
 .phero .ph-t a:hover{color:#5bd1e6}
 .phero .ph-s{font-family:var(--font-mono);font-size:var(--fs-sm,13px);color:#9fb4c6;margin-top:8px}
-.phero .ph-k{position:absolute;left:24px;right:24px;bottom:20px;z-index:2}
+.phero .ph-k{position:absolute;left:24px;right:24px;bottom:18px;z-index:2}
 .phero .ph-k .hero{margin:0;display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px}
 .phero .ph-k .kpi{background:rgba(10,18,28,.74);backdrop-filter:blur(6px);border-color:rgba(91,209,230,.22);
   padding:12px 16px;min-height:0;color:#dbe7f4}
@@ -8106,6 +8272,289 @@ nav a::after{background:var(--menu-bg);border-color:var(--glass-line);box-shadow
   background-color:#0b1520;border:1px solid rgba(91,209,230,.16)}
 :root[data-theme="light"] .bgi.ph,:root[data-theme="light"] .bthumb.ph,:root[data-theme="light"] .bxth.ph{
   color:rgba(14,147,168,.5);background:repeating-linear-gradient(135deg,#e7edf4 0 6px,#eef3f8 6px 12px)}
+/* ---- Blueprints collection: totals, every category in the armour-set row style, album */
+.bxtot{margin-bottom:20px}
+.bxr{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}
+.bxr-c{background:var(--tile);border:1px solid var(--line);border-radius:8px;padding:10px 12px;min-width:0}
+.bxr-n{font-family:var(--font-mono);font-size:var(--fs-xs,11px);letter-spacing:.1em;text-transform:uppercase;color:var(--muted);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bxr-v{display:flex;align-items:baseline;gap:4px;margin-top:4px}
+.bxr-v b{font-size:22px;color:var(--txt);font-weight:600;font-variant-numeric:tabular-nums}
+.bxr-v span{color:var(--dim);font-family:var(--font-mono)}
+.bxr-v em{margin-left:auto;font-style:normal;font-family:var(--font-mono);color:var(--cyan);font-size:var(--fs-sm,13px)}
+.bxr-b{height:4px;background:var(--track);border-radius:2px;margin-top:8px;overflow:hidden}
+.bxr-b i{display:block;height:100%;background:var(--cyan)}
+#bpBoard>.bxboard,#bpBoard>.bxalb{margin-top:20px}
+.bxboard .bsl{flex-wrap:wrap;justify-content:flex-end}
+.bxboard .bset .bsn{min-width:170px}
+.bxboard.one .bpbar + .bsets{columns:1}
+.bxboard.one .bset .bsn{flex:0 0 190px}
+.bxboard.one .bsl{flex:1;flex-wrap:nowrap;justify-content:flex-start;overflow:hidden}
+.bxboard.one .bsgo{width:90px}
+.bxboard.one .bsq{width:18px;height:18px;font-size:10px;border-radius:4px}
+.ccol{display:inline-flex;gap:3px;flex:none;margin-right:10px}
+.chead{border-bottom:1px solid var(--line)!important;padding-top:0!important}
+.chead .ccol{font-family:var(--font-mono);font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.bsq.on.new{background:var(--amber);border-color:var(--amber)}
+[data-bpplan]{cursor:pointer}
+.bphunt{margin-bottom:20px;align-items:start}
+.bphit{border-bottom:1px dashed var(--line)}
+.bphit:last-child{border-bottom:0}
+.bph-r{display:flex;align-items:center;gap:10px;padding:8px 2px;cursor:pointer;min-width:0}
+.bph-r:hover{background:var(--tint-cyan)}
+.bph-s{flex:none;width:66px;text-align:center;font-family:var(--font-mono);font-size:10.5px;letter-spacing:.06em;padding:2px 0;border-radius:4px;border:1px solid}
+.bph-s.ok{color:var(--cyan);border-color:var(--cyan)} .bph-s.no{color:var(--amber);border-color:var(--amber)}
+.bph-s.ns{color:var(--dim);border-color:var(--dim);border-style:dashed}
+.bph-n{flex:1;min-width:0;display:flex;flex-direction:column}
+.bph-n b{font-weight:600;color:var(--txt);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bph-n .bpk{margin:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bph-p{flex:0 1 46%;min-width:0;font-size:12px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bph-p .bpst{margin:0 6px 0 0}
+.bphit.own .bph-p{color:var(--dim)}
+.pinwrap{position:relative;align-self:center}
+.pinwrap .iconbtn{position:relative;overflow:visible}
+.pinwrap .iconbtn svg{width:18px;height:18px;display:block}
+.pinwrap.has .iconbtn{color:var(--amber);border-color:rgba(244,169,42,.5)}
+#pinBtn.pinlbl{width:auto;padding:0 10px 0 9px;gap:7px;display:inline-flex;align-items:center}
+#pinBtn.pinlbl .pl-t{font-family:var(--font-mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase}
+#pinBtn.pinlbl .pl-n{display:none;background:var(--amber);color:#06121f;font-family:var(--font-mono);font-size:11px;font-weight:700;
+  border-radius:8px;padding:0 6px;line-height:17px}
+#pinBtn.pinlbl .pl-n.on{display:inline-block}
+@media(max-width:760px){ #pinBtn.pinlbl .pl-t{display:none} }
+.pinmenu{width:380px}
+.pm-it{display:flex;align-items:center;gap:10px;padding:10px 13px;border-bottom:1px solid var(--line);cursor:pointer}
+.pm-it:last-child{border-bottom:0}
+.pm-it:hover{background:var(--tint-cyan)}
+.pm-it.own{opacity:.7}
+.pm-tx{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
+.pm-tx b{font-size:13px;color:var(--txt);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pm-tx span{font-size:11.5px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pm-tx .bpst{margin:0 5px 0 0}
+.pm-empty{padding:14px 13px;font-size:13px;color:var(--muted)}
+.bpin.lbl{width:auto;padding:0 12px;height:30px;margin-left:auto;font-size:12.5px;font-family:var(--font-mono);letter-spacing:.04em;
+  border:1px solid var(--amber);color:var(--amber);white-space:nowrap}
+.bpin.lbl.sm{height:24px;padding:0 8px;font-size:11px;margin-left:0;border-color:var(--line);color:var(--muted)}
+.bpin.lbl:hover{border-color:var(--amber);color:var(--amber)}
+.bpin.lbl.on,.bpin.lbl.sm.on{background:var(--amber);border-color:var(--amber);color:#06121f}
+.ac .pic .bpin.lbl.sm{background:rgba(7,11,17,.8);color:#cfe3f3;border-color:rgba(91,209,230,.35)}
+.ac .pic .bpin.lbl.sm.on{background:var(--amber);color:#06121f;border-color:var(--amber)}
+.bpret{margin-top:8px}
+.bpret summary{cursor:pointer;font-family:var(--font-mono);font-size:11px;letter-spacing:.06em;color:var(--dim);padding:4px 2px}
+.bpret summary:hover{color:var(--muted)}
+.bph-c{flex:none;width:14px;height:14px;display:grid;place-items:center;color:var(--dim)}
+.bph-c::before{content:'';width:6px;height:6px;border-right:1.5px solid currentColor;border-bottom:1.5px solid currentColor;transform:translateX(-2px) rotate(-45deg)}
+.bphit.open .bph-c::before{transform:translateY(2px) rotate(-135deg)}
+.bph-x{padding:4px 0 12px 76px}
+.bpin{all:unset;box-sizing:border-box;flex:none;cursor:pointer;width:24px;height:24px;display:inline-grid;place-items:center;border-radius:5px;
+  color:var(--dim);font-size:15px;line-height:1}
+.bpin:hover{color:var(--amber);background:var(--tint-amber,rgba(244,169,42,.12))}
+.bpin.on{color:var(--amber)}
+.bpin:focus-visible{outline:2px solid var(--cyan)}
+.bpph .bpin{margin-right:6px}
+.ac .pic .bpin{position:absolute;left:6px;top:6px;z-index:1;background:rgba(7,11,17,.72)}
+.bpst.ns{color:var(--dim);border:1px dashed var(--dim)}
+@media(max-width:900px){ .bph-p{display:none} .bph-x{padding-left:0} }
+.bsq.ns,.bdot.ns{border-style:dashed;opacity:.45}
+.ac.ns .st{border-style:dashed}
+.ac.ns:not(.on) .pic img{opacity:.6}
+.bxr-m{font-family:var(--font-mono);font-size:10.5px;color:var(--dim);margin-top:6px;display:flex;flex-direction:column;line-height:1.35}
+.bxr-m span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bxtot .bxkey{display:flex;flex-wrap:wrap;gap:16px;margin-top:12px;font-family:var(--font-mono);font-size:11px;color:var(--muted)}
+.bxtot .bxkey span{display:inline-flex;align-items:center;gap:6px}
+.bxtot .bxkey .bsq{width:14px;height:14px;cursor:default;border-radius:3px}
+.bsq[data-bpplan]:hover,.bdot[data-bpplan]:hover{outline:2px solid var(--cyan);outline-offset:1px}
+/* the top menu: a page's sections as tabs, icon, name and headline number. Sticks under
+   the top bar on wide screens, scrolls sideways when it doesn't fit */
+.snav-at{height:0}
+.snav{display:block;min-width:0;max-width:100%;box-sizing:border-box;position:sticky;top:var(--tbh,0px);z-index:12;margin:0 0 4px;padding:5px;border:1px solid var(--line);border-radius:14px;
+  background:var(--topbar-bg);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px)}
+.snav-in{display:flex;gap:3px;width:100%;min-width:0;overflow-x:auto;scrollbar-width:none;scroll-snap-type:x proximity;overscroll-behavior-x:contain}
+.snav-in::-webkit-scrollbar{display:none}
+.snav-in.ovf{-webkit-mask-image:linear-gradient(90deg,#000 calc(100% - 48px),transparent);mask-image:linear-gradient(90deg,#000 calc(100% - 48px),transparent)}
+.snav-in.ovl{-webkit-mask-image:linear-gradient(90deg,transparent,#000 48px);mask-image:linear-gradient(90deg,transparent,#000 48px)}
+.snav-in.ovf.ovl{-webkit-mask-image:linear-gradient(90deg,transparent,#000 48px,#000 calc(100% - 48px),transparent);mask-image:linear-gradient(90deg,transparent,#000 48px,#000 calc(100% - 48px),transparent)}
+.snav-b{all:unset;box-sizing:border-box;flex:none;scroll-snap-align:start;display:flex;align-items:center;gap:9px;min-height:44px;padding:7px 14px;
+  border-radius:10px;color:var(--muted);cursor:pointer;font-size:14px;font-weight:500;white-space:nowrap;transition:background .12s,color .12s}
+.snav-b i{display:grid;place-items:center;width:20px;height:20px;flex:none}
+.snav-b i svg{width:19px;height:19px;display:block}
+.snav-b b{font-family:var(--font-mono);font-size:11px;font-weight:500;line-height:1;padding:4px 7px;border-radius:999px;background:rgba(139,155,180,.14);color:var(--muted)}
+.snav-b b.warn{color:var(--amber);background:rgba(244,169,42,.14)} .snav-b b.bad{color:var(--red);background:rgba(255,84,104,.14)} .snav-b b.ok{color:var(--green);background:rgba(74,222,128,.12)}
+.snav-b:hover{color:var(--txt);background:rgba(139,155,180,.08)}
+.snav-b.on{color:var(--cyan);background:var(--tint-cyan);box-shadow:inset 0 -2px 0 var(--cyan)}
+.snav-b.on b:not(.warn):not(.bad):not(.ok){background:rgba(91,209,230,.18);color:var(--cyan)}
+.snav-b:focus-visible{outline:2px solid var(--cyan);outline-offset:-2px}
+@media (prefers-reduced-motion:reduce){ .snav-b{transition:none} }
+.snav-sep{flex:none;width:1px;align-self:stretch;margin:8px 3px;background:var(--line)}
+.snav-cap{font-size:13.5px;color:var(--muted);margin:10px 4px 16px}
+.snav + .gsec,.snav + .spage{margin-top:16px}
+.snav-cap + .gsec,.snav-cap + .spage{margin-top:0}
+.gsec.tabbed{margin-top:0}
+.gsec.tabbed>.ghead{display:none}
+.gsec[hidden]{display:none!important}
+.spage{min-width:0;display:flex;flex-direction:column;gap:20px}
+.spage>*{margin-top:0!important}
+.lstrip{margin:0 0 12px}
+/* Blueprints collection: the five pages as chips, Rows or Cards at the end */
+.bpcat{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.bpc{all:unset;box-sizing:border-box;display:flex;align-items:center;gap:8px;min-height:40px;padding:6px 12px;border:1px solid var(--line);border-radius:10px;
+  color:var(--muted);cursor:pointer;font-size:13.5px;white-space:nowrap}
+.bpc i{display:grid;place-items:center;width:18px;height:18px} .bpc i svg{width:17px;height:17px}
+.bpc b{font-family:var(--font-mono);font-size:11px;font-weight:500;color:var(--dim)}
+.bpc:hover{color:var(--txt);border-color:rgba(91,209,230,.4)}
+.bpc.on{color:var(--cyan);border-color:var(--cyan);background:var(--tint-cyan)} .bpc.on b{color:var(--cyan)}
+.bpc:focus-visible{outline:2px solid var(--cyan)}
+.bpcat .vt{margin-left:auto;display:flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.bpcat .vt button{all:unset;cursor:pointer;padding:9px 14px;font-family:var(--font-mono);font-size:11.5px;color:var(--muted)}
+.bpcat .vt button.on{background:var(--cyan);color:#06121f}
+.bpcat .vt button:focus-visible{outline:2px solid var(--cyan)}
+/* Stability: the live watcher as one line on every page */
+.lstrip>.card{padding:10px 14px;margin:0}
+.lstrip #watchBody{display:flex;align-items:center;gap:10px 16px;flex-wrap:wrap}
+.lstrip .wscan{flex:1 1 320px;min-width:0;padding:0;border:0;background:none;margin:0;box-shadow:none}
+.lstrip .wscan-top{margin:0}
+.lstrip .wtrack,.lstrip .wbar{display:none}
+.lstrip .slights{display:flex;gap:8px;margin:0;flex-wrap:wrap}
+.lstrip .slight{padding:4px 10px;min-height:0;gap:8px}
+.lstrip .slight .sm{font-size:0;line-height:1}
+.lstrip .slight .sm b{font-size:11px}
+.stov{align-items:start}
+.invpart{color:var(--amber)}
+#bugMsg{font-size:13px;line-height:1.55;color:var(--muted)}
+.sp-h .vt{margin-left:auto;display:flex;border:1px solid var(--line);border-radius:7px;overflow:hidden;align-self:center}
+.sp-h .vt button{all:unset;cursor:pointer;padding:5px 14px;font-family:var(--font-mono);font-size:11px;color:var(--muted)}
+.sp-h .vt button.on{background:var(--cyan);color:#06121f}
+.sp-h .vt button:focus-visible{outline:2px solid var(--cyan)}
+#bpBoard{display:flex;flex-direction:column;gap:20px}
+#bpBoard>*{margin-top:0!important}
+.bpov{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1fr);gap:20px;align-items:start}
+.bpov-c{display:flex;flex-direction:column;gap:20px;min-width:0}
+.bpov-c>.card{margin:0}
+.bprec .tev[data-bpplan]{cursor:pointer}
+.bprec .tev[data-bpplan]:hover .tw{color:var(--cyan)}
+.bxr-c[data-bpv]{cursor:pointer}
+.bxr-c[data-bpv]:hover{border-color:var(--cyan)}
+.bph-r[data-bpplan]{cursor:pointer}
+.bpdr{position:fixed;top:0;right:0;bottom:0;width:min(470px,100vw);z-index:90;box-sizing:border-box;padding:18px 20px 28px;overflow:auto;
+  background:linear-gradient(180deg,var(--panel),var(--panel2));border-left:1px solid var(--line);box-shadow:-18px 0 48px rgba(0,0,0,.5);
+  transform:translateX(105%);transition:transform .18s ease;visibility:hidden}
+.bpdr.on{transform:none;visibility:visible}
+@media (prefers-reduced-motion:reduce){ .bpdr{transition:none} }
+.bpdr .dr-h{display:flex;align-items:center;gap:10px;margin-bottom:12px}
+.bpdr .dr-x{all:unset;cursor:pointer;margin-left:auto;font-family:var(--font-mono);font-size:12px;color:var(--dim);border:1px solid var(--line);border-radius:6px;padding:3px 9px}
+.bpdr .dr-x:hover{color:var(--txt)}
+.bpdr .dr-x:focus-visible{outline:2px solid var(--cyan)}
+.bpdr .dr-pic{position:relative;aspect-ratio:16/9;border-radius:8px;overflow:hidden;margin-bottom:12px;background:#0b1520;display:grid;place-items:center;color:var(--dim)}
+.bpdr .dr-pic>svg{width:36px;height:36px}
+.bpdr .dr-pic img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+.bpdr .dr-eb{font-family:var(--font-mono);font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--dim)}
+.bpdr .dr-id{display:flex;flex-direction:column;gap:4px;margin:2px 0 14px}
+.bpdr .dr-nm{font-family:var(--font-display);font-size:22px;font-weight:600;line-height:1.2;color:var(--txt)}
+.bpdr .dr-nm a{color:inherit;text-decoration:none}
+.bpdr .dr-nm a:hover{color:var(--cyan)}
+.bpdr .dr-sp{font-size:13px;color:var(--muted)}
+.bpdr .dr-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:10px}
+.bpdr .dr-row .bpin.lbl{margin-left:auto}
+.bpdr .dr-state{font-size:12.5px;font-weight:600;padding:6px 11px;border-radius:8px;border:1px solid transparent}
+.bpdr .dr-state.ok{color:var(--green);background:rgba(74,222,128,.1);border-color:rgba(74,222,128,.3)}
+.bpdr .dr-state.no{color:var(--amber);background:rgba(244,169,42,.1);border-color:rgba(244,169,42,.3)}
+.bpdr .dr-state.ns{color:var(--muted);border:1px dashed var(--dim)}
+.bpdr .dr-sum{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;padding:12px 0 2px;border-top:1px solid var(--line);font-size:13.5px;color:var(--muted)}
+.bpdr .dr-sum b{color:var(--txt)}
+.bpdr .dr-sum .ok{margin-left:auto;color:var(--green);font-size:12.5px}
+.bpdr .dr-sum .no{margin-left:auto;color:var(--amber);font-size:12.5px}
+.bpdr .dr-fac{margin-top:12px;border:1px solid var(--line);border-radius:12px;overflow:hidden}
+.bpdr .dr-fh{display:flex;align-items:baseline;gap:10px;padding:9px 14px;background:rgba(91,209,230,.06);border-bottom:1px solid var(--line)}
+.bpdr .dr-fh b{font-size:13px;font-weight:600;color:var(--txt);min-width:0}
+.bpdr .dr-fh span{margin-left:auto;flex:none;font-family:var(--font-mono);font-size:11px;color:var(--dim)}
+.bpdr .dr-m{padding:10px 14px;border-bottom:1px solid var(--line)}
+.bpdr .dr-m:last-child{border-bottom:0}
+.bpdr .dr-m1{display:flex;align-items:flex-start;gap:12px}
+.bpdr .dr-m1>a,.bpdr .dr-m1>span:first-child{flex:1;min-width:0;font-size:14px;line-height:1.35;color:var(--txt);text-decoration:none}
+.bpdr .dr-m1>a:hover{color:var(--cyan)}
+.bpdr .dr-st{flex:none;font-family:var(--font-mono);font-size:10.5px;letter-spacing:.03em;padding:3px 9px;border-radius:999px;white-space:nowrap;margin-top:1px}
+.bpdr .dr-st.ok{color:var(--green);background:rgba(74,222,128,.1);border:1px solid rgba(74,222,128,.35)}
+.bpdr .dr-st.no{color:var(--amber);background:rgba(244,169,42,.1);border:1px solid rgba(244,169,42,.35)}
+.bpdr .dr-m2{margin-top:4px;font-size:12px;color:var(--muted);display:flex;flex-wrap:wrap;gap:2px 0}
+.bpdr .dr-m2 i{font-style:normal;color:var(--dim);margin:0 6px}
+.bpdr .dr-m2 .g1{color:var(--cyan)}
+.bpdr .dr-m2 .gp{color:var(--amber)}
+.bpdr .dr-empty{font-size:13.5px;color:var(--muted);padding:14px 0;border-top:1px solid var(--line)}
+.bpdr .bpret{margin-top:14px}
+.bpdr .dr-gone .dr-g{display:flex;gap:12px;justify-content:space-between;padding:6px 2px;font-size:12.5px;color:var(--dim);border-bottom:1px dashed var(--line)}
+.bpdr .dr-gone .dr-g em{font-style:normal;font-family:var(--font-mono);font-size:11px;flex:none}
+@media(max-width:1100px){ .bpov{grid-template-columns:1fr} }
+/* phones and tablets: the top bar scrolls away so the menu gets the top of the screen */
+@media(max-width:760px){
+  .topbar{position:relative}
+  /* two rows: the page title with pins, alerts and status, then the scope picker with
+     backup, refresh and theme. The handle, scope badge and patch arrows are already in
+     the picker */
+  .topbar{display:grid;grid-template-columns:minmax(0,1fr) auto auto auto;
+    grid-template-areas:"title pin bell status" "scope data refresh theme";
+    align-items:center;column-gap:2px;row-gap:8px;padding:10px 12px 8px}
+  .tb-title{grid-area:title;min-width:0}
+  .tb-titlerow{flex-wrap:nowrap;min-width:0}
+  #secTitle{font-size:21px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+  #secScope,.tb-sub,.tb-sep,#patchPrev,#patchNext{display:none!important}
+  .tb-controls{display:contents}
+  #pinWrap{grid-area:pin} .bellwrap{grid-area:bell} .statuswrap{grid-area:status}
+  #dataBtn{grid-area:data} #refreshBtn{grid-area:refresh} #themeBtn{grid-area:theme}
+  .tb-scope{grid-area:scope;order:0;width:auto;min-width:0;margin-right:6px}
+  .scopewrap{flex:1;min-width:0}
+  .scopepill{width:100%;height:36px;padding:0 12px;gap:7px;min-width:0}
+  .scopepill .sp-acct{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .iconbtn,.statusbtn{width:36px;height:36px}
+  #pinBtn.pinlbl{padding:0 9px}
+  .statusbtn .st-tx{display:none}
+  /* the scope line on one line, swipe for the rest */
+  .patch-meta{white-space:nowrap;overflow-x:auto;scrollbar-width:none;margin-bottom:12px}
+  .patch-meta::-webkit-scrollbar{display:none}
+  .patch-meta{-webkit-mask-image:linear-gradient(90deg,#000 calc(100% - 36px),transparent);mask-image:linear-gradient(90deg,#000 calc(100% - 36px),transparent)}
+
+  .snav{border-radius:0;border-left:0;border-right:0;margin-left:-14px;margin-right:-14px;padding:4px 8px}
+  .snav-b{padding:7px 11px;font-size:13px;gap:7px}
+  .snav-cap{margin:8px 2px 12px;font-size:13px}
+  .bpcat{flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none;margin:0 -14px;padding:0 14px}
+  .bpcat::-webkit-scrollbar{display:none}
+  .bpc{flex:none}
+  /* the page banner: figures only, no notes or icons, so it fits a phone screen */
+  .phero .ph-k .kpi{padding:10px 12px}
+  .phero .ph-k .kpi .s,.phero .ph-k .kpi .v .csr-ic,.phero .ph-k .kpi .v svg{display:none}
+  .phero .ph-k .kpi .v{font-size:21px}
+  .lstrip .slight{flex:none;width:auto}
+  .lstrip .slights{gap:6px;display:flex!important;flex-direction:row;flex-wrap:wrap;grid-template-columns:none}
+  .lstrip .wscan-top{flex-wrap:wrap;row-gap:2px}
+  /* headline tiles two to a row */
+  .hero{grid-template-columns:repeat(2,minmax(0,1fr))!important;gap:10px}
+  .kpi{padding:12px 14px}
+  .kpi .v{font-size:26px}
+}
+/* narrow phones: the picker keeps channel and handle. The scope line under it names the patch */
+@media(max-width:440px){ #spPatch,.scopepill i.sp-dot:nth-of-type(2){display:none} }
+.ac[data-bpplan]:hover{border-color:var(--cyan)}
+.alb{display:grid;grid-template-columns:repeat(auto-fill,minmax(168px,1fr));gap:10px}
+.ac{position:relative;background:var(--tile);border:1px solid var(--track-line);border-radius:8px;overflow:hidden;display:flex;flex-direction:column;min-width:0}
+.ac .pic{position:relative;aspect-ratio:16/10;display:grid;place-items:center;color:rgba(91,209,230,.35);
+  background:repeating-linear-gradient(135deg,#0b1520 0 6px,#0d1926 6px 12px)}
+.ac .pic .csr-ic{width:28px;height:28px}
+.ac .pic img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+.ac:not(.on) .pic img{filter:grayscale(1) brightness(.55)}
+.ac .st{position:absolute;right:7px;top:7px;font-family:var(--font-mono);font-size:10.5px;padding:1px 6px;border-radius:4px;
+  background:rgba(7,11,17,.82);color:#8fa7bd;border:1px solid rgba(91,209,230,.2)}
+.ac.on{border-color:rgba(91,209,230,.45)} .ac.on .st{color:#5bd1e6;border-color:rgba(91,209,230,.5)}
+.ac.new{border-color:rgba(244,169,42,.6)} .ac.new .st{color:#f4a92a;border-color:rgba(244,169,42,.6)}
+.ac .bd{padding:8px 10px 10px;display:flex;flex-direction:column;gap:5px;min-width:0}
+.ac .nm{font-size:13px;font-weight:600;color:var(--txt);line-height:1.2;overflow-wrap:anywhere}
+.ac:not(.on) .nm{color:var(--muted)}
+.ac .cp{display:flex;flex-wrap:wrap;gap:4px}
+.ac .cp i{font-style:normal;font-family:var(--font-mono);font-size:10.5px;padding:1px 5px;border-radius:3px;border:1px solid var(--line);color:var(--muted)}
+.ac .cp i.gA{color:var(--amber);border-color:var(--amber)}
+.agh{display:flex;align-items:baseline;gap:10px;margin:18px 0 10px}
+.agh b{font-family:var(--font-display);font-size:15px;color:var(--txt)}
+.agh span{font-family:var(--font-mono);font-size:12px;color:var(--dim)}
+.bxalb .bpq{margin-left:auto}
+:root[data-theme="light"] .ac .pic{background:repeating-linear-gradient(135deg,#e7edf4 0 6px,#eef3f8 6px 12px);color:rgba(14,147,168,.45)}
+@media(max-width:900px){ .bxboard.one .bsl{overflow-x:auto} .bxboard.one .bset .bsn{flex-basis:130px} }
 @media(max-width:760px){ .bgal{grid-template-columns:1fr 1fr} .bgal .bgt:nth-child(3){display:none}
   .phero{height:auto;min-height:300px} .phero.nok{min-height:200px}
   .phero .ph-tx{left:20px;right:20px;top:20px;max-width:none}
@@ -8180,6 +8629,13 @@ nav a::after{background:var(--menu-bg);border-color:var(--glass-line);box-shadow
         <button class="stepbtn" id="patchNext" type="button" title="Next patch (→)" aria-label="Next patch"></button>
       </div>
       <div class="tb-controls">
+        <div class="pinwrap" id="pinWrap" style="display:none">
+          <button class="iconbtn" id="pinBtn" type="button" title="Pinned blueprints" aria-label="Pinned blueprints" aria-haspopup="true" aria-expanded="false">★<span class="bbadge pbadge" id="pinBadge"></span></button>
+          <div class="bellmenu pinmenu" id="pinMenu">
+            <div class="bm-head"><span>Pinned Blueprints</span><button class="bm-clear" id="pinGo" type="button">Open Blueprints</button></div>
+            <div class="bm-list" id="pinList"></div>
+          </div>
+        </div>
         <button class="iconbtn" id="dataBtn" title="Backup &amp; transfer — export/import your career" aria-label="Backup and transfer" style="display:none">💾</button>
         <button class="iconbtn" id="refreshBtn" title="Refresh data — re-scan your logs" aria-label="Refresh data" style="display:none">⟳</button>
         <button class="iconbtn" id="themeBtn" title="Toggle light / dark" aria-label="Toggle theme">🌙</button>
@@ -8210,7 +8666,7 @@ nav a::after{background:var(--menu-bg);border-color:var(--glass-line);box-shadow
 
 <div class="modal-back" id="refreshModal">
   <div class="modal">
-    <div class="mh">Refresh data</div>
+    <div class="mh">Refresh Data</div>
     <div class="mb">Pull in your latest sessions. Old log backups never change once Star Citizen has rotated them, so a quick refresh only needs to read what's new.</div>
     <div class="datarow">
       <div class="dcard">
@@ -8229,7 +8685,7 @@ nav a::after{background:var(--menu-bg);border-color:var(--glass-line);box-shadow
 </div>
 <div class="modal-back" id="offlineModal">
   <div class="modal">
-    <div class="mh">CSR isn&rsquo;t running</div>
+    <div class="mh">CSR Isn&rsquo;t Running</div>
     <div class="mb">This page is still showing your last saved dashboard, but the CSR app that scans your logs has been closed — so it can&rsquo;t refresh right now.<br><br>
       Start <b>CSR</b> again, then use Refresh. Everything already on this page stays readable in the meantime.</div>
     <div class="mactions"><button class="mbtn go" id="offClose">Back to dashboard</button></div>
@@ -8242,7 +8698,7 @@ nav a::after{background:var(--menu-bg);border-color:var(--glass-line);box-shadow
 </div>
 <div class="modal-back" id="dataModal">
   <div class="modal data">
-    <div class="mh">Backup &amp; transfer</div>
+    <div class="mh">Backup &amp; Transfer</div>
     <div class="mb">CSR keeps a running <b>archive</b> of every session it has scanned (<span id="dmCount">—</span> on file), so your career survives even if Star Citizen deletes old logs.</div>
     <div class="datarow three">
       <div class="dcard">
@@ -8332,6 +8788,35 @@ nav a::after{background:var(--menu-bg);border-color:var(--glass-line);box-shadow
 
 <script>
 const DATA = /*__DATA__*/;
+// Pins and your main account, saved in CSR's data folder by the app. They survive a new
+// browser, a port change and Backup & Transfer. The standalone file has no app to save
+// through and keeps them in this browser.
+const PREFS = null/*__PREFS__*/;
+function prefGet(k, lsKey){
+  if(PREFS) return PREFS[k]||(PREFS[k]={});
+  try{ return JSON.parse(localStorage.getItem(lsKey)||'{}')||{}; }catch(e){ return {}; }
+}
+function prefSet(k, lsKey, val){
+  if(PREFS){ PREFS[k]=val;
+    fetch('/api/prefs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({[k]:val})}).catch(()=>{});
+    return; }
+  try{ localStorage.setItem(lsKey, JSON.stringify(val)); }catch(e){}
+}
+// once: what an older CSR kept in this browser moves into the data folder
+(function(){
+  if(!PREFS) return;
+  try{
+    if(localStorage.getItem('csr_prefs_moved')==='1') return;
+    const pins=JSON.parse(localStorage.getItem('csr_bp_pins')||'{}')||{}, main=JSON.parse(localStorage.getItem('csr_main_acct')||'{}')||{};
+    let changed=false;
+    const P=PREFS.pins||(PREFS.pins={}), M=PREFS.main||(PREFS.main={});
+    Object.entries(pins).forEach(([a,ks])=>{ if(!Array.isArray(ks)) return; const have=P[a]||[];
+      const add=ks.filter(k=>typeof k==='string'&&!have.includes(k)); if(add.length){ P[a]=have.concat(add); changed=true; } });
+    Object.entries(main).forEach(([ch,a])=>{ if(a&&!M[ch]){ M[ch]=a; changed=true; } });
+    if(changed) fetch('/api/prefs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pins:P, main:M})}).catch(()=>{});
+    localStorage.setItem('csr_prefs_moved','1');
+  }catch(e){}
+})();
 // every picture is stored once in DATA.ART; views carry a tag in its place
 (function unpackArt(){
   const S=DATA.ART||[], T='\u0001art:', n=T.length;
@@ -8340,6 +8825,9 @@ const DATA = /*__DATA__*/;
     else if(x && typeof x==='object') fix(x); } };
   fix(DATA); delete DATA.ART;
 })();
+// every web link opens in a new tab, including any built without a target
+document.addEventListener('click', e=>{ const a=e.target.closest && e.target.closest('a[href^="http"]');
+  if(a && a.target!=='_blank'){ a.target='_blank'; a.rel='noopener'; } }, true);
 const LART=DATA.list_art||{};
 const ART_IC={ship:'ship', gun:'gun', item:'cargo', place:'planet', bp:'blueprints'};
 function lart(kind, name){ const k=LART[kind]; return (k && k[name]) || null; }
@@ -8401,17 +8889,17 @@ const C = () => DATA.ch[currentChannel] || {primary:'Citizen',accounts:[],acct:{
 // ---- main account -------------------------------------------------------- //
 // CSR guesses your main by session count, which is wrong for anyone whose alt has
 // more hours (a fresh reinstall, an org alt, a shared PC). You can pin the real one;
-// the choice is stored per channel in this browser and wins over the guess.
+// the choice is stored per channel in CSR's data folder and wins over the guess.
 const MAIN_KEY='csr_main_acct';
-function mainMap(){ try{ return JSON.parse(localStorage.getItem(MAIN_KEY)||'{}'); }catch(e){ return {}; } }
+function mainMap(){ return prefGet('main', MAIN_KEY); }
 function savedMain(ch){
   const h=mainMap()[ch];
   return (h && C().acct && C().acct[h]) ? h : null;   // ignore a handle that's gone
 }
 function setMain(ch,handle){
-  const m=mainMap();
+  const m={...mainMap()};
   if(handle) m[ch]=handle; else delete m[ch];
-  try{ localStorage.setItem(MAIN_KEY,JSON.stringify(m)); }catch(e){}
+  prefSet('main', MAIN_KEY, m);
 }
 // One-time prompt so multi-account users learn the ★ exists instead of silently
 // getting whichever handle happened to have the most sessions.
@@ -8421,6 +8909,7 @@ function markHintSeen(){ try{ localStorage.setItem(HINT_KEY,'1'); }catch(e){} }
 function defaultAccount(){ return savedMain(currentChannel) || C().primary; }
 let currentAccount = defaultAccount();
 const A = () => C().acct[currentAccount] || {career:{},patches:{},order:[],showcase:{},patch_playtime:[]};
+current = defaultScope();
 
 function esc(s){return (s||'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));}
 
@@ -8483,7 +8972,10 @@ const ICON = {
   bell:_SVG('<path d="M18 16.4H6l1.5-2.3V10a4.5 4.5 0 019 0v4.1z"/><path d="M10.2 19a1.9 1.9 0 003.6 0"/><path d="M12 5.5V3.6"/>'),
   star:_SVG('<path d="M12 3.4l2.6 5.7 6.2.7-4.6 4.2 1.3 6.1L12 17l-5.5 3.1 1.3-6.1L3.2 9.8l6.2-.7z"/>'),
   starOn:_SVG('<path d="M12 3.4l2.6 5.7 6.2.7-4.6 4.2 1.3 6.1L12 17l-5.5 3.1 1.3-6.1L3.2 9.8l6.2-.7z" fill="currentColor"/>'),
-  blueprints:_SVG('<rect x="3.5" y="3.5" width="17" height="17" rx="1.8"/><path d="M3.5 9h17"/><path d="M9 9v11.5"/><path d="M12.5 13h5M12.5 16.5h3.5"/>')
+  blueprints:_SVG('<rect x="3.5" y="3.5" width="17" height="17" rx="1.8"/><path d="M3.5 9h17"/><path d="M9 9v11.5"/><path d="M12.5 13h5M12.5 16.5h3.5"/>'),
+  search:_SVG('<circle cx="10.5" cy="10.5" r="6.2"/><path d="M15.2 15.2l5.3 5.3"/>'),
+  helmet:_SVG('<path d="M4 15.5a8 8 0 0116 0V19H4z"/><path d="M7.5 13.2h9l-1 3.3h-7z"/>'),
+  mag:_SVG('<rect x="8" y="2.8" width="8" height="18.4" rx="1.6"/><path d="M8 8.4h8M8 13.6h8"/>')
 };
 function icon(name){ return ICON[name]||''; }
 
@@ -8529,6 +9021,70 @@ function barsCard(title, unit, innerId){
 // A titled group of cards. Used where one tab holds several distinct subjects (the
 // Combat tab covers ship combat, on-foot combat and looting) — the numbered badge and
 // full-width rule make the boundaries obvious instead of relying on a small caption.
+// ---- the top menu: one tab per section of a page, with its icon, its name and its headline
+// number. Only the open tab shows. Pages built from group() get it on their own; Blueprints
+// and Stability build theirs from their own pages. The open tab is kept per page.
+let TABS={}; try{ TABS=JSON.parse(localStorage.getItem('csr_tabs')||'{}')||{}; }catch(e){}
+function tabsSave(){ try{ localStorage.setItem('csr_tabs', JSON.stringify(TABS)); }catch(e){} }
+// items: [attributes, icon html, name, number, number class, open?] or '|' for a divider
+function snavHTML(items, label, cap){
+  return `<div class="snav-at"></div><nav class="snav" aria-label="${esc(label)}"><div class="snav-in">`+
+    items.map(x=>x==='|' ? '<span class="snav-sep" aria-hidden="true"></span>' :
+      `<button type="button" class="snav-b${x[5]?' on':''}" ${x[0]}${x[5]?' aria-current="page"':''}>`+
+      `<i>${x[1]}</i><span class="snav-l">${esc(x[2])}</span>`+
+      (x[3]!==''&&x[3]!=null?`<b class="${x[4]||''}">${esc(String(x[3]))}</b>`:'')+`</button>`).join('')+
+    `</div></nav>`+(cap?`<div class="snav-cap">${cap}</div>`:'');
+}
+// the menu sticks under the top bar, which only sticks on wide screens
+function snavTop(){
+  const t=document.querySelector('.topbar');
+  const h=t && getComputedStyle(t).position==='sticky' ? Math.round(t.getBoundingClientRect().height) : 0;
+  document.documentElement.style.setProperty('--tbh', h+'px');
+  document.querySelectorAll('.snav-in').forEach(x=>{
+    const fade=()=>{ x.classList.toggle('ovf', x.scrollWidth>x.clientWidth+2 && x.scrollLeft+x.clientWidth<x.scrollWidth-2);
+      x.classList.toggle('ovl', x.scrollLeft>2); };
+    if(!x.dataset.fade){ x.dataset.fade='1'; x.addEventListener('scroll', fade, {passive:true}); }
+    fade(); });
+  return h;
+}
+// after a tab change: the open tab in view inside the menu, and the page back at the menu
+// when it had scrolled past it
+function snavSettle(){
+  const c=$('#content'); if(!c) return;
+  const on=c.querySelector('.snav-b.on'), box=on&&on.parentElement;
+  if(box && box.scrollWidth>box.clientWidth) box.scrollLeft=on.offsetLeft-box.clientWidth/2+on.offsetWidth/2;
+  const at=c.querySelector('.snav-at'), tb=snavTop();
+  if(at){ const y=at.getBoundingClientRect().top; if(y<tb) scrollToY(window.pageYOffset+y-tb); }
+}
+const NO_TABS=['overview','orgs'];
+function tabify(){
+  const c=$('#content'); if(!c || NO_TABS.includes(section) || c.querySelector('.snav')) return;
+  const gs=[...c.children].filter(e=>e.classList.contains('gsec') && e.id);
+  if(gs.length<2){ snavTop(); return; }
+  const act=gs.find(g=>g.id===TABS[section])||gs[0];
+  const items=gs.map((g,i)=>{
+    // the number on a tab: the section's first headline figure. The first section's
+    // figures may have moved up into the page's banner
+    const k=g.querySelector('.kpi')||(i===0?c.querySelector('.phero .kpi'):null);
+    let n=k?((k.querySelector('.v')||{}).textContent||'').trim():'';
+    if(n.length>9||n==='N/A'||n==='\u2014') n='';
+    const cls=k&&/\b(bad|warn)\b/.exec(k.className);
+    return [`data-tab="${g.id}"`, (g.querySelector('.gic')||{}).innerHTML||'', (g.querySelector('.gt')||{}).textContent||'', n, cls?cls[1]:'', g===act]; });
+  gs[0].insertAdjacentHTML('beforebegin', snavHTML(items, 'Sections', esc((act.querySelector('.gs')||{}).textContent||'')));
+  gs.forEach(g=>{ g.classList.add('tabbed'); g.hidden=g!==act; });
+  snavTop();
+}
+document.addEventListener('click', e=>{
+  const b=e.target.closest('#content .snav [data-tab]'); if(!b) return;
+  const c=$('#content'), id=b.dataset.tab; TABS[section]=id; tabsSave();
+  c.querySelectorAll('.gsec.tabbed').forEach(g=>{ g.hidden=g.id!==id; });
+  c.querySelectorAll('.snav [data-tab]').forEach(x=>{ const on=x===b; x.classList.toggle('on',on);
+    if(on) x.setAttribute('aria-current','page'); else x.removeAttribute('aria-current'); });
+  const g=document.getElementById(id), cap=c.querySelector('.snav-cap');
+  if(cap) cap.textContent=g?((g.querySelector('.gs')||{}).textContent||''):'';
+  snavSettle();
+});
+window.addEventListener('resize', ()=>snavTop());
 function group(n, ic, title, sub, body){
   return `<section class="gsec" id="grp-${n}">`+
     `<div class="ghead"><div class="gnum">${String(n).padStart(2,'0')}</div>`+
@@ -8607,14 +9163,14 @@ function showCard(item, rank, kind){
 }
 function showcaseHTML(){
   const sc = (A().showcase && A().showcase[current]) || {ships:[],guns:[]};
-  const scope = current==='all' ? 'career' : ('patch '+current);
+  const scope = current==='all' ? 'career' : isEra(current) ? scopeLabel() : ('patch '+current);
   const ships = sc.ships.map((s,i)=>showCard(s,i+1,'ship')).join('') || '<div class="empty">No ships flown in this scope.</div>';
   const guns  = sc.guns.map((g,i)=>showCard(g,i+1,'gun')).join('')  || '<div class="empty">No weapons drawn in this scope.</div>';
   const s0 = sc.ships[0]||{};
   const how = s0.rank==='time' ? 'most time aboard'+(s0.since?' since '+s0.since:'') : 'most-flown';
-  return `<div class="row-title">Signature ships <span class="tag">· ${how} · ${scope} · art from RSI</span></div>`+
+  return `<div class="row-title">Signature Ships <span class="tag">· ${how} · ${scope} · art from RSI</span></div>`+
     `<div class="showcase">${ships}</div>`+
-    `<div class="row-title">Signature guns <span class="tag">· most-drawn · ${scope}</span></div>`+
+    `<div class="row-title">Signature Guns <span class="tag">· most-drawn · ${scope}</span></div>`+
     `<div class="showcase">${guns}</div>`;
 }
 function profileHTML(){
@@ -8740,14 +9296,32 @@ const NOTE = noteFold(
 function pFeature(p){
   return p.replace(/^scp-/,'').replace(/[-_]+/g,' ').replace(/\b\w/g,c=>c.toUpperCase());
 }
+// the scope CSR opens on: since the latest wipe when there was play before it, else the career
+const isEra = k => /^(since|pre)-/.test(k||'');
+// is patch k inside wipe scope e? By number, else by when it was first played
+function inEra(e, k){
+  const m=/^(since|pre)-(.+)$/.exec(e||''); if(!m) return true;
+  const n=s=>{ const p=String(s).split('.').map(Number); return p.length>=2&&p.every(x=>!isNaN(x)) ? p[0]*1000+p[1] : null; };
+  const a=n(k), w=n(m[2]); let after;
+  if(a!=null && w!=null) after=a>=w;
+  else { const f=(A().patches[k]||{}).first, s=((A().eras||{})['since-'+m[2]]||{}).first; after=!!(f&&s&&f>=s); }
+  return m[1]==='since' ? after : !after;
+}
+function defaultScope(){ return Object.keys(A().eras||{}).find(k=>k.startsWith('since-'))||'all'; }
 // full label for headings and the dropdown
 function pLabel(p){
+  if(p==='all') return 'Career';
+  if(/^since-/.test(p)) return 'Since '+p.slice(6)+' wipe';
+  if(/^pre-/.test(p)) return 'Before '+p.slice(4)+' wipe';
   if(p==='unknown') return 'Unversioned build';
   if(/^\d/.test(p)) return 'Patch '+p;
   return pFeature(p)+' Preview';
 }
 // short label for chart axes, where space is tight
 function pShort(p){
+  if(p==='all') return 'Career';
+  if(/^since-/.test(p)) return p.slice(6)+'+';
+  if(/^pre-/.test(p)) return 'Pre-'+p.slice(4);
   if(p==='unknown') return '—';
   if(/^\d/.test(p)) return p;
   return pFeature(p)+' TP';
@@ -8840,8 +9414,9 @@ function clusterHTML(v){
 function pbars(el, items, opts={}){
   const max=niceMax(Math.max(1,...items.map(d=>d.value))), peak=Math.max(...items.map(d=>d.value));
   const grid=[0,.25,.5,.75,1].map(f=>`<div class="pb-gl" style="bottom:calc(30px + (100% - 58px) * ${f})"><span>${opts.fmtY?opts.fmtY(max*f):Math.round(max*f)}</span></div>`).join('');
-  const bars=items.map((d,i)=>{ const h=Math.max(1.5, 100*d.value/max).toFixed(2), sel=d.key===opts.sel;
-    return `<button type="button" class="pb-bar${sel?' sel':''}" data-i="${i}" aria-pressed="${sel}" aria-label="${esc(d.full)}: ${esc(d.disp)}. ${sel?'Selected — press to view career':'Filter to this patch'}">`+
+  const bars=items.map((d,i)=>{ const h=Math.max(1.5, 100*d.value/max).toFixed(2), sel=d.key===opts.sel,
+      out=opts.inScope && !opts.inScope(d.key);
+    return `<button type="button" class="pb-bar${sel?' sel':''}${out?' out':''}" data-i="${i}" aria-pressed="${sel}" aria-label="${esc(d.full)}: ${esc(d.disp)}. ${sel?'Selected — press to view career':'Filter to this patch'}">`+
       `<span class="pb-tip" role="tooltip"><b>${esc(d.disp)}</b> · ${esc(d.full)}</span>`+
       `<span class="pb-trk"><span class="pb-val" style="bottom:calc(${h}% + 6px)">${d.value===peak?'<i class="pb-peak">PEAK</i>':''}${esc(d.disp)}</span>`+
       `<span class="pb-col" style="height:${h}%"></span></span><span class="pb-x" title="${esc(d.full)}">${esc(d.label)}</span></button>`; }).join('');
@@ -8850,8 +9425,8 @@ function pbars(el, items, opts={}){
 }
 
 function secOverview(v){
-  const reset = current!=='all' ? `<button class="chart-reset" id="patchReset">↩ View career</button>` : '';
-  const chartCard = `<section class="card ov-chart"><h3><span>Playtime by patch <span class="u">— click a bar to filter</span></span>${reset}</h3>`+
+  const reset = current!==defaultScope() ? `<button class="chart-reset" id="patchReset">↩ ${pLabel(defaultScope())}</button>` : '';
+  const chartCard = `<section class="card ov-chart"><h3><span>Playtime by Patch <span class="u">— click a bar to filter</span></span>${reset}</h3>`+
     `<div id="patchChart"></div></section>`;
   $('#content').innerHTML = heroHTML(v)+
     `<div class="row-title">Snapshot <span class="tag">${scopeLabel()}</span></div>`+
@@ -8865,9 +9440,10 @@ function secOverview(v){
     return pLabel(k)+(b?' · build '+b:'')+(when?' · '+when:'');
   };
   const items = A().patch_playtime.map(([k,h])=>({key:k, label:pShort(k), value:h, disp:fmt(Math.round(h))+' h', full:pfull(k)}));
-  pbars($('#patchChart'), items, {sel: current==='all'?null:current, fmtY:x=>Math.round(x)+'h',
-    onClick:(it)=>{ current = (current===it.key) ? 'all' : it.key; renderPatches(); render(); }});
-  const rb=$('#patchReset'); if(rb) rb.onclick=()=>{ current='all'; renderPatches(); render(); };
+  pbars($('#patchChart'), items, {sel: (current==='all'||isEra(current))?null:current, fmtY:x=>Math.round(x)+'h',
+    inScope: isEra(current) ? k=>inEra(current, k) : null,
+    onClick:(it)=>{ current = (current===it.key) ? defaultScope() : it.key; renderPatches(); render(); }});
+  const rb=$('#patchReset'); if(rb) rb.onclick=()=>{ current=defaultScope(); renderPatches(); render(); };
 }
 
 // Places visited: the game asks for your stored items when you land or dock somewhere,
@@ -8883,7 +9459,7 @@ function placesHTML(v){
       [icon('cargo'), fmt(out), 'Outposts & facilities', `${fmt(k.Outpost||0)} outposts · ${fmt(k.Facility||0)} facilities`],
       [icon('space'), fmt(st), 'Stations & rest stops', `${fmt(k.Station||0)} stations · ${fmt(k['Rest stop']||0)} rest stops`],
     ])+
-    barsCard('Most visited places','sessions · top 15','placeBars')+
+    barsCard('Most Visited Places','sessions · top 15','placeBars')+
     noteFold(`Logged when you land or dock, and when an inventory or shop screen opens. Flybys don’t show.`);
 }
 function secFlight(v){
@@ -8891,7 +9467,7 @@ function secFlight(v){
   const jps = (v.qt_known!==false && v.sessions) ? (v.qt/v.sessions).toFixed(1) : null;
   const jph = (v.qt_known!==false && v.hours>0) ? (v.qt/v.hours).toFixed(1) : null;
   $('#content').innerHTML=metaLine(v)+
-    group(1,'ship','Ships &amp; hulls','What you flew — hulls, sizes and roles',
+    group(1,'ship','Ships &amp; Hulls','What you flew — hulls, sizes and roles',
       kpiRow([
         [icon('ship'), v.ships_unique, 'Distinct ships', `types piloted`],
         [icon('flight'), fmt(v.ships_flown_total), 'Ship boardings', `sessions × ship`],
@@ -8899,12 +9475,12 @@ function secFlight(v){
         aboardTile(v),
         fleetTile(v.fleet_max),
       ])+
-      cardHTML('Ship size mix','sessions by hull size','sizeChart')+
+      cardHTML('Ship Size Mix','sessions by hull size','sizeChart')+
       `<div class="grid2" style="margin-top:16px">`+
-      barsCard('Most-flown ships', v.ships_rank==='time' ? `hours aboard${v.ships_since?' since '+v.ships_since:''} · sessions · take-offs · seat · first / last` : 'sessions flown · take-offs · aboard · seat · first / last','shipBars')+
-      barsCard('Roles flown','sessions by ship role','roleBars')+`</div>`
+      barsCard('Most-Flown Ships', v.ships_rank==='time' ? `hours aboard${v.ships_since?' since '+v.ships_since:''} · sessions · take-offs · seat · first / last` : 'sessions flown · take-offs · aboard · seat · first / last','shipBars')+
+      barsCard('Roles Flown','sessions by ship role','roleBars')+`</div>`
     )+
-    group(2,'satellite','Travel &amp; navigation','Where you went — quantum travel and the systems you visited',
+    group(2,'satellite','Travel &amp; Navigation','Where you went — quantum travel and the systems you visited',
       kpiRow([
         qtTile(v),
         [icon('planet'), v.systems.length, 'Systems visited', `of 3 in the 'verse`],
@@ -8913,12 +9489,12 @@ function secFlight(v){
         (jph!==null ? [icon('time'), jph, 'Jumps / hour', `travel intensity`]
                     : [icon('time'), 'N/A', 'Jumps / hour', `no jump data`, 'na']),
       ])+
-      barsCard('Systems visited','sessions with location activity there','sysBars')+
+      barsCard('Systems Visited','sessions with location activity there','sysBars')+
       noteFold(
         `Systems come from location names in the log. Fuel and distance aren't logged.`,
         `Stanton, Pyro and Nyx are the only live systems; a session counts for one if any location there shows up. Refuelling is a server-side transaction and the client only logs an error with no amount, so fuel used and refuel spend can't be shown. Fuel pods bought at a shop count under Economy — that's a purchase, not a refuel.`)
     )+
-    group(3,'planet','Where you\u2019ve been','Jurisdictions, armistice zones and hangar requests from the HUD, plus the places you landed',
+    group(3,'planet','Where You\u2019ve Been','Jurisdictions, armistice zones and hangar requests from the HUD, plus the places you landed',
       (v.hud_known ? kpiRow([
         [icon('hall'), fmt(v.hangars||0), 'Hangars requested', 'ASOP hangar calls completed'],
         [icon('planet'), fmt(v.lz_visits||0), 'Landing-zone visits', 'armistice-zone stays, 10 min apart or more'],
@@ -8930,8 +9506,8 @@ function secFlight(v){
         (v.party&&v.party.hours ? [icon('orgs'), v.party.hours+'h', 'In a party', `${fmt(v.party.accepts)} invites accepted · ${fmt(v.party.sessions)} sessions`]
                                 : [icon('orgs'), '0', 'In a party', `no invites accepted (time as host isn’t logged)`, 'na']),
         [icon('warning'), fmt(v.crimestat||0), 'CrimeStat rises', `times your rating went up`],
-      ])+`<div class="grid2">`+barsCard('Jurisdictions entered','sessions · total entries','jurisBars')+
-      barsCard('Pilots you flew with','sessions · jumps under their hands','crewBars')+`</div>`
+      ])+`<div class="grid2">`+barsCard('Jurisdictions Entered','sessions · total entries','jurisBars')+
+      barsCard('Pilots You Flew With','sessions · jumps under their hands','crewBars')+`</div>`
       : `<div class="card"><div class="empty">The HUD notices these come from are only in the log from patch 4.5 onward.</div></div>`)+
       placesHTML(v)+
       noteFold(
@@ -8984,8 +9560,8 @@ function shipKillsHTML(v){
       (k.per10h!=null ? [icon('time'), fmt(k.per10h), 'Per 10 h', `over ${fmt(k.hours)} h logged`]
                       : [icon('time'), 'N/A', 'Per 10 h', `under 1 h logged`, 'na']),
     ])+
-    barsCard('Ships you destroyed','top 10 by name','shipKillBars')+
-    (lost ? `<div class="card" style="margin-top:16px"><h3>Ships you lost <span class="u">— latest ${fmt((k.lost||[]).length)}${k.lost_n>k.lost.length?' of '+fmt(k.lost_n):''}, newest first</span></h3>${lost}</div>` : '')+
+    barsCard('Ships You Destroyed','top 10 by name','shipKillBars')+
+    (lost ? `<div class="card" style="margin-top:16px"><h3>Ships You Lost <span class="u">— latest ${fmt((k.lost||[]).length)}${k.lost_n>k.lost.length?' of '+fmt(k.lost_n):''}, newest first</span></h3>${lost}</div>` : '')+
     `</div>`;
 }
 function secCombat(v){
@@ -8999,19 +9575,19 @@ function secCombat(v){
     `Loadout is ranked by how often you drew each weapon. Your old kills are under `+
     `<a class="clink" onclick="gotoSec('legacy')">Legacy Combat</a> →.`);
   $('#content').innerHTML=metaLine(v)+info+
-    group(1,'ship','Ship combat','Ship kills and losses from the client log',
+    group(1,'ship','Ship Combat','Ship kills and losses from the client log',
       kpiRow([
         [icon('deaths'), v.deaths, 'Ship deaths', `ships you lost`],
         [icon('kills'), dc.collision, 'By collision', `flew into something`],
         [icon('damage'), dc.other, 'Destroyed / other', `shot down, hazards…`],
       ])+
-      cardHTML('How your ship was lost','ship-destruction deaths only','causeChart')+
-      `<div style="margin-top:16px">`+barsCard('Ships you died in most','deaths per ship','deathShips')+`</div>`+
+      cardHTML('How Your Ship Was Lost','ship-destruction deaths only','causeChart')+
+      `<div style="margin-top:16px">`+barsCard('Ships You Died in Most','deaths per ship','deathShips')+`</div>`+
       shipKillsHTML(v)
     )+
-    group(2,'deaths','Gear lost on death','What was on your body when you died, on foot or in a ship',
+    group(2,'deaths','Gear Lost on Death','What was on your body when you died, on foot or in a ship',
       gearLostHTML(v))+
-    group(3,'gun','FPS combat','Your on-foot loadout — ranked by how often you drew each weapon',
+    group(3,'gun','FPS Combat','Your on-foot loadout — ranked by how often you drew each weapon',
       kpiRow([
         [icon('gun'), v.guns_distinct||guns.length, 'Guns carried', `distinct weapons`],
         (v.reloads_total
@@ -9020,22 +9596,22 @@ function secCombat(v){
         [icon('tools'), v.tools_distinct||tools.length, 'Tools carried', `distinct utility`],
       ])+
       `<div class="grid2">`+
-      barsCard('Favorite guns','times drawn','gunBars')+
-      barsCard('Tools & utility','times drawn','toolBars')+`</div>`
+      barsCard('Favorite Guns','times drawn','gunBars')+
+      barsCard('Tools & Utility','times drawn','toolBars')+`</div>`
     )+
-    group(4,'medical','Injuries &amp; treatment','What hurt you, and where you had it fixed',
+    group(4,'medical','Injuries &amp; Treatment','What hurt you, and where you had it fixed',
       ((v.injuries_total||(v.medbed&&v.medbed.n)) ? kpiRow([
         [icon('warning'), fmt(v.injuries_total||0), 'Injuries', `HUD warnings, 4.4 onward`],
         [icon('damage'), fmt(v.injuries_severe||0), 'Severe or worse', `needed a proper bed`],
         [icon('medical'), fmt(v.medbed.n||0), 'Med-bed treatments', `surgeries that went through`],
         [icon('ship'), fmt(v.medbed.ship||0), 'In a ship’s medbay', `the rest in a hospital`],
       ])+`<div class="grid2">`+
-      barsCard('Where it hurt','injury warnings by body part','injBars')+
-      barsCard('What the bed fixed','body parts treated','medBars')+`</div>`
+      barsCard('Where It Hurt','injury warnings by body part','injBars')+
+      barsCard('What the Bed Fixed','body parts treated','medBars')+`</div>`
       : `<div class="card"><div class="empty">No injuries or treatments in this scope. Injury warnings are in the log from 4.4; med-bed surgeries from every patch.</div></div>`)+
       airHTML(v)
     )+
-    group(5,'cargo','Looting &amp; inventory','What you hauled — client-side events, so this spans every patch',
+    group(5,'cargo','Looting &amp; Inventory','What you hauled — client-side events, so this spans every patch',
       kpiRow([
         [icon('cargo'), fmt(v.containers_looted||0), 'Containers looted', lootSub],
         [icon('transfer'), fmt(v.transfers||0), 'Items transferred', `moved between inventories`],
@@ -9074,8 +9650,8 @@ function gearLostHTML(v){
       `trace an on-foot death leaves, so this counts deaths the ship-death figure above can't see. `+
       `Your body itself (head, hair, mobiGlas) is left out.`)+
     `<div class="grid2">`+
-    cardHTML('What you lose','items by kind','glCats')+
-    barsCard('Lost most often','items, across every death','glTop')+`</div>`;
+    cardHTML('What You Lose','items by kind','glCats')+
+    barsCard('Lost Most Often','items, across every death','glTop')+`</div>`;
 }
 
 function renderCombat(v, L, o){
@@ -9088,7 +9664,7 @@ function renderCombat(v, L, o){
   }
   const sh=L.ship, fp=L.fps;
   $('#content').innerHTML=head+metaLine(v)+
-    group(1,'ship','Ship combat','Kills and losses while flying — from the era the log recorded them',
+    group(1,'ship','Ship Combat','Kills and losses while flying — from the era the log recorded them',
       kpiRow([
         [icon('target'), fmt(sh.kill_pvp), 'PvP ship kills', `players downed`],
         [icon('deaths'), fmt(sh.death_pvp), 'PvP ship deaths', `killed by players`],
@@ -9098,10 +9674,10 @@ function renderCombat(v, L, o){
         [icon('kills'), fmt(L.ram_kills), 'Ram kills', `by collision`],
       ])+
       `<div class="grid2">`+
-      barsCard('Deadliest ship weapons','kills dealt','lcWpnS')+
-      barsCard('Ships you rammed with','ram / collision kills','lcRam')+`</div>`
+      barsCard('Deadliest Ship Weapons','kills dealt','lcWpnS')+
+      barsCard('Ships You Rammed With','ram / collision kills','lcRam')+`</div>`
     )+
-    group(2,'gun','FPS combat','Kills and losses on foot',
+    group(2,'gun','FPS Combat','Kills and losses on foot',
       kpiRow([
         [icon('target'), fmt(fp.kill_pvp), 'PvP FPS kills', `players downed`],
         [icon('deaths'), fmt(fp.death_pvp), 'PvP FPS deaths', `killed by players`],
@@ -9109,12 +9685,12 @@ function renderCombat(v, L, o){
         [icon('npc'), fmt(fp.kill_pve), 'PvE FPS kills', `NPCs on foot`],
         [icon('warning'), fmt(L.suicide), 'Suicides', `self-inflicted`],
       ])+
-      barsCard('Deadliest FPS weapons','kills dealt','lcWpnF')
+      barsCard('Deadliest FPS Weapons','kills dealt','lcWpnF')
     )+
     group(3,'members','Rivals',o.rivalsTag,
       `<div class="grid2">`+
-      barsCard('Players you killed most','PvP kills','lcKilled')+
-      barsCard('Players who killed you most','PvP deaths','lcBy')+`</div>`
+      barsCard('Players You Killed Most','PvP kills','lcKilled')+
+      barsCard('Players Who Killed You Most','PvP deaths','lcBy')+`</div>`
     )+
     `<div class="note">${o.note}</div>`;
   hbars($('#lcWpnS'), toItems(L.top_weapons_ship, '#ff9147', true));
@@ -9139,11 +9715,11 @@ function secLegacy(v){
     `Real kills, deaths and K/D — but only from 4.3 and earlier; CIG stopped logging combat client-side in 4.4, which is why `+
     `<a class="clink" onclick="gotoSec('combat')">Combat</a> can only show ship deaths. The toggle keeps the `+
     `<b class="ct">Persistent Universe</b> apart from <b class="ct">Arena Commander</b>, where scores get lopsided by design.`);
-  const prefix=`<div class="row-title">Legacy combat <span class="tag">real PvP / PvE — pre-4.4 patches (4.3 &amp; below)</span></div>`+
+  const prefix=`<div class="row-title">Legacy Combat <span class="tag">real PvP / PvE — pre-4.4 patches (4.3 &amp; below)</span></div>`+
     (anyData ? info : '')+
     `<div class="vtoggle">${pill('pu',icon('space')+' Persistent Universe',pu,puHas)}${pill('ac',icon('combat')+' Arena Commander',ac,acHas)}</div>`;
   const wire=()=>document.querySelectorAll('#content .vpill').forEach(b=>b.onclick=()=>{
-    if(!b.disabled&&b.dataset.v!==legacyVenue){ legacyVenue=b.dataset.v; secLegacy(view()); }});
+    if(!b.disabled&&b.dataset.v!==legacyVenue){ legacyVenue=b.dataset.v; secLegacy(view()); tabify(); }});
   const opts = legacyVenue==='pu' ? {
       prefix, after:wire, rivalsTag:'open-world PvP · ship + on-foot',
       empty:`No <b>persistent-universe</b> combat for <b>${scopeLabel()}</b> — pick a pre-4.4 patch (4.3 or below) or Career.`,
@@ -9167,7 +9743,7 @@ function secEconomy(v){
   ]);
   // Always rendered, even at zero. Hiding it when you bought no bulk cargo made the
   // page change shape between patches, which reads as missing data rather than "none".
-  const commRow = group(2,'cargo','Cargo &amp; commodities','Bulk trade goods, split from ordinary item purchases',
+  const commRow = group(2,'cargo','Cargo &amp; Commodities','Bulk trade goods, split from ordinary item purchases',
     kpiRow([
       (comm ? [icon('cargo'), auec(comm), 'Spent on cargo', `${fmt(v.commodity_buys||0)} commodity buys`]
             : [icon('cargo'), '0', 'Spent on cargo', `no bulk cargo bought in this scope`, 'na']),
@@ -9175,8 +9751,8 @@ function secEconomy(v){
     ]));
   $('#content').innerHTML=metaLine(v)+
     group(1,'spend','Spending','Where your aUEC went — every shop purchase your client sent',
-      K+`<div class="grid2">`+barsCard('Top items bought','ranked by aUEC spent · qty shown','itemBars')+
-      barsCard('What you buy','purchases by item category','catBars')+`</div>`)+commRow+
+      K+`<div class="grid2">`+barsCard('Top Items Bought','ranked by aUEC spent · qty shown','itemBars')+
+      barsCard('What You Buy','purchases by item category','catBars')+`</div>`)+commRow+
     noteFold(
       `Spend is real — the log carries the price of every purchase. Balance, earnings and sales aren't logged.`,
       `Purchases are grouped by item category rather than store; the shop codes in the log aren't reliable brand names. Fleet size is your ASOP list read at a terminal, so it includes ships bought with aUEC as well as pledges.`);
@@ -9258,46 +9834,204 @@ function bpListHTML(v){
 // page only decides which squares are filled. Singles are not sets and stay in the list.
 let bpSetTab='partial', bpSetAll=false, bpFamAll=false;
 let bpLead=null;
+const BPB={comp:{tab:'all',all:false}, fps:{tab:'all',all:false}, gear:{tab:'all',all:false}, arm:{tab:'all',all:false}};
+// the collection's five pages and the catalogue categories on each
+const BP_GROUPS=[['armour','Armour',['Armor','Flight suits']], ['comp','Ship Components',['Ship components']],
+  ['sw','Ship Weapons',['Ship weapons']], ['fps','FPS Weapons',['FPS weapons']],
+  ['gear','Magazines & Gear',['Magazines & batteries','Mining & salvage','Clothing','Flair & decor']]];
+const BP_GROUP_IC={armour:'helmet', comp:'system', sw:'target', fps:'gun', gear:'mag'};
+function bpGroupOf(cat){ const g=BP_GROUPS.find(x=>x[2].includes(cat)); return g?g[0]:'gear'; }
+// which Blueprints page is open, kept in this browser
+const BPV=(()=>{ let o={}; try{ o=JSON.parse(localStorage.getItem('csr_bp_view')||'{}')||{}; }catch(e){}
+  return {page:o.page||'overview', grp:o.grp||'comp', view:o.view||'rows'}; })();
+function bpSaveView(){ try{ localStorage.setItem('csr_bp_view', JSON.stringify(BPV)); }catch(e){} }
+const BPA={cat:'Ship components', mode:'all', q:'', page:0};
+const BP_CLASSES=['Military','Civilian','Industrial','Stealth','Competition',''];
+const BP_CLS_SHORT={Military:'MIL', Civilian:'CIV', Industrial:'IND', Stealth:'STL', Competition:'CMP', '':'Other'};
+const BP_CATS=['Armor','Ship components','FPS weapons','Ship weapons','Flight suits','Magazines & batteries','Mining & salvage','Clothing','Flair & decor'];
+// when each blueprint first arrived, by catalogue key and by name
+// The SC-Wiki records two sources for a blueprint: given by default, or the missions that
+// drop it. With neither, it may come from an event (the XenoThreat batch did) or not be
+// obtainable yet.
+function bpNoSource(r){ return !!r && !r[5] && !(r[6] || (r[7]||[]).length); }
+const BP_NOSRC_TIP=' \u00b7 no known source: no mission drops it';
+function bpRecv(){ const m={}; ((A().career||{}).blueprints||[]).forEach(r=>{ if(r[6]) m[r[6]]=r[3]; m['n:'+r[0].toLowerCase()]=r[3]; }); return m; }
 // ---- the planner ----
 // A blueprint drops from missions; a mission needs a standing with a faction; a
 // standing is reputation, which the game never writes to the log. So the planner shows
 // the gate from the SC-Wiki's mission data and, against it, the reputation your
 // MATCHED completions alone would have earned — a floor, never your standing.
-let bpPlanKey='', bpPlanQ='';
 const MIS_F = {DBG:0, TITLE:1, FAC:2, RANK:3, STAND:4, THR:5, REP:6, GAINS:7, HASBP:8, SYS:9, URL:10};
 function bpFloorOf(fac){ const r=((A().career||{}).rep_floor||[]).find(x=>x[0]===fac); return r ? r[1] : 0; }
 function bpRankAt(fac, rep){ const lad=((DATA.missions||{}).factions||{})[fac]; if(!lad) return ''; let now=''; (lad.l||[]).forEach(([n,t])=>{ if(rep>=t) now=n; }); return now; }
-function bpPlanHTML(){
-  const M=DATA.missions, cat=DATA.bp_catalog; if(!M||!cat) return '';
-  const own=bpOwnedKeys(), matched=(A().career||{}).contracts_matched||{};
-  const q=bpPlanQ.trim().toLowerCase();
-  const hits=q ? cat.rows.filter(r=>r[1].toLowerCase().includes(q)).slice(0,8) : [];
-  const hitsH=hits.map(r=>`<button class="vpill sm ${bpPlanKey===r[0]?'on':''}" data-bpplan="${esc(r[0])}">${esc(r[1])}${r[7]&&r[7].length?'':' <span class="vc">no mission</span>'}</button>`).join('');
-  const row=bpPlanKey ? cat.rows.find(r=>r[0]===bpPlanKey) : null;
-  let out='';
-  if(row){
-    const owned=own.has(row[0])||own.has('n:'+row[1].toLowerCase());
-    const head=`<div class="bpph"><b>${link(wikiURL(bpSkin(row[1])),esc(row[1]),'lk')}</b><span class="bpk">${esc(row[3])}${row[4]?' · '+esc(row[4]):''}</span>`+
-      (owned?`<span class="bpok">in your library</span>`:row[5]?`<span class="bpok">known from the start</span>`:'')+`</div>`;
-    const uns=row[7]||[];
-    if(!uns.length) out=head+`<div class="empty">No unlocking mission is listed for this blueprint${row[5]?' — it is available by default':''}.</div>`;
-    else out=head+`<div class="tline">`+uns.map(([mi,chance])=>{
-      if(typeof mi!=='number') return `<div class="tev"><span class="tw">${esc(String(mi))}</span><span class="tv"><span class="bph">retired or unknown mission</span></span></div>`;
-      const m=M.rows[mi]; const fac=m[MIS_F.FAC], thr=m[MIS_F.THR]||0, stand=m[MIS_F.STAND];
-      const floor=fac?bpFloorOf(fac):0, done=matched[String(mi)]||0;
-      const gate = !fac ? `<span class="bph">no faction</span>` : stand ? `${esc(stand)} <span class="bph">· ${fmt(thr)} rep</span>` : `<span class="bph">no standing needed</span>`;
-      let st;
-      if(!fac||!thr) st=`<span class="bpst ok">open</span>`;
-      else if(floor>=thr) st=`<span class="bpst ok">open at your floor</span>`;
-      else st=`<span class="bpst no">${fmt(thr-floor)} more rep with ${esc(fac)}</span>`;
-      const ch = chance>=1 ? 'guaranteed' : chance>0 ? Math.round(chance*100)+'% drop' : '';
-      return `<div class="tev"><span class="td">${ch}</span>`+
-        `<span class="tw">${m[MIS_F.URL]?link(m[MIS_F.URL],esc(m[MIS_F.TITLE]),'lk'):esc(m[MIS_F.TITLE])}<span class="bpk">${esc(fac||'')}${m[MIS_F.REP]?` · +${fmt(m[MIS_F.REP])} rep`:''}${done?` · done ×${fmt(done)}`:''}</span></span>`+
-        `<span class="tv">${gate} ${st}</span></div>`; }).join('')+`</div>`;
-  } else if(q && !hits.length) out=`<div class="empty">Nothing in the catalogue matches that.</div>`;
-  else if(!q) out=`<div class="empty">Type a blueprint name, or press <i>plan</i> on any row of the list below.</div>`;
-  return `<div class="bpbar"><input class="bpq" id="bpPlanQ" type="search" placeholder="Which blueprint?" value="${esc(bpPlanQ)}" spellcheck="false" autocomplete="off"></div>`+
-    (hitsH?`<div class="bpbar" style="margin-top:-4px">${hitsH}</div>`:'')+`<div id="bpPlanOut">${out}</div>`;
+// ---- a blueprint's pathway: every mission that drops it, open ones first, then the
+// smallest rep gap. Shared by the planner, Find a blueprint and Pinned.
+function bpOwnedRow(row){ const own=bpOwnedKeys(); return own.has(row[0])||own.has('n:'+row[1].toLowerCase()); }
+function bpPaths(row){
+  const M=DATA.missions; if(!M) return [];
+  return (row[7]||[]).map(([mi,ch])=>{
+    if(typeof mi!=='number') return {retired:true, title:String(mi), ch:ch||0, open:false, gap:Infinity};
+    const m=M.rows[mi], fac=m[MIS_F.FAC], thr=m[MIS_F.THR]||0, floor=fac?bpFloorOf(fac):0, open=!fac||!thr||floor>=thr;
+    return {mi, m, fac, thr, floor, ch:ch||0, open, gap:open?0:thr-floor, title:m[MIS_F.TITLE]}; })
+    .sort((a,b)=>(b.open-a.open)||(a.gap-b.gap)||(b.ch-a.ch)||String(a.title).localeCompare(String(b.title)));
+}
+const bpChance=ch=>ch>=1?'guaranteed':ch>0?Math.round(ch*100)+'% drop':'';
+// one line: where to go next for it
+function bpBestHTML(row){
+  if(row[5]) return `<span class="bpst ok">default</span> available from the start`;
+  const ps=bpPaths(row), live=ps.filter(p=>!p.retired);
+  if(!ps.length) return `<span class="bpst ns">no known source</span> no mission drops it`;
+  if(!live.length) return `<span class="bpst ns">retired</span> only from missions the wiki no longer lists`;
+  const p=live[0], ch=bpChance(p.ch), more=live.length>1?` \u00b7 +${live.length-1} more`:'';
+  return p.open ? `<span class="bpst ok">open now</span> ${esc(p.title)}${ch?' \u00b7 '+ch:''}${more}`
+                : `<span class="bpst no">${fmt(p.gap)} rep to go</span> ${esc(p.title)} \u00b7 ${esc(p.fac)}${more}`;
+}
+// the drawer's body: who it is, owned or not, then every mission that drops it grouped by
+// faction, the faction's standing once at the top of its group
+function bpPathHTML(row){
+  const owned=bpOwnedRow(row), recv=bpRecv(), d=recv[row[0]]||recv['n:'+row[1].toLowerCase()];
+  const matched=(A().career||{}).contracts_matched||{}, meta=((DATA.bp_catalog||{}).meta||{})[row[0]]||[];
+  const spec=[row[3], row[4], meta[0]&&meta[0]+(meta[1]?' grade '+meta[1]:''), meta[2]].filter(Boolean).map(esc).join(' \u00b7 ');
+  const state = owned ? ['ok', `In your library${d?' since '+ddmm(d):''}`] : row[5] ? ['ok','Known from the start']
+    : bpNoSource(row) ? ['ns','Missing \u00b7 no known source'] : ['no','Missing'];
+  const head=`<div class="dr-id"><div class="dr-nm">${link(wikiURL(bpSkin(row[1])),esc(row[1]),'')}</div>`+
+    (spec?`<div class="dr-sp">${spec}</div>`:'')+
+    `<div class="dr-row"><span class="dr-state ${state[0]}">${state[1]}</span>${bpPinBtn(row[0], true)}</div></div>`;
+  const ps=bpPaths(row);
+  if(!ps.length) return head+`<div class="dr-empty">${row[5] ? 'Available by default. No mission needed.'
+    : 'No mission drops this. It may come from an event (your XenoThreat rewards did) or not be obtainable yet.'}</div>`;
+  // missions the wiki no longer lists are folded away: they can't be run
+  const live=ps.filter(p=>!p.retired), gone=ps.filter(p=>p.retired);
+  const goneH=gone.length?`<details class="bpret"><summary>${fmt(gone.length)} retired or unknown mission${gone.length===1?'':'s'}</summary><div class="dr-gone">`+
+    gone.map(p=>`<div class="dr-g"><span>${esc(p.title)}</span><em>${bpChance(p.ch)}</em></div>`).join('')+`</div></details>`:'';
+  if(!live.length) return head+`<div class="dr-empty">No mission running now drops this.</div>`+goneH;
+  const nOpen=live.filter(p=>p.open).length, allG=live.every(p=>p.ch>=1);
+  const sum=`<div class="dr-sum"><span><b>${fmt(live.length)}</b> mission${live.length===1?'':'s'} drop${live.length===1?'s':''} it${allG?`, ${live.length===1?'':'all '}guaranteed`:''}</span>`+
+    (nOpen?`<span class="ok">${fmt(nOpen)} open to you</span>`:`<span class="no">none open to you yet</span>`)+`</div>`;
+  // one group per faction, in path order: the faction with something open comes first
+  const groups=[], at={};
+  live.forEach(p=>{ const k=p.fac||''; if(!(k in at)){ at[k]=groups.length; groups.push({fac:k, ps:[]}); } groups[at[k]].ps.push(p); });
+  const body=groups.map(g=>{
+    const floor=g.fac?bpFloorOf(g.fac):0, rank=g.fac?bpRankAt(g.fac,floor):'';
+    const fh=`<div class="dr-fh"><b>${esc(g.fac||'No faction')}</b>`+
+      (g.fac?`<span title="Rep your matched completions alone would have earned">you: ${rank?esc(rank)+' \u00b7 ':''}${fmt(floor)} rep</span>`:'')+`</div>`;
+    return `<div class="dr-fac">`+fh+g.ps.map(p=>{
+      const m=p.m, done=matched[String(p.mi)]||0, stand=m[MIS_F.STAND], ch=bpChance(p.ch);
+      const nm=m[MIS_F.URL]?link(m[MIS_F.URL],esc(m[MIS_F.TITLE]),''):`<span>${esc(m[MIS_F.TITLE])}</span>`;
+      const st=p.open?`<span class="dr-st ok">Open</span>`:`<span class="dr-st no">${fmt(p.gap)} rep to go</span>`;
+      const bits=[ch&&!allG?`<span class="${p.ch>=1?'g1':'gp'}">${ch}</span>`:'', m[MIS_F.REP]?`+${fmt(m[MIS_F.REP])} rep`:'',
+        !p.open&&stand?`needs ${esc(stand)} (${fmt(p.thr)})`:'', done?`done \u00d7${fmt(done)}`:''].filter(Boolean).join('<i>\u00b7</i>');
+      return `<div class="dr-m"><div class="dr-m1">${nm}${st}</div>${bits?`<div class="dr-m2">${bits}</div>`:''}</div>`; }).join('')+`</div>`; }).join('');
+  return head+sum+body+goneH;
+}
+// ---- pinned blueprints: kept in CSR's data folder, per account, like your main account
+const BP_PIN_KEY='csr_bp_pins';
+function bpPinMap(){ return prefGet('pins', BP_PIN_KEY); }
+function bpPins(){ return bpPinMap()[currentAccount]||[]; }
+function bpTogglePin(k){
+  const m=bpPinMap(), l=(m[currentAccount]||[]).filter(x=>x!==k);
+  if(l.length===(m[currentAccount]||[]).length) l.unshift(k);
+  m[currentAccount]=l; prefSet('pins', BP_PIN_KEY, m);
+}
+// a labelled button everywhere: small in lists and on cards, full size where a blueprint is opened
+const bpPinFace=on=>on?'\u2605 Pinned':'\u2606 Pin';
+function bpPinBtn(k, big){ const on=bpPins().includes(k);
+  return `<button type="button" class="bpin lbl${big?'':' sm'} ${on?'on':''}" data-bppin="${esc(k)}" aria-pressed="${on}" title="${on?'Unpin':'Pin it to track it'}">${bpPinFace(on)}</button>`; }
+// pinned and still to get
+function bpPinTodo(){ const cat=DATA.bp_catalog; if(!cat) return 0; const by={}; cat.rows.forEach(r=>{ by[r[0]]=r; });
+  return bpPins().map(k=>by[k]).filter(r=>r&&!bpOwnedRow(r)).length; }
+function bpPinsChanged(){
+  document.querySelectorAll('#content [data-bppin], #bpDrawer [data-bppin]').forEach(x=>{ const on=bpPins().includes(x.dataset.bppin);
+    x.classList.toggle('on',on); x.textContent=bpPinFace(on); x.setAttribute('aria-pressed',on); x.title=on?'Unpin':'Pin it to track it'; });
+  const pc=$('#bpPinned'); if(pc) pc.innerHTML=bpPinnedHTML();
+  const tp=$('#bptPin');
+  if(tp){ const n=bpPins().length?fmt(bpPinTodo()):''; let b=tp.querySelector('b');
+    if(n && !b){ b=document.createElement('b'); tp.append(b); }
+    if(b){ if(n) b.textContent=n; else b.remove(); } }
+  renderPinMenu();
+}
+// the top-bar pin menu: every pin with its next step, from any page. The badge counts
+// the ones still to get.
+function renderPinMenu(){
+  const w=$('#pinWrap'), cat=DATA.bp_catalog; if(!w) return;
+  w.style.display=cat?'':'none'; if(!cat) return;
+  const by={}; cat.rows.forEach(r=>{ by[r[0]]=r; });
+  const rows=bpPins().map(k=>by[k]).filter(Boolean), todo=rows.filter(r=>!bpOwnedRow(r)), got=rows.filter(bpOwnedRow);
+  const b=$('#pinBadge'); if(b){ b.textContent=todo.length; b.classList.toggle('on', todo.length>0); }
+  w.classList.toggle('has', todo.length>0);
+  const l=$('#pinList'); if(!l) return;
+  if(!rows.length){ l.innerHTML=`<div class="pm-empty">Nothing pinned. Pin a blueprint on the Blueprints page and it shows here with its next step.</div>`; return; }
+  const recv=bpRecv();
+  l.innerHTML=todo.concat(got).map(r=>{ const o=bpOwnedRow(r), d=recv[r[0]]||recv['n:'+r[1].toLowerCase()];
+    const st=o?['ok','OWNED']:r[5]?['ok','DEFAULT']:bpNoSource(r)?['ns','MISSING']:['no','MISSING'];
+    return `<div class="pm-it${o?' own':''}" data-pmopen="${esc(r[0])}" title="Show every mission that drops it">`+
+      `<span class="bph-s ${st[0]}">${st[1]}</span><div class="pm-tx"><b>${esc(r[1])}</b><span>${o?`received ${d?ddmm(d):''}`:bpBestHTML(r)}</span></div>`+
+      `<button type="button" class="bpin lbl sm on" data-pmun="${esc(r[0])}" title="Unpin">\u2605 Pinned</button></div>`; }).join('');
+}
+function pinMenu(on){
+  const m=$('#pinMenu'), b=$('#pinBtn'); if(!m) return;
+  m.classList.toggle('on', !!on); if(b) b.setAttribute('aria-expanded', on?'true':'false');
+  if(on){ renderPinMenu(); if(typeof openScope==='function') openScope(false); if(typeof bellMenu==='function') bellMenu(false); if(typeof statusMenu==='function') statusMenu(false); }
+}
+// the drawer: any blueprint, opened in place from any page. Picture, status, pin and every
+// mission that drops it. Esc, the close button or a click outside closes it.
+let bpDrKey='';
+function bpDrawer(k){
+  let d=$('#bpDrawer');
+  if(!k){ if(d) d.classList.remove('on'); bpDrKey=''; return; }
+  const cat=DATA.bp_catalog, r=cat&&cat.rows.find(x=>x[0]===k); if(!r) return;
+  if(!d){ d=document.createElement('aside'); d.id='bpDrawer'; d.className='bpdr'; d.setAttribute('role','dialog');
+    document.body.append(d);
+    d.addEventListener('click', e=>{
+      if(e.target.closest('[data-bpdrx]')){ bpDrawer(null); return; }
+      const pin=e.target.closest('[data-bppin]'); if(pin){ e.preventDefault(); bpTogglePin(pin.dataset.bppin); bpPinsChanged(); } }); }
+  const was=bpDrKey; bpDrKey=k;
+  const im=(cat.img||{})[k];
+  d.setAttribute('aria-label', r[1]);
+  d.innerHTML=`<div class="dr-h"><span class="dr-eb">Blueprint</span><button type="button" class="dr-x" data-bpdrx title="Close">Esc \u2715</button></div>`+
+    (im?`<div class="dr-pic">${ICON.blueprints}${artImg(artUrls(im,1), true)}</div>`:'')+bpPathHTML(r);
+  d.classList.add('on'); if(was!==k) d.scrollTop=0;
+}
+// redraw an open drawer after a refresh or an account switch
+function bpDrawerRefresh(){ const d=$('#bpDrawer'); if(bpDrKey && d && d.classList.contains('on')) bpDrawer(bpDrKey); }
+document.addEventListener('keydown', e=>{ if(e.key==='Escape' && bpDrKey) bpDrawer(null); });
+document.addEventListener('click', e=>{ if(!bpDrKey || !e.target.isConnected) return;
+  if(e.target.closest('#bpDrawer,[data-bpplan],[data-pmopen],.pinwrap')) return; bpDrawer(null); });
+// a result or a pinned blueprint: owned or not at a glance, the next step, the full path on open
+function bpHitRow(row){
+  const o=bpOwnedRow(row), recv=bpRecv(), d=recv[row[0]]||recv['n:'+row[1].toLowerCase()];
+  const st=o?['ok','OWNED']:row[5]?['ok','DEFAULT']:bpNoSource(row)?['ns','MISSING']:['no','MISSING'];
+  return `<div class="bphit${o?' own':''}"><div class="bph-r" data-bpplan="${esc(row[0])}" title="Show every mission that drops it">`+
+    `<span class="bph-s ${st[0]}">${st[1]}</span>`+
+    `<span class="bph-n"><b>${esc(row[1])}</b><span class="bpk">${esc(row[3])}${row[4]?' \u00b7 '+esc(row[4]):''}</span></span>`+
+    `<span class="bph-p">${o?`received ${d?ddmm(d):''}`:bpBestHTML(row)}</span>${bpPinBtn(row[0])}<span class="bph-c" aria-hidden="true"></span></div></div>`;
+}
+let bpFindQ='';
+function bpFindHTML(){
+  return `<h3>Find a Blueprint <span class="u">\u2014 do you have it, and where it drops</span></h3>`+
+    `<div class="bpbar"><input class="bpq" id="bpFindQ" type="search" placeholder="Name, maker, class or grade\u2026" value="${esc(bpFindQ)}" spellcheck="false" autocomplete="off"></div>`+
+    `<div id="bpFindOut">${bpFindList()}</div>`;
+}
+function bpFindList(){
+  const cat=DATA.bp_catalog, q=bpFindQ.trim().toLowerCase();
+  if(!q) return `<div class="empty">Type a name, maker, class or grade. Each result says owned or missing and where to get it. Click one for every mission that drops it.</div>`;
+  const meta=cat.meta||{}, alias={};
+  ((A().career||{}).blueprints||[]).forEach(b=>{ if(b[6]&&b[7]) alias[b[6]]=b[7]; });
+  const words=q.split(/\s+/).filter(Boolean);
+  const hits=cat.rows.map(r=>{ const hay=[r[1],r[3],r[4],...(meta[r[0]]||[]),alias[r[0]]||''].join(' ').toLowerCase();
+      if(!words.every(w=>hay.includes(w))) return null;
+      const n=r[1].toLowerCase(); return [n===q?0:n.startsWith(q)?1:n.includes(q)?2:3, r]; })
+    .filter(Boolean).sort((a,b)=>a[0]-b[0]||a[1][1].localeCompare(b[1][1]));
+  if(!hits.length) return `<div class="empty">Nothing in the catalogue matches that.</div>`;
+  return hits.slice(0,15).map(([,r])=>bpHitRow(r)).join('')+
+    (hits.length>15?`<div class="bph" style="margin-top:8px">${fmt(hits.length-15)} more. Add a word to narrow it.</div>`:'');
+}
+function bpPinnedHTML(){
+  const cat=DATA.bp_catalog, by={}; cat.rows.forEach(r=>{ by[r[0]]=r; });
+  const rows=bpPins().map(k=>by[k]).filter(Boolean), todo=rows.filter(r=>!bpOwnedRow(r)), got=rows.filter(bpOwnedRow);
+  const h=`<h3>Pinned <span class="u">\u2014 ${rows.length?`${fmt(todo.length)} to get \u00b7 ${fmt(got.length)} got`:'what you\u2019re going after'}</span></h3>`;
+  if(!rows.length) return h+`<div class="empty">Pin a blueprint from Find, the collection or its missions. It stays here with its next step until it\u2019s in your library.</div>`;
+  return h+todo.concat(got).map(r=>bpHitRow(r)).join('');
 }
 function bpFloorsHTML(){
   const rows=(A().career||{}).rep_floor||[];
@@ -9311,6 +10045,8 @@ const BP_SLOTS={'Armor':['Helmet','Core','Arms','Legs','Backpack'], 'Flight suit
 function bpBoardHTML(catalog){
   const own=bpOwnedKeys(); const has=(k,n)=>own.has(k)||own.has('n:'+(n||'').toLowerCase());
   // --- armour sets
+  const RK={}; catalog.rows.forEach(r=>{ RK[r[0]]=r; });
+  const ns=k=>bpNoSource(RK[k]);
   const sets=(catalog.sets||[]).map(s=>{ const pcs=s[3].map(p=>({si:p[0],key:p[1],n:p[2],on:has(p[1],p[2])}));
     const o=pcs.filter(p=>p.on).length; return {name:s[0],cat:s[1],w:s[2],pcs,o,t:pcs.length}; });
   const B={partial:sets.filter(s=>s.o&&s.o<s.t), complete:sets.filter(s=>s.o===s.t), untouched:sets.filter(s=>!s.o)};
@@ -9325,7 +10061,8 @@ function bpBoardHTML(catalog){
   const setRow=s=>{ const labels=BP_SLOTS[s.cat]||[];
     const sq=labels.map((L,i)=>{ const p=s.pcs.filter(x=>x.si===i);
       if(!p.length) return `<i class="bsq na" title="no ${L.toLowerCase()} in the catalogue for this set"></i>`;
-      return p.map(x=>`<i class="bsq ${x.on?'on':''}" title="${esc(x.n)} — ${x.on?'owned':'missing'}">${L[0]}</i>`).join(''); }).join('');
+      return p.map(x=>{ const n=!x.on&&ns(x.key);
+        return `<i class="bsq ${x.on?'on':''}${n?' ns':''}" data-bpplan="${esc(x.key)}" title="${esc(x.n)} — ${x.on?'owned':'missing'}${n?BP_NOSRC_TIP:' · click for its missions'}">${L[0]}</i>`; }).join(''); }).join('');
     const togo=s.pcs.filter(p=>!p.on).map(p=>labels[p.si]||'').filter(Boolean);
     const tail= s.o===s.t ? `<span class="bsgo done">complete</span>`
       : s.o ? `<span class="bsgo" title="${esc(togo.join(', '))}">${esc(togo.join(', '))} to go</span>`
@@ -9334,7 +10071,7 @@ function bpBoardHTML(catalog){
     return `<div class="bset"><span class="bsn bxa">${artBox('bp', s.name, 0, 'bxth')}<span>${esc(s.name)}${sub?`<span class="bpk">${esc(sub)}</span>`:''}</span></span>`+
       `<span class="bsl">${sq}</span><span class="bsc">${s.o}<span class="u">/${s.t}</span></span>${tail}</div>`; };
   const more=list.length>LIM?`<button class="foot-link" data-bpsa="1">${bpSetAll?'Show fewer':`Show all ${fmt(list.length)}`}</button>`:'';
-  const setsCard=`<div class="card"><h3>Armour sets <span class="u">— ${fmt(B.complete.length)} complete · ${fmt(B.partial.length)} started · ${fmt(B.untouched.length)} untouched</span></h3>`+
+  const setsCard=`<div class="card"><h3>Armour Sets <span class="u">— ${fmt(B.complete.length)} complete · ${fmt(B.partial.length)} started · ${fmt(B.untouched.length)} untouched</span></h3>`+
     `<div class="bpbar">${tabs}</div><div class="bsets">${shown.map(setRow).join('')||'<div class="empty">Nothing here.</div>'}${more}</div></div>`;
   // --- ship-weapon size ladders
   const fams=(catalog.fams||[]).map(f=>{ const sz=f[2].map(p=>({s:p[0],key:p[1],n:p[2],on:has(p[1],p[2])}));
@@ -9345,25 +10082,127 @@ function bpBoardHTML(catalog){
   const started=ladders.filter(f=>f.o), rest=ladders.filter(f=>!f.o);
   const lad=f=>{ const dots=Array.from({length:maxS},(_,i)=>i+1).map(s=>{ const p=f.sz.find(x=>x.s===s);
       if(!p) return `<i class="bdot na"></i>`;
-      return `<i class="bdot ${p.on?'on':''}" title="${esc(p.n)} — ${p.on?'owned':'missing'}">${s}</i>`; }).join('');
+      const n=!p.on&&ns(p.key);
+      return `<i class="bdot ${p.on?'on':''}${n?' ns':''}" data-bpplan="${esc(p.key)}" title="${esc(p.n)} — ${p.on?'owned':'missing'}${n?BP_NOSRC_TIP:' · click for its missions'}">${s}</i>`; }).join('');
     return `<div class="blad"><span class="bsn bxa">${artBox('bp', f.name, 0, 'bxth')}<span>${esc(f.name)}<span class="bpk">${esc(f.kind)}</span></span></span><span class="bsl">${dots}</span><span class="bsc">${f.o}<span class="u">/${f.t}</span></span></div>`; };
   const restH=rest.length?(bpFamAll?rest.map(lad).join(''):'')+`<button class="foot-link" data-bpfa="1">${bpFamAll?'Hide':'Show'} the ${fmt(rest.length)} you haven\u2019t started</button>`:'';
-  const singlesOwned=singles.filter(f=>f.o).length;
-  const ladCard=`<div class="card"><h3>Ship weapons by size <span class="u">— one family per row, S1 to S${maxS}</span></h3>`+
-    `<div class="bsets">${started.map(lad).join('')||'<div class="empty">No ladder started yet.</div>'}${restH}</div>`+
-    (singles.length?`<div class="bph" style="margin-top:10px">+ ${fmt(singles.length)} one-size weapons, ${fmt(singlesOwned)} owned</div>`:'')+`</div>`;
-  // --- component grid
-  const cell={}, types={}, sizes=new Set();
-  catalog.rows.forEach(r=>{ if(r[3]!=='Ship components') return;
-    const parts=(r[4]||'').split(' \u00b7 '); const typ=parts[0]||'Other'; const sz=parts.slice(1).find(p=>/^S\d+$/.test(p))||'\u2014';
-    sizes.add(sz); const c=cell[typ+'|'+sz]=cell[typ+'|'+sz]||{o:0,t:0}; c.t++; if(has(r[0],r[1])) c.o++; types[typ]=(types[typ]||0)+1; });
-  const cols=[...sizes].sort((a,b)=>a==='\u2014'?1:b==='\u2014'?-1:+a.slice(1)-+b.slice(1));
-  const trows=Object.entries(types).sort((a,b)=>b[1]-a[1]).map(([typ])=>`<tr><th>${esc(typ)}</th>`+cols.map(s=>{ const c=cell[typ+'|'+s];
-    if(!c) return `<td class="na"></td>`;
-    return `<td style="--f:${(c.o/c.t).toFixed(2)}" class="${c.o===c.t?'full':''}" title="${esc(typ)} ${s}: ${c.o} of ${c.t} owned"><b>${c.o}</b><span>/${c.t}</span></td>`; }).join('')+'</tr>').join('');
-  const gridCard=`<div class="card"><h3>Ship components <span class="u">— owned / in the catalogue, by type and size</span></h3>`+
-    `<div class="bgrid-wrap"><table class="bgrid"><thead><tr><th></th>${cols.map(s=>`<th>${s}</th>`).join('')}</tr></thead><tbody>${trows}</tbody></table></div></div>`;
-  return setsCard+`<div class="grid2">${ladCard}${gridCard}</div>`;
+  // --- every other blueprint, in the same row style as the armour sets
+  const meta=r=>(catalog.meta||{})[r[0]]||[], typeOf=r=>(r[4]||'').split(' \u00b7 ')[0];
+  const sizeOf=r=>{ const m=(r[4]||'').match(/\bS(\d+)\b/); return m?+m[1]:null; };
+  const recv=bpRecv(), cut=Date.now()-30*864e5;
+  const byCatAll={}; catalog.rows.forEach(r=>(byCatAll[r[3]]=byCatAll[r[3]]||[]).push(r));
+  const on=r=>has(r[0],r[1]), fresh=r=>{ const d=recv[r[0]]||recv['n:'+r[1].toLowerCase()]; return d && Date.parse(d)>=cut; };
+  const sq=(r,label)=>{ const m=meta(r), o=on(r);
+    const t=[r[1], m[0]&&m[0]+(m[1]?' grade '+m[1]:''), m[2]].filter(Boolean).join(' \u00b7 ')+(o?' \u2014 owned':' \u2014 missing');
+    const n=!o&&bpNoSource(r);
+    return `<i class="bsq ${o?(fresh(r)?'on new':'on'):''}${n?' ns':''}" data-bpplan="${esc(r[0])}" title="${esc(t)}${n?BP_NOSRC_TIP:' \u00b7 click for its missions'}">${esc(label||'')}</i>`; };
+  const pic=rs=>{ const img=catalog.img||{}, r=rs.find(x=>on(x)&&img[x[0]])||rs.find(x=>img[x[0]]);
+    return `<span class="bxth ph">${ICON.blueprints}${r?artImg(artUrls(img[r[0]],0)):''}</span>`; };
+  const status=rs=>{ const o=rs.filter(on).length; return o===rs.length?'complete':o?'partial':'untouched'; };
+  const row=(name,sub,rs,squares)=>{ const o=rs.filter(on).length, t=rs.length;
+    const tail = o===t ? `<span class="bsgo done">complete</span>` : o ? `<span class="bsgo">${t-o} to go</span>` : `<span class="bsgo dim">${t} to find</span>`;
+    return {st:status(rs), o, html:`<div class="bset"><span class="bsn bxa">${pic(rs)}<span>${esc(name)}${sub?`<span class="bpk">${esc(sub)}</span>`:''}</span></span>`+
+      `<span class="bsl">${squares}</span><span class="bsc">${o}<span class="u">/${t}</span></span>${tail}</div>`}; };
+  const ORDER={partial:0, complete:1, untouched:2};
+  const oneRs=(byCatAll['Ship weapons']||[]).filter(r=>singles.some(f=>f.sz.some(p=>p.key===r[0])));
+  const oneRow=oneRs.length?row('One-size weapons','one size only',oneRs,oneRs.map(r=>sq(r,'')).join('')).html:'';
+  const ladCard=`<div class="card"><h3>Ship Weapons by Size <span class="u">— one family per row, S1 to S${maxS}</span></h3>`+
+    `<div class="bsets">${started.map(lad).join('')||'<div class="empty">No ladder started yet.</div>'}${restH}${oneRow}</div></div>`;
+  const board=(id,title,sub,rows,opt={})=>{ const B=BPB[id];
+    if(B.tab!=='all' && !rows.some(x=>x.st===B.tab)) B.tab='all';
+    const shown=rows.filter(x=>B.tab==='all'||x.st===B.tab), lim=opt.lim||999, cut2=B.all?shown:shown.slice(0,lim);
+    const n=k=>rows.filter(x=>k==='all'||x.st===k).length;
+    const tabs=[['all','All'],['partial','Started'],['complete','Complete'],['untouched','Untouched']].filter(([k])=>k==='all'||n(k))
+      .map(([k,l])=>`<button class="vpill sm ${B.tab===k?'on':''}" data-bpb="${id}:${k}">${l} <span class="vc">${fmt(n(k))}</span></button>`).join('');
+    const more=shown.length>lim?`<button class="foot-link" data-bpb="${id}:+">${B.all?'Show fewer':`Show all ${fmt(shown.length)}`}</button>`:'';
+    return `<div class="card bxboard${opt.one?' one':''}"><h3>${title} <span class="u">\u2014 ${sub}</span></h3><div class="bpbar">${tabs}</div>`+
+      `<div class="bsets">${opt.head||''}${cut2.map(x=>x.html).join('')||'<div class="empty">Nothing here.</div>'}${more}</div></div>`; };
+  const byCat={}; catalog.rows.forEach(r=>(byCat[r[3]]=byCat[r[3]]||[]).push(r));
+  const cnt=c=>{ const rs=byCat[c]||[], miss=rs.filter(r=>!on(r));
+    return {o:rs.filter(on).length, t:rs.length, ns:miss.filter(bpNoSource).length, mi:miss.filter(r=>!bpNoSource(r)).length}; };
+  // collection totals
+  const totals=`<div class="card bxtot"><h3>Collection <span class="u">\u2014 every blueprint in the game, ${fmt(catalog.rows.length)} in all</span></h3><div class="bxr">`+
+    BP_CATS.filter(c=>byCat[c]).map(c=>{ const k=cnt(c), p=k.t?Math.round(100*k.o/k.t):0;
+      return `<div class="bxr-c" data-bpv="collection" data-bpvg="${bpGroupOf(c)}" title="Open ${esc(c.toLowerCase())}"><div class="bxr-n">${esc(c)}</div><div class="bxr-v"><b>${fmt(k.o)}</b><span>/${fmt(k.t)}</span><em>${p}%</em></div>`+
+        `<div class="bxr-b"><i style="width:${Math.max(p,1)}%"></i></div>`+
+        `<div class="bxr-m" title="Missing: ${fmt(k.mi)} that a mission drops, ${fmt(k.ns)} with no known source"><span>${fmt(k.mi)} from missions</span><span>${fmt(k.ns)} no known source</span></div></div>`; }).join('')+
+      `</div><div class="bxkey"><span><i class="bsq on"></i>owned</span><span><i class="bsq on new"></i>this month</span>`+
+      `<span><i class="bsq"></i>missing, a mission drops it</span><span><i class="bsq ns"></i>missing, no known source</span></div></div>`;
+  // ship components: a row per type and size, a fixed column per class, the grade on each square
+  const comps=byCat['Ship components']||[], runs=[];
+  [...new Set(comps.map(typeOf))].forEach(t=>{ const rt=comps.filter(r=>typeOf(r)===t);
+    [...new Set(rt.map(sizeOf))].sort((a,b)=>(a??99)-(b??99)).forEach(z=>runs.push([t,z,rt.filter(r=>sizeOf(r)===z)])); });
+  const CW={}; BP_CLASSES.forEach(c=>{ CW[c]=Math.max(0,...runs.map(([,,rs])=>rs.filter(r=>(meta(r)[0]||'')===c).length)); });
+  const cols=BP_CLASSES.filter(c=>CW[c]), colW=c=>CW[c]*21-3;
+  const compRows=runs.map(([t,z,rs])=>row(t, z!=null?'S'+z:'', rs, cols.map(c=>`<span class="ccol" style="width:${colW(c)}px">`+
+    rs.filter(r=>(meta(r)[0]||'')===c).sort((a,b)=>(meta(a)[1]||'Z').localeCompare(meta(b)[1]||'Z')).map(r=>sq(r, meta(r)[1]||'')).join('')+`</span>`).join('')));
+  const compHead=`<div class="bset chead"><span class="bsn"></span><span class="bsl">`+cols.map(c=>`<span class="ccol" style="width:${colW(c)}px" title="${c||'No class'}">${CW[c]>4?(c||'Other'):BP_CLS_SHORT[c]}</span>`).join('')+
+    `</span><span class="bsc"></span><span class="bsgo dim">letter = grade</span></div>`;
+  const compCard=board('comp','Ship Components', `${fmt(cnt('Ship components').o)} of ${fmt(comps.length)} \u00b7 every component by size, class and grade`, compRows, {one:true, head:compHead});
+  // FPS weapons: a row per gun, the base gun first (\u25c6), then its variants
+  const fam={}; (byCat['FPS weapons']||[]).forEach(r=>{ const f=r[1].replace(/\s*["\u201c][^"\u201d]*["\u201d]\s*/g,' ').replace(/\s+/g,' ').trim(); (fam[f]=fam[f]||[]).push(r); });
+  const fpsRows=Object.entries(fam).map(([f,rs])=>{ rs.sort((a,b)=>(a[1].length-b[1].length)||a[1].localeCompare(b[1]));
+    return row(f, rs[0][4], rs, rs.map((r,i)=>sq(r, i?'':'\u25c6')).join('')); })
+    .sort((a,b)=>ORDER[a.st]-ORDER[b.st]||b.o-a.o);
+  if(BPB.fps.tab==='all' && !BPB.fps.set){ BPB.fps.tab=fpsRows.some(x=>x.st==='partial')?'partial':'all'; BPB.fps.set=1; }
+  const fpsCard=board('fps','FPS Weapons', `${fmt(cnt('FPS weapons').o)} of ${fmt(cnt('FPS weapons').t)} \u00b7 a row per gun, \u25c6 the base gun, then its variants`, fpsRows, {lim:16, one:true});
+  // everything else, so every blueprint has a row: magazines by maker, mining by maker, the
+  // one-size ship weapons, armour and flight-suit pieces outside a set, clothing, decor
+  const inSet=new Set((catalog.sets||[]).flatMap(st=>st[3].map(p=>p[1])));
+  const gear=[], arm=[];
+  const add=(name,sub,rs,to)=>{ if(rs.length) (to||gear).push(row(name,sub,rs,rs.map(r=>sq(r,'')).join(''))); };
+  const by=(rs,f)=>{ const g={}; rs.forEach(r=>{ const k=f(r); (g[k]=g[k]||[]).push(r); }); return Object.entries(g).sort((a,b)=>a[0].localeCompare(b[0])); };
+  by(byCat['Magazines & batteries']||[], r=>(r[4]||'Magazine')+'|'+(meta(r)[2]||'Other makers')).forEach(([k,rs])=>{ const [kind,mk]=k.split('|'); add(mk, kind, rs); });
+  by(byCat['Mining & salvage']||[], r=>(r[4]||'Mining')+'|'+(r[4]==='Mining laser'?(meta(r)[2]||'Other makers'):'')).forEach(([k,rs])=>{ const [kind,mk]=k.split('|'); add(mk||kind, mk?kind:'Mining & salvage', rs); });
+  by((byCat['Armor']||[]).filter(r=>!inSet.has(r[0])), r=>(r[4]||'Armour').split(' \u00b7 ').pop()).forEach(([k,rs])=>add(k, 'Armour, no set', rs, arm));
+  by((byCat['Flight suits']||[]).filter(r=>!inSet.has(r[0])), r=>r[4]||'Flight suit').forEach(([k,rs])=>add(k, 'Flight suit, no set', rs, arm));
+  ['Clothing','Flair & decor'].forEach(c=>add(c, '', byCat[c]||[]));
+  Object.keys(byCat).filter(c=>!BP_CATS.includes(c)).forEach(c=>add(c, '', byCat[c]));
+  const gearCard=board('gear','Magazines, Mining &amp; More', 'magazines, batteries, mining, clothing and decor', gear, {lim:24});
+  const armCard=arm.length?board('arm','Pieces Outside a Set', 'armour and flight-suit pieces that aren\u2019t part of a set', arm, {lim:14}):'';
+  return {totals, sets:setsCard, arm:armCard, comp:compCard, lad:ladCard, fps:fpsCard, gear:gearCard};
+}
+// the album: one category at a time, every blueprint a card with its picture
+function bpAlbumHTML(catalog, cats){
+  const byCat={}; catalog.rows.forEach(r=>(byCat[r[3]]=byCat[r[3]]||[]).push(r));
+  const list=(cats||BP_CATS).filter(c=>byCat[c]);
+  if(!list.includes(BPA.cat)) BPA.cat=list[0]||Object.keys(byCat)[0];
+  const own=bpOwnedKeys(), on=r=>own.has(r[0])||own.has('n:'+r[1].toLowerCase());
+  const tabs=list.length<2?'':list.map(c=>`<button class="vpill sm ${c===BPA.cat?'on':''}" data-bpac="${esc(c)}">${esc(c)} <span class="vc">${fmt(byCat[c].filter(on).length)}/${fmt(byCat[c].length)}</span></button>`).join('');
+  const modes=[['all','All'],['owned','Owned'],['missing','Missing']].map(([k,l])=>`<button class="vpill sm ${BPA.mode===k?'on':''}" data-bpam="${k}">${l}</button>`).join('');
+  return `<h3>Cards <span class="u">\u2014 every blueprint with its picture</span></h3>${tabs?`<div class="bpbar">${tabs}</div>`:''}`+
+    `<div class="bpbar">${modes}<input class="bpq" id="bpAlbQ" type="search" placeholder="Search ${esc(BPA.cat.toLowerCase())}\u2026" value="${esc(BPA.q)}" spellcheck="false" autocomplete="off"></div>`+
+    `<div id="bpAlbList">${bpAlbumList(catalog)}</div>`;
+}
+function bpAlbumList(catalog){
+  const own=bpOwnedKeys(), recv=bpRecv(), cut=Date.now()-30*864e5;
+  const meta=r=>(catalog.meta||{})[r[0]]||[], img=catalog.img||{};
+  const on=r=>own.has(r[0])||own.has('n:'+r[1].toLowerCase());
+  const q=BPA.q.trim().toLowerCase();
+  const sizeOf=r=>{ const m=(r[4]||'').match(/\bS(\d+)\b/); return m?+m[1]:null; };
+  let rs=catalog.rows.filter(r=>r[3]===BPA.cat);
+  if(BPA.mode!=='all') rs=rs.filter(r=>on(r)===(BPA.mode==='owned'));
+  if(q) rs=rs.filter(r=>[r[1], r[4], ...meta(r)].join(' ').toLowerCase().includes(q));
+  const grp=r=>(r[4]||BPA.cat).split(' \u00b7 ')[0];
+  rs.sort((a,b)=>grp(a).localeCompare(grp(b))||(sizeOf(a)??99)-(sizeOf(b)??99)||(on(b)-on(a))||
+    (BP_CLASSES.indexOf(meta(a)[0]||'')-BP_CLASSES.indexOf(meta(b)[0]||''))||(meta(a)[1]||'Z').localeCompare(meta(b)[1]||'Z')||a[1].localeCompare(b[1]));
+  if(!rs.length) return `<div class="empty">${q?'Nothing matches that.':'Nothing here.'}</div>`;
+  const PER=48, pages=Math.ceil(rs.length/PER);
+  BPA.page=Math.max(0, Math.min(BPA.page||0, pages-1));
+  const shown=rs.slice(BPA.page*PER, BPA.page*PER+PER); let out='', last=null;
+  shown.forEach(r=>{ const g=grp(r);
+    if(g!==last){ if(last!==null) out+='</div>'; const all=rs.filter(x=>grp(x)===g);
+      out+=`<div class="agh"><b>${esc(g)}</b><span>${fmt(all.filter(on).length)} of ${fmt(all.length)}</span></div><div class="alb">`; last=g; }
+    const m=meta(r), o=on(r), d=recv[r[0]]||recv['n:'+r[1].toLowerCase()], nw=o&&d&&Date.parse(d)>=cut, z=sizeOf(r);
+    const st = o ? (nw?'NEW \u00b7 '+ddmm(d).slice(0,6):'OWNED') : r[5] ? 'default' : (r[6]?fmt(r[6])+(r[6]===1?' mission':' missions'):'no known source');
+    out+=`<div class="ac ${o?'on':''} ${nw?'new':''}${!o&&bpNoSource(r)?' ns':''}" data-bpplan="${esc(r[0])}" title="${esc(r[1])} \u00b7 click for its missions"><div class="pic">${ICON.blueprints}${bpPinBtn(r[0])}${img[r[0]]?artImg(artUrls(img[r[0]],1)):''}<span class="st">${st}</span></div>`+
+      `<div class="bd"><div class="nm">${esc(r[1])}</div><div class="cp">${z!=null?`<i>S${z}</i>`:''}${m[0]?`<i>${BP_CLS_SHORT[m[0]]||esc(m[0])}</i>`:''}`+
+      `${m[1]?`<i class="g${esc(m[1])}">${esc(m[1])}</i>`:''}${m[2]?`<i>${esc(m[2])}</i>`:''}</div></div></div>`; });
+  out+='</div>';
+  if(pages>1) out+=`<div class="pager"><button class="foot-link" data-bpap="${BPA.page-1}" ${BPA.page?'':'disabled'}>\u2190 Back</button>`+
+    `<span class="pgi">${fmt(BPA.page*PER+1)}\u2013${fmt(BPA.page*PER+shown.length)} of ${fmt(rs.length)}</span>`+
+    `<button class="foot-link" data-bpap="${BPA.page+1}" ${BPA.page<pages-1?'':'disabled'}>Next \u2192</button></div>`;
+  return out;
 }
 // owned / total per category, on one shared scale so the bars are comparable
 function bpProgressHTML(ownedCats, totalCats){
@@ -9393,7 +10232,7 @@ function secBlueprints(v){
   const K=kpiRow([
     catalog ? [icon('blueprints'), `${fmt(ownedAll)} <span class="u">/ ${fmt(total)}</span>`, 'Blueprints owned', `${pct}% of the crafting catalogue · ${esc(String(catalog.version||'').split('-')[0])}`]
             : [icon('blueprints'), fmt(ownedAll), 'Blueprints owned', 'distinct · all-time on this account'],
-    current==='all' ? [icon('import'), fmt(v.bp_receipts||0), 'Times received', `${fmt(v.bp_repeats||0)} received more than once`]
+    current==='all'||isEra(current) ? [icon('import'), fmt(v.bp_receipts||0), 'Times received', `${fmt(v.bp_repeats||0)} received more than once`]
                     : [icon('import'), fmt(v.bp_unique||0), 'Received in '+esc(pLabel(current)), `${fmt(v.bp_receipts||0)} notifications`],
     catalog ? [icon('overview'), fmt(missing.length), 'Still missing', 'never seen received in your logs']
             : [icon('overview'), fmt(cats.length), 'Categories', cats.length?esc(cats[0][0])+' is the largest':'—'],
@@ -9405,55 +10244,119 @@ function secBlueprints(v){
   const pills=`<button class="vpill sm ${bpCat==='all'?'on':''}" data-bpc="all">All <span class="vc">${fmt(base.length)}</span></button>`+
     cats.map(([c,n])=>`<button class="vpill sm ${bpCat===c?'on':''}" data-bpc="${esc(c)}">${esc(c)} <span class="vc">${fmt(n)}</span></button>`).join('');
   const bar=`<div class="bpbar">${modes}${pills}<input class="bpq" id="bpQ" type="search" placeholder="Search blueprints…" value="${esc(bpQ)}" spellcheck="false" autocomplete="off"></div>`;
-  const listTitle = bpMode==='missing' ? `Not yet in your library <span class="u">— every catalogue blueprint you haven't been seen to receive</span>`
-    : current==='all' ? `Your library <span class="u">— every blueprint you've received, newest first</span>`
+  const listTitle = bpMode==='missing' ? `Not Yet in Your Library <span class="u">— every catalogue blueprint you haven't been seen to receive</span>`
+    : current==='all'||isEra(current) ? `Your Library <span class="u">— every blueprint you've received${current==='all'?'':' '+esc(scopeLabel())}, newest first</span>`
                       : `Received in ${esc(pLabel(current))} <span class="u">— newest first</span>`;
-  $('#content').innerHTML=metaLine(v)+
-    group(1,'blueprints','Blueprint library','Everything the game has told you it handed over — and what it hasn\u2019t',
-      K+(catalog?`<div id="bpBoard">${bpBoardHTML(catalog)}</div>`:''))+
-    (DATA.missions && catalog ? group(2,'missions','Planner','Which missions drop a blueprint, what standing they need, and where your completed contracts put you',
-      `<div class="grid2"><div class="card"><h3>Plan a blueprint <span class="u">— its missions and their gates</span></h3><div id="bpPlan">${bpPlanHTML()}</div></div>`+
-      `<div class="card"><h3>Standing floors <span class="u">— rep your matched completions alone would have earned</span></h3>${bpFloorsHTML()}</div></div>`+
-      noteFold(`A floor, not your standing: the game never writes reputation to the log. Missions CIG has retired, event bonuses and resets are invisible here.`,
-        `Each completed contract in your log is matched to the SC-Wiki\u2019s mission list by its class name and credited with that mission\u2019s reputation. Generated hauling contracts are matched by family. Gates and ladders come from the same data (${esc(String(DATA.missions.version||'').split('-')[0])}). If you know your real rank is higher, the plan is at least that good.`)) : '')+
-    group(3,'overview','Every blueprint','The whole list, searchable — what you have, or what you\u2019re still missing',
-      `<div class="card"><h3>${listTitle}</h3>${bar}<div id="bpList">${bpListHTML(v)}</div></div>`)+
-    group(4,'activity','Unlock history','When the blueprints arrived, and how far along each category is',
-      `<div class="grid2">`+cardHTML('Received per month','notifications, not distinct blueprints','bpMonths')+
-      cardHTML(catalog?'Progress by category':'By category', catalog?'owned / in the catalogue':'distinct blueprints in this scope','bpCats')+`</div>`)+
-    noteFold(
+  // ---- one page at a time, picked from the menu down the left
+  const P=catalog?bpBoardHTML(catalog):null;
+  if(!catalog && !['library','history'].includes(BPV.page)) BPV.page='library';
+  if(BPV.page==='standing' && !DATA.missions) BPV.page='overview';
+  const own=catalog?bpOwnedKeys():new Set(), on=r=>own.has(r[0])||own.has('n:'+r[1].toLowerCase());
+  const byCat={}; if(catalog) catalog.rows.forEach(r=>(byCat[r[3]]=byCat[r[3]]||[]).push(r));
+  const grpCats=g=>g[0]==='gear'?g[2].concat(Object.keys(byCat).filter(c=>!BP_CATS.includes(c))):g[2];
+  const gcount=g=>{ const rs=grpCats(g).flatMap(c=>byCat[c]||[]); return [rs.filter(on).length, rs.length]; };
+  const G=BP_GROUPS.find(x=>x[0]===BPV.grp)||BP_GROUPS[1];
+  const [cO,cT]=[ownedAll,total];
+  const tab=(page,ic,label,n,attr)=>[`data-bpv="${page}"${attr||''}`, icon(ic), label, n, '', BPV.page===page];
+  const nav=snavHTML((catalog?[tab('overview','overview','Overview',''), tab('find','search','Find a Blueprint',''),
+      tab('pinned','star','Pinned',bpPins().length?fmt(bpPinTodo()):'',' id="bptPin"'), '|',
+      tab('collection','blueprints','Collection',`${fmt(cO)}/${fmt(cT)}`)]:[])
+    .concat(DATA.missions&&catalog?[tab('standing','scales','Standing','')]:[])
+    .concat(['|', tab('library','import','Your Library',fmt(owned.length)), tab('history','calendar','Unlock History','')]), 'Blueprints',
+    {standing:'Where your completed contracts put you with each faction', library:'Every blueprint the game told you it handed over',
+     history:'When the blueprints arrived, and how far along each category is'}[BPV.page]||'');
+  const listCard=`<div class="card"><h3>${listTitle}</h3>${bar}<div id="bpList">${bpListHTML(v)}</div></div>`;
+  const aboutFold=noteFold(
       `Blueprints the game announced to you, counted once each. The log has no ownership list, so this is a minimum.`,
-      `Only the Received Blueprint notice is logged; the library itself sits on CIG\u2019s servers. Blueprints from before 4.7, or from another PC whose logs weren\u2019t imported, won\u2019t appear. Language packs (StarStrings, ScCompLangPack) rename items in the notice; CSR matches them back to the real item and keeps your wording as a search alias. <span class="bpx">\u00d72</span> marks a duplicate drop. PTU and Tech Preview run a copy of your account and get their own libraries. Armour sets are read off the game\u2019s item ids (pieces of one set share a variant number), ship-weapon families off the class with the size removed; single pieces aren\u2019t sets and only show in the list.${catalog?` Missing is measured against the SC-Wiki\u2019s extraction of the game data (${fmt(catalog.n)} blueprints, ${esc(String(catalog.version||'').split('-')[0])}), which includes blueprints you can\u2019t get yet — a wish-list, not a to-do list.`:''}`);
-  const plan=()=>{ const el=$('#bpPlan'); if(!el) return; el.innerHTML=bpPlanHTML(); wirePlan(); };
-  const wirePlan=()=>{
-    document.querySelectorAll('#content [data-bpplan]').forEach(b=>b.onclick=()=>{
-      bpPlanKey=b.dataset.bpplan; const r=(DATA.bp_catalog.rows||[]).find(x=>x[0]===bpPlanKey); if(r) bpPlanQ=r[1];
-      plan(); const el=$('#bpPlan'); if(el) scrollToY(el.getBoundingClientRect().top+window.pageYOffset-160);
-    });
-    const pq=$('#bpPlanQ'); if(pq){ pq.oninput=()=>{ bpPlanQ=pq.value; bpPlanKey=''; const o=$('#bpPlan'); if(o){ o.innerHTML=bpPlanHTML(); wirePlan(); const nq=$('#bpPlanQ'); if(nq){ nq.focus(); nq.setSelectionRange(nq.value.length,nq.value.length); } } }; }
-  };
-  const draw=()=>{ const el=$('#bpList'); if(!el) return; el.innerHTML=bpListHTML(v); wire(); wirePlan(); };
+      `Only the Received Blueprint notice is logged. The library itself sits on CIG\u2019s servers. Blueprints from before 4.7, or from another PC whose logs weren\u2019t imported, won\u2019t appear. Language packs (StarStrings, ScCompLangPack) rename items in the notice. CSR matches them back to the real item and keeps your wording as a search alias. <span class="bpx">\u00d72</span> marks a duplicate drop. PTU and Tech Preview run a copy of your account and get their own libraries. Armour sets are read off the game\u2019s item ids (pieces of one set share a variant number), ship-weapon families off the class with the size removed.${catalog?` Missing is measured against the SC-Wiki\u2019s extraction of the game data (${fmt(catalog.n)} blueprints, ${esc(String(catalog.version||'').split('-')[0])}). That includes blueprints you can\u2019t get yet.`:''}`);
+  const recent=owned.slice().sort((a,b)=>String(b[3]).localeCompare(String(a[3]))).slice(0,10);
+  const recentCard=`<div class="card"><h3>Latest Unlocks <span class="u">\u2014 newest first</span></h3>`+(recent.length?`<div class="tline bprec">`+
+    recent.map(b=>`<div class="tev"${b[6]?` data-bpplan="${esc(b[6])}" title="Show every mission that drops it"`:''}><span class="td">${ddmm(b[3])}</span>`+
+      `<span class="tw">${esc(b[0])}<span class="bpk">${esc(b[2]||'')}</span></span><span class="tv"><span class="bph">${esc(b[1])}</span></span></div>`).join('')+`</div>`
+    :`<div class="empty">No blueprints received in this scope.</div>`)+`</div>`;
+  let body='';
+  if(BPV.page==='overview') body=`<div class="bpov"><div class="bpov-c"><div class="card" id="bpPinned">${bpPinnedHTML()}</div>${recentCard}</div>`+
+    `<div class="bpov-c">${P.totals}</div></div>`+aboutFold;
+  else if(BPV.page==='find') body=`<div class="card" id="bpFind">${bpFindHTML()}</div>`;
+  else if(BPV.page==='pinned') body=`<div class="card" id="bpPinned">${bpPinnedHTML()}</div>`;
+  else if(BPV.page==='collection'){
+    // the five collection pages as a row of chips, Rows or Cards at the end
+    body=`<div class="bpcat" role="group" aria-label="Collection">`+BP_GROUPS.map(g=>{ const [o,t]=gcount(g), on=g===G;
+        return `<button type="button" class="bpc${on?' on':''}" data-bpv="collection" data-bpvg="${g[0]}"${on?' aria-pressed="true"':' aria-pressed="false"'}>`+
+          `<i>${icon(BP_GROUP_IC[g[0]])}</i><span>${esc(g[1])}</span><b>${fmt(o)}/${fmt(t)}</b></button>`; }).join('')+
+      `<div class="vt" role="group" aria-label="Show as">${[['rows','Rows'],['cards','Cards']].map(([k,l])=>`<button type="button" data-bpvv="${k}" class="${BPV.view===k?'on':''}" aria-pressed="${BPV.view===k}">${l}</button>`).join('')}</div></div>`+
+      `<div id="bpBoard">${BPV.view==='cards'?`<div class="card bxalb" id="bpAlbum">${bpAlbumHTML(catalog, grpCats(G))}</div>`
+        :{armour:P.sets+P.arm, comp:P.comp, sw:P.lad, fps:P.fps, gear:P.gear}[G[0]]}</div>`; }
+  else if(BPV.page==='standing') body=
+      `<div class="card"><h3>Standing Floors <span class="u">\u2014 rep your matched completions alone would have earned</span></h3>${bpFloorsHTML()}</div>`+
+      noteFold(`A floor, not your standing. The game never writes reputation to the log. Missions CIG has retired, event bonuses and resets are invisible here.`,
+        `Each completed contract in your log is matched to the SC-Wiki\u2019s mission list by its class name and credited with that mission\u2019s reputation. Generated hauling contracts are matched by family. Gates and ladders come from the same data (${esc(String(DATA.missions.version||'').split('-')[0])}). If you know your real rank is higher, the plan is at least that good.`);
+  else if(BPV.page==='library') body=listCard+aboutFold;
+  else body=`<div class="grid2">`+cardHTML('Received per Month','notifications, not distinct blueprints','bpMonths')+
+      cardHTML(catalog?'Progress by category':'By category', catalog?'owned / in the catalogue':'distinct blueprints in this scope','bpCats')+`</div>`;
+  $('#content').innerHTML=metaLine(v)+K+nav+`<div class="spage" id="bpMain">${body}</div>`;
+  const content=$('#content');
+  if(content && !content.dataset.bpWired){ content.dataset.bpWired='1';
+    content.addEventListener('click', e=>{
+      if(section!=='blueprints') return;
+      const pin=e.target.closest('[data-bppin]');
+      if(pin && content.contains(pin)){ e.preventDefault(); e.stopPropagation(); bpTogglePin(pin.dataset.bppin); bpPinsChanged(); return; }
+      if(e.target.closest('a')) return;            // a wiki link inside a row opens itself
+      const nav=e.target.closest('[data-bpv]');
+      if(nav && content.contains(nav)){ BPV.page=nav.dataset.bpv; if(nav.dataset.bpvg) BPV.grp=nav.dataset.bpvg; bpSaveView();
+        secBlueprints(view()); buildToc(); snavSettle();
+        if(BPV.page==='find'){ const f=$('#bpFindQ'); if(f) f.focus({preventScroll:true}); } return; }
+      const vv=e.target.closest('[data-bpvv]');
+      if(vv && content.contains(vv)){ BPV.view=vv.dataset.bpvv; bpSaveView(); secBlueprints(view()); return; }
+      const b=e.target.closest('[data-bpplan]');
+      if(b && content.contains(b)){ e.preventDefault(); bpDrawer(b.dataset.bpplan); } }); }
+  const draw=()=>{ const el=$('#bpList'); if(!el) return; el.innerHTML=bpListHTML(v); wire(); };
   const wire=()=>document.querySelectorAll('#content [data-bpg]').forEach(b=>b.onclick=()=>{
     bpPage=+b.dataset.bpg; draw();
     const el=$('#bpList'); if(el) scrollToY(el.getBoundingClientRect().top+window.pageYOffset-160);
   });
-  wirePlan();
   // pills re-render the whole section (cheap); the search box only redraws the list, so
   // typing never loses focus
   document.querySelectorAll('#content [data-bpc]').forEach(b=>b.onclick=()=>{ bpCat=b.dataset.bpc; bpPage=0; secBlueprints(v); });
   document.querySelectorAll('#content [data-bpm]').forEach(b=>b.onclick=()=>{ bpMode=b.dataset.bpm; bpCat='all'; bpPage=0; secBlueprints(v); });
   const q=$('#bpQ'); if(q) q.oninput=()=>{ bpQ=q.value; bpPage=0; draw(); };
   wire();
-  // the board redraws on its own; nothing else on the page depends on its tabs
-  const board=()=>{ const el=$('#bpBoard'); if(!el||!catalog) return; el.innerHTML=bpBoardHTML(catalog); wireBoard(); };
+  // the collection redraws on its own; nothing else on the page depends on its tabs
+  // a card titled like the page repeats the page head: drop its title
+  const dedupe=()=>document.querySelectorAll('#bpBoard > .card > h3').forEach(h=>{
+    if(h.firstChild && h.firstChild.textContent.trim().toLowerCase()===G[1].toLowerCase()) h.style.display='none'; });
+  const board=()=>{ const el=$('#bpBoard'); if(!el||!catalog) return; const P2=bpBoardHTML(catalog);
+    el.innerHTML={armour:P2.sets+P2.arm, comp:P2.comp, sw:P2.lad, fps:P2.fps, gear:P2.gear}[G[0]]; wireBoard(); dedupe(); };
   const wireBoard=()=>{
     document.querySelectorAll('#bpBoard [data-bpst]').forEach(b=>b.onclick=()=>{ bpSetTab=b.dataset.bpst; bpSetAll=false; board(); });
     document.querySelectorAll('#bpBoard [data-bpsa]').forEach(b=>b.onclick=()=>{ bpSetAll=!bpSetAll; board(); });
     document.querySelectorAll('#bpBoard [data-bpfa]').forEach(b=>b.onclick=()=>{ bpFamAll=!bpFamAll; board(); });
+    document.querySelectorAll('#bpBoard [data-bpb]').forEach(b=>b.onclick=()=>{ const [id,k]=b.dataset.bpb.split(':');
+      if(k==='+') BPB[id].all=!BPB[id].all; else { BPB[id].tab=k; BPB[id].all=false; } board(); });
   };
-  wireBoard();
+  const album=()=>{ const el=$('#bpAlbum'); if(!el||!catalog) return; el.innerHTML=bpAlbumHTML(catalog, grpCats(G)); wireAlbum(); };
+  const wireAlbum=()=>{
+    document.querySelectorAll('#bpAlbum [data-bpac]').forEach(b=>b.onclick=()=>{ BPA.cat=b.dataset.bpac; BPA.q=''; BPA.page=0; album(); });
+    document.querySelectorAll('#bpAlbum [data-bpam]').forEach(b=>b.onclick=()=>{ BPA.mode=b.dataset.bpam; BPA.page=0; album(); });
+    // a page change redraws the cards only and brings the top back into view
+    const pager=()=>document.querySelectorAll('#bpAlbum [data-bpap]').forEach(b=>b.onclick=()=>{ BPA.page=+b.dataset.bpap;
+      const l=$('#bpAlbList'); if(l){ l.innerHTML=bpAlbumList(catalog); pager(); }
+      const a=$('#bpAlbum'); if(a) scrollToY(a.getBoundingClientRect().top+window.pageYOffset-90); });
+    pager();
+    const q=$('#bpAlbQ'); if(q) q.oninput=()=>{ BPA.q=q.value; BPA.page=0; const l=$('#bpAlbList'); if(l){ l.innerHTML=bpAlbumList(catalog); pager(); } };
+  };
+  wireBoard(); wireAlbum(); dedupe();
+  // the menu's search box and Find's own box share one query
+  const findOut=()=>{ const o=$('#bpFindOut'); if(o) o.innerHTML=bpFindList(); };
+  const fq=$('#bpFindQ'); if(fq) fq.oninput=()=>{ bpFindQ=fq.value; const t=$('#bpTreeQ'); if(t) t.value=bpFindQ; findOut(); };
+  const tq=$('#bpTreeQ'); if(tq) tq.oninput=()=>{ bpFindQ=tq.value;
+    if(BPV.page!=='find'){ BPV.page='find'; bpSaveView(); secBlueprints(view()); buildToc();
+      const n=$('#bpTreeQ'); if(n){ n.focus(); n.setSelectionRange(n.value.length,n.value.length); } return; }
+    const f=$('#bpFindQ'); if(f) f.value=bpFindQ; findOut(); };
   if(bpLead) mountHero('bp', bpLead.name, bpLead.o===bpLead.t?'Complete armour set':'Closest armour set',
     `${bpLead.o} of ${bpLead.t} pieces`, wikiURL(bpLead.name));
+  snavTop();
+  if(!$('#bpMonths')) return;
   const months=v.bp_months||[];
   if(months.length) vbars($('#bpMonths'), months.map(([m,n])=>({label:MON[+m.slice(5,7)-1]+' '+m.slice(2,4), full:m, value:n})), {w:560,h:200,rot:months.length>9});
   else $('#bpMonths').innerHTML='<div style="color:var(--dim);font-size:12px;padding:8px 2px">Nothing in this scope</div>';
@@ -9476,22 +10379,21 @@ function secMissions(v){
     [icon('quit'), fmt(m.abandon), 'Abandoned', ``],
   ]);
   const h=v.haul||{};
-  const H = h.scu ? `<section class="gsec"><div class="ghead"><div class="gnum">—</div><div class="gic">${icon('cargo')}</div>`+
-      `<div class="gtx"><div class="gt">Cargo hauling</div><div class="gs">SCU delivered on hauling contracts you completed — from the delivery objectives, 4.5 onward</div></div></div><div class="gbody">`+
+  const H = h.scu ? group(3,'cargo','Cargo Hauling','SCU delivered on hauling contracts you completed, from the delivery objectives, 4.5 onward',
       kpiRow([
         [icon('cargo'), fmt(h.scu), 'SCU delivered', `${fmt(h.runs)} contracts · ${fmt(h.sessions)} sessions`],
         [icon('yes'), fmt(h.max), 'Biggest contract', `SCU on one run`],
         [icon('no'), fmt(h.lost), 'SCU not delivered', `contracts that failed or were abandoned`],
         [icon('scales'), fmt(h.runs ? Math.round(h.scu/h.runs) : 0), 'SCU per contract', `average`],
-      ])+`<div class="grid2">`+barsCard('By commodity','SCU delivered','haulComBars')+barsCard('By destination','SCU delivered','haulDestBars')+`</div>`+
-      noteFold(`A contract counts when it completes; the SCU is its delivery target. Partial drops on a run that failed or was abandoned aren’t counted.`)+
-      `</div></section>` : '';
-  $('#content').innerHTML=metaLine(v)+K+H+
-    cardHTML('Outcomes','completed / failed / abandoned','missionChart')+
-    `<div style="margin-top:16px">`+barsCard('Mission types','by contract category','typeBars')+`</div>`+
-    ((v.contracts_named||[]).length ? `<div style="margin-top:16px">`+
-      barsCard('Contracts by name','accepted · completed — as the game titled them (4.5+)','contractBars')+`</div>`+
-      noteFold(`Contract names come from the HUD notices (4.5 onward), language-pack tags stripped. Accepted but not completed covers failed, abandoned, lost on log-off, or still open.`) : '');
+      ])+`<div class="grid2">`+barsCard('By Commodity','SCU delivered','haulComBars')+barsCard('By Destination','SCU delivered','haulDestBars')+`</div>`+
+      noteFold(`A contract counts when it completes. The SCU is its delivery target. Partial drops on a run that failed or was abandoned aren’t counted.`)) : '';
+  $('#content').innerHTML=metaLine(v)+K+
+    group(1,'missions','Outcomes','Completed, failed and abandoned, and the kinds of mission',
+      cardHTML('Outcomes','completed / failed / abandoned','missionChart')+
+      `<div style="margin-top:16px">`+barsCard('Mission Types','by contract category','typeBars')+`</div>`)+
+    ((v.contracts_named||[]).length ? group(2,'yes','Contracts','Every contract by the name the game gave it, 4.5 onward',
+      barsCard('Contracts by Name','accepted · completed — as the game titled them (4.5+)','contractBars')+
+      noteFold(`Contract names come from the HUD notices (4.5 onward), language-pack tags stripped. Accepted but not completed covers failed, abandoned, lost on log-off, or still open.`)) : '')+H;
   splitbar($('#missionChart'), [{label:'Completed',value:m.complete,color:'#4ade80'},{label:'Failed',value:m.fail,color:'#ff5468'},{label:'Abandoned',value:m.abandon,color:'#f4a92a'}], {big:(m.rate||0)+'%', small:m.total+' total'});
   hbars($('#typeBars'), toItems(v.mission_types,'#4ade80'));
   const cb=$('#contractBars'); if(cb) hbars(cb, (v.contracts_named||[]).map(([n,a,d,f])=>({label:n, full:n, value:a, disp:`${fmt(a)} <span class="vv-u">acc</span> · ${fmt(d)} done${f?` · ${fmt(f)} failed`:''}`})));
@@ -9510,7 +10412,7 @@ const HOURS_PARTS=[['startup','Starting up','#8b9bb4'],['loading','Loading scree
 function hoursCard(v){
   const h=v.hours_split;
   if(!h || !h.total) return '';
-  return `<div class="card" style="margin-top:16px"><h3>Where your hours go <span class="u">— hours by activity</span></h3>`+
+  return `<div class="card" style="margin-top:16px"><h3>Where Your Hours Go <span class="u">— hours by activity</span></h3>`+
     `<div id="hoursChart"></div>`+
     (h.unsplit>0 ? `<div class="bsub">Aboard time is logged from Dec 2025.</div>` : '')+`</div>`;
 }
@@ -9528,13 +10430,14 @@ function secActivity(v){
     [icon('night'), v.longest_h+'h', 'Longest session', `single sitting`],
   ]);
   $('#content').innerHTML=metaLine(v)+K+
-    cardHTML('Playtime by month','hours per calendar month','monthChart')+
-    hoursCard(v)+
-    `<div style="margin-top:16px">`+cardHTML('When you play','sessions started · weekday × hour','heatChart')+`</div>`+
-    `<div class="grid3" style="margin-top:16px">`+
-    cardHTML('By hour','play start time','hourChart')+
-    cardHTML('By weekday','','dowChart')+
-    barsCard('Session length','how long you play','distBars')+`</div>`;
+    group(1,'calendar','Playtime','Hours per month, and what you spent them on',
+      cardHTML('Playtime by Month','hours per calendar month','monthChart')+hoursCard(v))+
+    group(2,'time','When You Play','Weekday, hour and how long you play',
+      cardHTML('When You Play','sessions started · weekday × hour','heatChart')+
+      `<div class="grid3" style="margin-top:16px">`+
+      cardHTML('By Hour','play start time','hourChart')+
+      cardHTML('By Weekday','','dowChart')+
+      barsCard('Session Length','how long you play','distBars')+`</div>`);
   const ms=Object.keys(v.months).sort();
   const mitems=ms.map(m=>{const [y,mm]=m.split('-');return {label:MON[+mm-1]+" '"+y.slice(2), value:+(v.months[m]/3600).toFixed(1), disp:(v.months[m]/3600).toFixed(0)+' h', full:m, color:'#3fd0e6'};});
   if(mitems.length) vbars($('#monthChart'), mitems, {h:230, w:Math.max(560,mitems.length*54), rot:true, fmtY:x=>x+'h'});
@@ -9693,7 +10596,7 @@ function settingsHTML(st){
   const specs=Object.keys(st).filter(k=>k.indexOf('SysSpec')===0)
     .sort((a,b)=>a==='SysSpec'?-1:b==='SysSpec'?1:_setName(a).localeCompare(_setName(b)))
     .map(k=>item(k, setTier(k,st[k])||st[k], levelHTML(k,st[k]))).join('');
-  return `<div class="card"><h3>Current graphics settings <span class="u">— read from your profile</span></h3>`+
+  return `<div class="card"><h3>Current Graphics Settings <span class="u">— read from your profile</span></h3>`+
     `<div class="setg2">`+toggles+ups+specs+`</div></div>`;
 }
 // ---- settings guidance ----
@@ -9741,7 +10644,7 @@ function settingsAdvice(v){
     `<div class="ad2">Undo point ${esc(st._csr_prev||'—')}`+
     `${st._csr_original?` · original from ${esc(st._csr_original)}`:''}.</div>`+
     `<div class="row">${rp.join('')}</div></div>`);
-  return `<div class="card"><h3>Change settings <span class="beta">BETA</span> `+
+  return `<div class="card"><h3>Change Settings <span class="beta">BETA</span> `+
     `<span class="u">— use at your own risk</span></h3>`+
     `<div class="bsub" style="margin-bottom:10px">Only the overall preset and the auto-detect flag are `+
     `ever written. <b>Close Star Citizen first.</b> A copy is saved before every change.</div>`+
@@ -9842,7 +10745,7 @@ function lastCrashHTML(v){
   if(c.peak_commit_mb) chips.push(['PEAK COMMIT', gb(c.peak_commit_mb)]);
   if(c.free_mb!=null) chips.push(['FREE AT CRASH', gb(c.free_mb)]);
   if(c.seen>1) chips.push(['TIMES HIT', String(c.seen)]);
-  return `<div class="card"><h3>Your last crash <span class="u">— ${esc(whenStamp(c.at, c.date))}</span></h3>`+
+  return `<div class="card"><h3>Your Last Crash <span class="u">— ${esc(whenStamp(c.at, c.date))}</span></h3>`+
     (where?`<div class="cwhere">${esc(where)}</div>`:'')+
     `<div class="chk ${actionable?'warn':'bad'}" style="margin-top:2px">`+
     `<span class="ci">${icon(actionable?'warning':'bug')}</span><div style="flex:1">`+
@@ -9862,10 +10765,9 @@ function lastCrashHTML(v){
     `<div class="bsub" id="bugMsg" style="margin-top:7px">`+
     (CRASH_SEARCH[c.exception]
       ? `Nothing is sent anywhere. Search the Issue Council for <b>${esc(CRASH_SEARCH[c.exception])}</b> `+
-        `before filing — someone may already have reported it.`
+        `before filing. Someone may have reported it already.`
       : `Nothing is sent anywhere. <b>${esc(c.exception||'This exception')}</b> is too generic to `+
-        `search usefully — it only means the game touched memory it shouldn't have, and no two `+
-        `are the same bug. The report below is the part worth filing.`)+
+        `search for. It only means the game touched memory it shouldn't have. File the copied report as it is.`)+
     `</div></div></div></div>`;
 }
 // ---- crash history: every crash, paged ----
@@ -9879,7 +10781,7 @@ let crashPage=0;
 // null shows everything. Rows are filtered before paging.
 let crashFilter=null;
 function setCrashFilter(f){
-  crashFilter=f||null; crashPage=0; render();
+  crashFilter=f||null; crashPage=0; if(f && section==='stability'){ SV.page='crashes'; svSave(); } render();
   const el=$('#crashList'); if(el) scrollToY(el.getBoundingClientRect().top+window.pageYOffset-160);
 }
 // Details under a row: everything the row's two lines leave out. Fields the data
@@ -9912,18 +10814,18 @@ function crashListHTML(v){
   // the whole layout jump up under the cursor. A ghost row carries the same elements
   // as a real one (including a hidden toggle button) so the two lines match in height.
   const pad=rows.length ? Array.from({length:Math.max(0, CRASH_PAGE-slice.length)},
-    ()=>`<div class="tev crow ghost"><div class="cl1"><span class="td">&nbsp;</span><span class="tw">&nbsp;</span></div>`+
-      `<div class="cl2"><span class="cs">&nbsp;</span>`+
+    ()=>`<div class="tev crow ghost"><div class="cl1"><span class="td">&nbsp;</span><span class="tw">&nbsp;</span>`+
       `<button class="foot-link cdet" tabindex="-1" aria-hidden="true" style="visibility:hidden">▸</button></div></div>`).join('') : '';
   const body=slice.map((c,i)=>{
     const [label,act]=crashKind(c.exception);
-    const where=crashWhere(c), sent=crashSentence(c);
-    // .tw is always present (nbsp when the row has no where) so line 1 keeps its height
+    const where=crashWhere(c), [sent,src]=crashSentenceSrc(c);
+    // one line per crash. The stock "fault inside Star Citizen" sentence is left to the label;
+    // a sentence that says something about this crash rides after the place
+    const extra=src==='verdict'?'':sent, tip=[where,sent].filter(Boolean).join(' \u00b7 ');
     return `<div class="tev crow"><div class="cl1"><span class="td" style="color:${act?'var(--amber)':'#8b9bb4'}">`+
       `${esc(whenStamp(c.at, c.date))}</span>`+
-      `<span class="tw"${where?` title="${attrEsc(where)}"`:''}>${where?esc(where):'&nbsp;'}</span>`+
-      `<span class="tv" style="color:${act?'var(--amber)':'#8b9bb4'}">${esc(label)}</span></div>`+
-      `<div class="cl2"><span class="cs" title="${attrEsc(sent)}">${esc(sent)}</span>`+
+      `<span class="tw" title="${attrEsc(tip)}">${where?esc(where):'&nbsp;'}${extra?`<span class="cs"> \u00b7 ${esc(extra)}</span>`:''}</span>`+
+      `<span class="tv" style="color:${act?'var(--amber)':'#8b9bb4'}">${esc(label)}</span>`+
       `<button class="foot-link cdet" data-cdet="${start+i}" aria-expanded="false" aria-label="Details" title="Details">▸</button></div>`+
       crashDetailsHTML(c)+`</div>`;
   }).join('') || `<div class="empty">No crash in this scope matches.</div>`;
@@ -9935,7 +10837,7 @@ function crashListHTML(v){
   const sub=crashFilter
     ? `showing ${esc(crashFilter.label||'')} — <button class="foot-link cclr" data-cflt-clear>clear</button>`
     : 'newest first';
-  return `<div class="card" style="margin-top:16px"><h3>Every crash `+
+  return `<div class="card" style="margin-top:16px"><h3>Every Crash `+
     `<span class="u">— ${sub}</span></h3>`+
     `<div class="tline" id="crashList">${body}${pad}</div>${nav}</div>`;
 }
@@ -10046,7 +10948,7 @@ function crashCausesHTML(v){
     ? `<b>${fmt(b.yours_n)} of ${fmt(tot)}</b> were yours to fix`+
       (last ? (b.yours_quiet ? ` — none of those since ${esc(last)}.` : ` — the last on ${esc(last)}.`) : '.')
     : `All of these are bugs in Star Citizen itself. Nothing on your machine caused them.`;
-  return `<div class="card" style="margin-top:16px"><h3>What has crashed you `+
+  return `<div class="card" style="margin-top:16px"><h3>What Has Crashed You `+
     `<span class="u">— ${fmt(tot)} report${tot===1?'':'s'} from the game itself</span></h3>`+
     `<div class="cbcols">`+
     `<div class="cbcol"><div class="cbh">Yours to fix — ${fmt(b.yours_n)}</div>`+
@@ -10082,7 +10984,9 @@ function navLive(w){
   if(on) d.title = w.live ? 'Session live — checking every '+w.poll+'s'
                           : 'Watching your logs — checking every '+w.poll+'s';
 }
+var LAST_WATCH=null;
 function renderWatch(w){
+  if(w) LAST_WATCH=w;
   navLive(w);
   const el=$('#watchBody'); if(!el||!w) return;
   if(!w.on){ el.innerHTML=`<div class="wscan dead"><div class="wscan-top">`+
@@ -10198,7 +11102,7 @@ function newcomerVerdict(v, oc, rated, thin){
 function recentHTML(recent){
   if(!(recent||[]).length) return '';
   return `<div class="card" style="margin-top:16px">`+
-    `<h3>Most recent <span class="u">— newest first</span></h3><div class="tline">`+
+    `<h3>Most Recent <span class="u">— newest first</span></h3><div class="tline">`+
     recent.map((t,i)=>{
       const p=String(t).split('T');
       const prev=recent[i+1];
@@ -10229,7 +11133,7 @@ function bootsHTML(v){
   // bars end up as slivers.
   const trend=(b.trend||[]).length>1
     ? `<div style="margin-top:16px">`+
-      barsCard('Returns to the menu per 10 hours played','by month — quiet months shown at zero','bootTrend')+
+      barsCard('Returns to the Menu per 10 Hours Played','by month — quiet months shown at zero','bootTrend')+
       `</div>`
     : '';
   return kpis+
@@ -10254,7 +11158,7 @@ function softHTML(v){
   const recent=recentHTML(s.recent);
   const trend=(s.trend||[]).length>1
     ? `<div style="margin-top:16px">`+
-      barsCard('Lost your player per 10 hours played','by month — quiet months shown at zero','softTrend')+
+      barsCard('Lost Your Player per 10 Hours Played','by month — quiet months shown at zero','softTrend')+
       `</div>`
     : '';
   return kpis+
@@ -10286,8 +11190,8 @@ function serversHTML(v){
       `different server in the same session — after a 30k, a crash recovery or a shard switch from the menu. `+
       `Rejoining the server you were on isn't counted.`)+
     `<div class="grid2">`+
-    cardHTML('Joins by region','share of '+fmt(s.joins)+' joins','regionChart')+
-    ((A().order||[]).length>1 ? barsCard('Sessions with a hop, by patch','% of sessions that joined a server','hopsByPatch')
+    cardHTML('Joins by Region','share of '+fmt(s.joins)+' joins','regionChart')+
+    ((A().order||[]).length>1 ? barsCard('Sessions with a Hop, by Patch','% of sessions that joined a server','hopsByPatch')
       : '<div class="card"><div class="empty">Only one patch in this scope.</div></div>')+
     `</div>`;
 }
@@ -10298,8 +11202,11 @@ function inventoryHTML(v){
   if(!i) return `<div class="card"><div class="empty">No inventory readings in this scope.</div></div>`;
   const h=i.home, rq=i.req, hd=i.hard;
   const hp = h ? Math.round(h.pct) : 0;
+  // the headline is the last full load. A newer session that loaded only part of it is
+  // named under it
   const pctTile = h ? [icon('cargo'), hp+'%', 'Home inventory full',
-      `${fmt(h.used)} of ${fmt(h.cap)} SCU · ${esc(h.name)}${h.date?' · '+ddmm(h.date):''}`, invCls(hp)]
+      `${fmt(h.used)} of ${fmt(h.cap)} SCU · ${esc(h.name)}${h.date?' · '+ddmm(h.date):''}`+
+      (h.latest?`<br><span class="invpart">${h.latest.date?ddmm(h.latest.date)+' ':''}loaded only ${fmt(h.latest.used)} SCU</span>`:''), invCls(hp)]
     : [icon('cargo'), 'N/A', 'Home inventory full', 'no capacity reading here', 'na'];
   const sorts = h ? h.sorts : [0,0];
   const sortTile = [icon('transfer'), fmt(sorts[1]), 'Failed sorts', `${fmt(sorts[0])} worked`,
@@ -10309,17 +11216,22 @@ function inventoryHTML(v){
     : [icon('system'), 'N/A', 'Largest inventory request', 'none over budget here', 'na'];
   const hardTile = [icon('warning'), fmt(hd[0]), 'Operations dropped over 1 MB',
     hd[0] ? `last ${ddmm(hd[1])}` : 'none dropped', hd[0] ? 'bad' : ''];
-  return kpiRow([pctTile, sortTile, reqTile, hardTile])+
+  const pt = h && h.partial;
+  const partTile = pt ? [icon('pulse'), fmt(pt[0]), 'Partial loads',
+      pt[0] ? `${fmt(pt[0])} of ${fmt(pt[1])} sessions · last ${ddmm(pt[2])}` : `none in ${fmt(pt[1])} sessions`, pt[0] ? 'warn' : '']
+    : [icon('pulse'), 'N/A', 'Partial loads', 'no capacity reading here', 'na'];
+  return kpiRow([pctTile, partTile, sortTile, reqTile, hardTile])+
     callout(icon('cargo'),
       `Over <b>100%</b> the game counts the inventory as overloaded. Sort sends the whole inventory in one request `+
       `and fails once that request is too big. Anything over 1 MB is dropped.`+
       (i.rewards ? ` Reward items announced in this scope: <b>${fmt(i.rewards)}</b>.` : ''))+
-    `<div class="grid2">`+
-    (h && h.months.length ? cardHTML('Home inventory by month','highest % full per month','invByMonth')
+    (h && h.series.length ? cardHTML('Home Inventory per Session',
+        `% full, last ${fmt(h.series.length)} sessions that read it · grey: partial load`,'invBySession')+
+        noteFold(`The game logs your home inventory only when you move an item, and only what it has loaded by then. Sometimes that's part of it. Partial loads are grey and skipped.`,
+          `A reading counts as partial when the highest reading in the week before it and the highest in the week after are both at least twice as big. The newest reading has no week after yet and is judged on the one before it. A real clear-out stays low afterwards and isn't flagged.`)
       : '<div class="card"><div class="empty">No capacity readings in this scope.</div></div>')+
-    (i.others.length ? barsCard('Other locations','latest % full','invOthers')
-      : '<div class="card"><div class="empty">No other inventories read.</div></div>')+
-    `</div>`;
+    (i.others.length ? barsCard('Other Locations','highest % full in the last week each was read','invOthers')
+      : '<div class="card"><div class="empty">No other inventories read.</div></div>');
 }
 // Loading screens: the game logs how long each one stayed up. PU = Stanton, Pyro, Nyx.
 const loadSecs=x=>x===null||x===undefined ? '—'
@@ -10339,12 +11251,15 @@ function loadingHTML(v){
       `The game logs how long each loading screen stayed up. Hung screens over 15 min are left out`+
       (l.hung ? `, ${fmt(l.hung)} here` : '')+`.`)+
     `<div class="grid2">`+
-    barsCard('Median load by destination','seconds','loadByDest')+
-    ((A().order||[]).length>1 ? barsCard('Median PU load by patch','seconds','loadByPatch')
+    barsCard('Median Load by Destination','seconds','loadByDest')+
+    ((A().order||[]).length>1 ? barsCard('Median PU Load by Patch','seconds','loadByPatch')
       : '<div class="card"><div class="empty">Only one patch in this scope.</div></div>')+
     `</div>`;
 }
 // One renderer, two tabs: `STAB` picks which half of System & Stability to draw.
+// which Stability page is open, kept in this browser
+var SV=(()=>{ let o={}; try{ o=JSON.parse(localStorage.getItem('csr_stab_view')||'{}')||{}; }catch(e){} return {page:o.page||'overview'}; })();
+function svSave(){ try{ localStorage.setItem('csr_stab_view', JSON.stringify(SV)); }catch(e){} }
 function secStability(v){ return secSystem(v, true); }
 function secSystem(v, STAB){
   const r=v.rig||{}, pi=v.perf_index, oc=v.outcomes||{}, rated=v.outcomes_rated||0;
@@ -10444,7 +11359,7 @@ function secSystem(v, STAB){
 
   const hasPatchTrend=(A().order||[]).length>1;
   const st=(C()||{}).settings;
-  const shareCard = `<div class="card" style="margin-top:16px"><h3>Share your setup `+
+  const shareCard = `<div class="card" style="margin-top:16px"><h3>Share Your Setup `+
     `<span class="u">— paste into Discord so others have something to compare against</span></h3>`+
     `<div class="bsub">Nothing is uploaded. CSR has no server — this is just text for you to copy.</div>`+
     `<div class="sharebox"><textarea id="shareTxt" readonly></textarea>`+
@@ -10457,43 +11372,60 @@ function secSystem(v, STAB){
   // Split in two tabs at 8 groups: the machine you play on barely changes, while the
   // stability side is live and is what you open CSR to check. Mixing them meant
   // scrolling past your CPU model to find out what crashed you an hour ago.
-  $('#content').innerHTML = STAB ? (metaLine(v)+
-    group(1,'pulse','Live monitoring','Watching your logs for crashes, disconnects and lost players',
-      watchHTML())+
-    group(2,'bug','Crashes','What Star Citizen said went wrong',
-      lastCrashHTML(v)+crashCausesHTML(v)+crashListHTML(v))+
-    group(3,'space','Lost your player','The game kept running but your client had no player entity — no body, nothing responds',
-      softHTML(v))+
-    group(4,'no','Back to the main menu','Returned to the front end mid-session and carried on — a server drop or an exit to menu',
-      bootsHTML(v))+
-    group(5,'satellite','Servers','Which region you played on, and how often you changed server mid-session',
-      serversHTML(v))+
-    group(6,'cargo','Home inventory','How full your home inventory is, and whether Sort still works',
-      inventoryHTML(v))+
-    group(7,'warning','Session outcomes','How your sessions ended',
-      rated ? stabKpis+ctx+newcomerVerdict(v,oc,rated,thin)+stabNote+
-        `<div class="grid2" style="margin-top:16px">`+
-        cardHTML('How sessions ended','share of '+fmt(rated)+' sessions','outcomeChart')+
-        (hasPatchTrend?barsCard('Rough sessions by patch','% ending badly','roughByPatch')
-                      :'<div class="card"><div class="empty">Only one patch in this scope.</div></div>')+
-        `</div>`
-        : `<div class="card"><div class="empty">No completed sessions rated yet.</div></div>`)+
-    `${NOTE}`
-  ) : (metaLine(v)+
-    group(1,'system','Your machine','What the game reports your rig as',
+  // Stability is one page at a time, picked from a menu down the left. The live watcher
+  // sits on every page as one line.
+  let stabHTML='';
+  if(STAB){
+    const b=v.boots, sf=v.soft, sv=v.servers, inv=v.inventory, lc=v.last_crash;
+    const PAGES=['overview','crashes','menu','lost','outcomes','servers','inventory'];
+    if(!PAGES.includes(SV.page)) SV.page='overview';
+    const hp=inv&&inv.home?Math.round(inv.home.pct):null, top=sv&&sv.regions&&sv.regions[0];
+    const it=(page,ic,label,n,cls)=>[`data-sv="${page}"`, icon(ic), label, n, cls, SV.page===page];
+    const CAP={overview:'Headline numbers, your last crash and what has crashed you', crashes:'What Star Citizen said went wrong',
+      menu:'Returned to the front end mid-session and carried on. A server drop or an exit to menu.',
+      lost:'The game kept running but your client had no player entity. No body, nothing responds.',
+      outcomes:'How your sessions ended', servers:'Which region you played on, and how often you changed server mid-session',
+      inventory:'How full your home inventory is, and whether Sort still works'};
+    const nav=snavHTML([it('overview','overview','Overview',''), it('crashes','bug','Crashes',fmt(oc.crash||0)), '|',
+      it('menu','quit','Back to Menu',b?fmt(b.n):'0',b&&b.n?'warn':'ok'),
+      it('lost','space','Lost Player',sf?fmt(sf.n):'0',sf&&sf.n?'warn':'ok'), '|',
+      it('outcomes','pulse','Outcomes',rated?(thin?`${fmt(oc.clean||0)}/${fmt(rated)}`:okPct):''),
+      it('servers','satellite','Servers',top?top[0]:''), it('inventory','cargo','Inventory',hp!=null?hp+'%':'',hp!=null?invCls(hp):'')],
+      'Stability', CAP[SV.page]);
+    const rough=hasPatchTrend?barsCard('Rough Sessions by Patch','% ending badly','roughByPatch')
+      :'<div class="card"><div class="empty">Only one patch in this scope.</div></div>';
+    let body='';
+    if(SV.page==='overview') body=(rated?kpiRow([
+        [icon('yes'), thin?`${fmt(oc.clean||0)}/${fmt(rated)}`:okPct, 'Sessions ended normally', thin?'too few rated sessions for a rate':`${fmt(oc.clean||0)} of ${fmt(rated)}`],
+        [icon('bug'), fmt(oc.crash||0), 'Crashes', lc&&lc.date?`last ${ddmm(lc.date)}`:'the game reported these itself'],
+        [icon('no'), b&&b.per10h!=null?b.per10h.toFixed(2):'0', 'Back to menu per 10 h', b?`${fmt(b.n)} in all`:'none in this scope'],
+        [icon('satellite'), sv?sv.hop_pct+'%':'N/A', 'Sessions with a server hop', sv?`${fmt(sv.hop_sessions)} of ${fmt(sv.sessions)}`:'no server joins here', sv?'':'na'],
+      ]):'')+`<div class="grid2 stov">${lastCrashHTML(v)}${rated?rough:''}</div>`+crashCausesHTML(v)+NOTE;
+    else if(SV.page==='crashes') body=lastCrashHTML(v)+crashCausesHTML(v)+crashListHTML(v);
+    else if(SV.page==='menu') body=bootsHTML(v);
+    else if(SV.page==='lost') body=softHTML(v);
+    else if(SV.page==='servers') body=serversHTML(v);
+    else if(SV.page==='inventory') body=inventoryHTML(v);
+    else body=(rated ? stabKpis+ctx+newcomerVerdict(v,oc,rated,thin)+stabNote+
+        `<div class="grid2">`+cardHTML('How Sessions Ended','share of '+fmt(rated)+' sessions','outcomeChart')+rough+`</div>`
+        : `<div class="card"><div class="empty">No completed sessions rated yet.</div></div>`);
+    stabHTML=metaLine(v)+`<div class="lstrip">${watchHTML()}</div>`+nav+`<div class="spage" id="stMain">${body}</div>`;
+  }
+  $('#content').innerHTML = STAB ? stabHTML : (metaLine(v)+
+    group(1,'system','Your Machine','What the game reports your rig as',
       specs+changeCard+driverCard)+
-    group(2,'yes','Configuration check','What you are running, and anything measurably wrong',
+    group(2,'yes','Configuration Check','What you are running, and anything measurably wrong',
       settingsHTML(st)+
       `<div style="margin-top:16px">`+healthHTML(r,st)+`</div>`+
       `<div style="margin-top:16px">`+settingsAdvice(v)+`</div>`)+
     group(3,'pulse','Performance','Frame rate the game recorded for itself',
       fpsHTML(v) || `<div class="card"><div class="empty">No frame-rate statistics in this scope.</div></div>`)+
-    group(4,'time','Loading screens','How long each screen stayed up, and the launch before it',
+    group(4,'time','Loading Screens','How long each screen stayed up, and the launch before it',
       loadingHTML(v))+
-    group(5,'system','Hardware score','Star Citizen’s own benchmark — comparable between machines',
+    group(5,'system','Hardware Score','Star Citizen’s own benchmark — comparable between machines',
       benchKpis+benchNote+
       (pi&&hasPatchTrend?`<div style="margin-top:16px">`+
-        barsCard('Score per patch','differences this small are noise','gpuByPatch')+`</div>`:'')+
+        barsCard('Score per Patch','differences this small are noise','gpuByPatch')+`</div>`:'')+
       shareCard)+
     `${NOTE}`);
 
@@ -10529,6 +11461,8 @@ function secSystem(v, STAB){
     });
   });
 
+  if(STAB) document.querySelectorAll('#content [data-sv]').forEach(b=>b.onclick=()=>{ SV.page=b.dataset.sv; svSave(); render(); snavSettle(); });
+  if(STAB && LAST_WATCH) renderWatch(LAST_WATCH);
   if(SERVED) pollStatus();          // fills the Live monitoring card immediately
   document.querySelectorAll('[data-cpg]').forEach(b=>{
     b.onclick=()=>{ crashPage=+b.dataset.cpg; render();
@@ -10591,12 +11525,14 @@ function secSystem(v, STAB){
     }
   }
   if(STAB && v.inventory){
-    const i=v.inventory, im=$('#invByMonth');
+    const i=v.inventory, im=$('#invBySession');
     if(im && i.home){
-      const lbl=k=>{ const p=k.split('-'); return MON[+p[1]-1]+' '+p[0].slice(2); };
-      vbars(im, i.home.months.map(([k,p])=>({label:lbl(k), value:p, disp:Math.round(p)+'%',
-          full:`${lbl(k)} — up to ${Math.round(p)}% full`, color:invColor(p)})),
-        {h:230, w:Math.max(460, i.home.months.length*60), maxbw:44, fmtY:x=>Math.round(x)+'%'});
+      // one bar per session, a date under every few. Partial loads grey
+      const se=i.home.series, every=Math.max(1, Math.ceil(se.length/14));
+      const lbl=d=>d?ddmm(d).slice(0,6):'';
+      vbars(im, se.map(([d,p,u,part],k)=>({label:k%every===0?lbl(d):'', value:p, disp:Math.round(p)+'%',
+          full:`${d?ddmm(d):''} — ${fmt(u)} SCU${part?', partial load':''}`, color:part?'#5f6b7d':invColor(p)})),
+        {h:240, w:Math.max(640, se.length*13), maxbw:10, fmtY:x=>Math.round(x)+'%'});
     }
     const io=$('#invOthers');
     if(io) hbars(io, i.others.map(([n,p,d])=>({label:n, value:p, disp:Math.round(p)+'%', color:invColor(p),
@@ -10631,7 +11567,7 @@ function secSystem(v, STAB){
       else { try{ document.execCommand('copy'); done(); }catch(e){} }
     };
   }
-  if(rated && STAB){
+  if(rated && STAB && $('#outcomeChart')){
     splitbar($('#outcomeChart'), [
       {label:'Normal exit', value:oc.clean||0, color:'#4ade80'},
       {label:'Crash (reported)', value:oc.crash||0, color:'#ff5468'},
@@ -10640,6 +11576,8 @@ function secSystem(v, STAB){
       {label:'Other', value:oc.other||0, color:'#8b9bb4'},
     ].filter(p=>p.value>0), {big:thin?`${oc.clean||0}/${rated}`:(100-v.rough_pct).toFixed(0)+'%',
                              small:'ended normally'});
+  }
+  if(rated && STAB && $('#roughByPatch')){
     if(hasPatchTrend){
       // Same rule per bar: a patch you launched three times can't carry a percentage.
       const all=patchSeries(p=>{
@@ -10682,7 +11620,7 @@ function secOrgs(v){
     return `<div class="org-card">${logo}<div><div class="oname">${nm}</div><div class="osub">${kind} · [${esc(o.sid)}]${rank}</div></div>${mem}</div>`;
   }).join('') || '<div class="empty">No public orgs found.</div>';
   $('#content').innerHTML =
-    group(1,'profile','Citizen record','Your public RSI profile',profileHTML())+
+    group(1,'profile','Citizen Record','Your public RSI profile',profileHTML())+
     group(2,'orgs','Organizations','Public affiliations, as anyone can see them on RSI',
       `<div class="orgs">${orgs}</div>`)+
     `<div class="note">This is the same public information any player can see on your RSI profile — including affiliate orgs, which is how someone can spot an affiliation you didn't announce.</div>`;
@@ -10690,24 +11628,27 @@ function secOrgs(v){
 
 // ==== NAV + PATCH ORCHESTRATION ====
 let section='overview';
-function view(){ return current==='all' ? A().career : A().patches[current]; }
+function view(){ return current==='all' ? A().career : ((A().eras||{})[current] || A().patches[current] || A().career); }
 function render(){
   updateScopePill();
   $('#secTitle').textContent=SECTIONS[section].title;
   const sb=$('#secScope');
-  if(sb){ sb.textContent = current==='all' ? 'Career' : pLabel(current);
+  if(sb){ sb.textContent = pLabel(current);
     sb.classList.toggle('patch', current!=='all'); }
   renderLimitedNote();
   SECTIONS[section].fn(view());
+  tabify();
   buildToc();
+  renderPinMenu();
+  bpDrawerRefresh();
 }
 // "On this page": the open tab's groups in the sidebar, the one in view lit. Only for
 // tabs with three or more groups. CSS hides it on the icon rail and on short windows.
 function buildToc(){
   const el=$('#sideToc'); if(!el) return;
   const gs=[...document.querySelectorAll('#content .gsec[id]')];
-  if(gs.length<3){ el.hidden=true; el.innerHTML=''; return; }
-  el.innerHTML='<div class="toc-h">On this page</div>'+gs.map(g=>
+  if(gs.length<3 || $('#content .snav')){ el.hidden=true; el.innerHTML=''; return; }
+  el.innerHTML='<div class="toc-h">On This Page</div>'+gs.map(g=>
     `<button type="button" data-g="${g.id}"><i>${esc((g.querySelector('.gnum')||{}).textContent||'')}</i>`+
     `${esc((g.querySelector('.gt')||{}).textContent||'')}</button>`).join('');
   el.hidden=false;
@@ -10744,15 +11685,18 @@ function renderLimitedNote(){
 
 // patch selector (dropdown — saves horizontal space vs a row of tabs), plus a
 // ‹ › stepper so you can walk patches without opening the list every time.
-const scopeList = () => ['all'].concat(A().order||[]);
+// eras first (since the wipe, the career, before the wipe), then every patch
+const scopeList = () => { const e=Object.keys(A().eras||{});
+  return e.filter(k=>k.startsWith('since-')).concat(['all'], e.filter(k=>k.startsWith('pre-')), A().order||[]); };
 function renderPatches(){
   const sel=$('#patchSel'); if(!sel) return;
   // A <select> is as wide as its WIDEST option, so "Career (all patches)" and
   // "Patch 4.1" were setting the width of the whole control. The field is captioned
   // PATCH directly above it, so the word is redundant inside every row.
-  let h=`<option value="all">Career</option>`;
-  A().order.forEach(p=>{ const v=pBuild(p);
-    h+=`<option value="${p}">${pShort(p)}${v?' · '+v:''}</option>`; });
+  let h='';
+  scopeList().forEach(p=>{
+    if(p==='all'||isEra(p)){ h+=`<option value="${p}">${pLabel(p)}</option>`; return; }
+    const v=pBuild(p); h+=`<option value="${p}">${pShort(p)}${v?' · '+v:''}</option>`; });
   sel.innerHTML=h; sel.value=current;
   const L=scopeList(), i=L.indexOf(current);
   const pv=$('#patchPrev'), nx=$('#patchNext');
@@ -10820,7 +11764,7 @@ function renderChannels(){
   sel.value=currentChannel;
 }
 $('#chanSel').onchange=e=>{
-  currentChannel=e.target.value; currentAccount=defaultAccount(); current='all';
+  currentChannel=e.target.value; currentAccount=defaultAccount(); current=defaultScope();
   $('#who').textContent=currentAccount;
   renderAccts(); renderPatches(); render(); updateGen();
 };
@@ -10830,7 +11774,7 @@ $('#chanSel').onchange=e=>{
 $('#homeBtn').onclick=()=>{
   currentChannel=DATA.default_channel;
   currentAccount=defaultAccount();
-  current='all';
+  current=defaultScope();
   section='overview';
   document.querySelectorAll('#nav a').forEach(x=>x.classList.toggle('active',x.dataset.sec==='overview'));
   $('#who').textContent=currentAccount;
@@ -10863,7 +11807,7 @@ function renderAccts(){
       : `Set ${currentAccount} as your main account for ${CHAN_LABEL[currentChannel]||currentChannel} — CSR will open here by default`;
   }
 }
-$('#acctSel').onchange=e=>{ currentAccount=e.target.value; current='all';
+$('#acctSel').onchange=e=>{ currentAccount=e.target.value; current=defaultScope();
   $('#who').textContent=currentAccount; renderAccts(); renderPatches(); render(); };
 $('#mainBtn').onclick=()=>{
   setMain(currentChannel, savedMain(currentChannel)===currentAccount ? null : currentAccount);
@@ -10908,8 +11852,8 @@ function updateScopePill(){
   const ch=$('#spChan'), ac=$('#spAcct'), pt=$('#spPatch'), att=$('#spAtt'); if(!ac) return;
   if(ch) ch.textContent = CHAN_LABEL[currentChannel]||currentChannel;
   ac.textContent = currentAccount||'Citizen';
-  if(pt){ pt.textContent = current==='all' ? 'Career' : pShort(current);
-    pt.classList.toggle('sel', current!=='all'); }
+  if(pt){ pt.textContent = pShort(current);
+    pt.classList.toggle('sel', current!==defaultScope()); }
   // amber dot = the first-run "pick your main" question is still open
   if(att) att.classList.toggle('on',
     (C().accounts||[]).length>1 && !savedMain(currentChannel) && !hintSeen());
@@ -11162,6 +12106,18 @@ pollStatus();
   document.addEventListener('click',e=>{ if(!e.target.closest('.bellwrap')) bellMenu(false); });
 }
 renderBell();
+{ const pb=$('#pinBtn'), pg=$('#pinGo'), pl=$('#pinList');
+  if(pb){ pb.classList.add('pinlbl'); pb.innerHTML=icon('star')+'<span class="pl-t">Pinned</span><span class="pl-n" id="pinBadge"></span>'; }
+  if(pb) pb.onclick=e=>{ e.stopPropagation(); pinMenu(!$('#pinMenu').classList.contains('on')); };
+  if(pg) pg.onclick=e=>{ e.stopPropagation(); pinMenu(false); BPV.page='pinned'; bpSaveView();
+    const a=document.querySelector('#nav a[data-sec="blueprints"]'); if(section==='blueprints') render(); else if(a) a.click(); };
+  if(pl) pl.addEventListener('click', e=>{ e.stopPropagation();
+    const un=e.target.closest('[data-pmun]'); if(un){ bpTogglePin(un.dataset.pmun); bpPinsChanged(); return; }
+    const it=e.target.closest('[data-pmopen]'); if(it){ pinMenu(false); bpDrawer(it.dataset.pmopen); } });
+  document.addEventListener('click',e=>{ if(!e.target.closest('.pinwrap')) pinMenu(false); });
+  document.addEventListener('keydown',e=>{ if(e.key==='Escape' && $('#pinMenu') && $('#pinMenu').classList.contains('on')){ pinMenu(false); if(pb) pb.focus(); } });
+}
+renderPinMenu();
 function csrShutdown(){
   $('#smBody').textContent='Shutting down…';
   fetch('/api/shutdown',{method:'POST'}).catch(()=>{});
@@ -11226,10 +12182,12 @@ $('#dmFile').onchange=e=>{
   modal('dataModal',false); CSRTerm.start();
   // read every chosen backup, combine their sessions into one payload, import once
   Promise.all(files.map(f=>f.text())).then(texts=>{
-    let sessions=[], bad=0;
-    texts.forEach(t=>{ try{ const d=JSON.parse(t); if(d&&Array.isArray(d.sessions)) sessions=sessions.concat(d.sessions); else bad++; }catch(_){ bad++; } });
+    let sessions=[], bad=0, prefs={pins:{}, main:{}};
+    texts.forEach(t=>{ try{ const d=JSON.parse(t); if(d&&Array.isArray(d.sessions)) sessions=sessions.concat(d.sessions); else bad++;
+      const q=d&&d.prefs; if(q){ Object.entries(q.pins||{}).forEach(([a,ks])=>{ prefs.pins[a]=[...new Set((prefs.pins[a]||[]).concat(ks||[]))]; });
+        Object.entries(q.main||{}).forEach(([c,a])=>{ if(!prefs.main[c]) prefs.main[c]=a; }); } }catch(_){ bad++; } });
     if(!sessions.length){ CSRTerm.fail(bad?'those files aren’t CSR backups':'nothing to import'); return; }
-    return fetch('/api/import',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessions})})
+    return fetch('/api/import',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessions, prefs})})
       .then(r=>r.json()).then(res=>{
         if(res.ok){ CSRTerm.finish(()=>location.reload()); }
         else{ CSRTerm.fail('import failed: '+(res.error||'bad file')); }
@@ -11811,7 +12769,8 @@ def serve(out_path, port=7878, explicit_logs=None, open_browser=True,
             p = self.path.split("?")[0]
             if p in ("/", "/index.html", "/CSR.html", "/sc_stats.html"):
                 if state["configured"] and state["html"]:
-                    self._send(200, state["html"], "text/html; charset=utf-8")
+                    html = state["html"].replace("null/*__PREFS__*/", prefs_script(load_prefs()), 1)
+                    self._send(200, html, "text/html; charset=utf-8")
                 elif state["busy"] or state["has_work"]:
                     self._send(200, BOOT_HTML(), "text/html; charset=utf-8")   # scanning → terminal
                 else:
@@ -11838,6 +12797,12 @@ def serve(out_path, port=7878, explicit_logs=None, open_browser=True,
                 except Exception:
                     save_archive([])
                     raw = open(archive_path(), "rb").read()
+                try:                               # pins and main accounts ride along
+                    d = json.loads(raw)
+                    d["prefs"] = load_prefs()
+                    raw = json.dumps(d, default=_json_default).encode("utf-8")
+                except Exception:
+                    pass
                 stamp = datetime.now().strftime("%Y-%m-%d")
                 self._send(200, raw, "application/json",
                            extra={"Content-Disposition": f'attachment; filename="CSR-archive-{stamp}.json"'})
@@ -11892,6 +12857,17 @@ def serve(out_path, port=7878, explicit_logs=None, open_browser=True,
                 except Exception:
                     path = ""
                 self._accept_folder(path)
+            elif p == "/api/prefs":                # pins / main account from the page
+                try:
+                    inc = json.loads(self._body() or "{}")
+                except Exception:
+                    inc = {}
+                cur = load_prefs()
+                for k in PREF_KEYS:
+                    if isinstance(inc.get(k), dict):
+                        cur[k] = inc[k]
+                ok = save_prefs(cur)
+                self._send(200, json.dumps({"ok": ok}))
             elif p == "/api/import":               # merge another PC's archive
                 body = self._body()
                 if not body.strip():
@@ -11902,6 +12878,12 @@ def serve(out_path, port=7878, explicit_logs=None, open_browser=True,
                 except Exception as e:
                     self._send(200, json.dumps({"ok": False, "error": str(e)}))
                     return
+                try:                               # the backup's pins and main accounts
+                    inc = json.loads(body).get("prefs")
+                    if isinstance(inc, dict):
+                        save_prefs(merge_prefs(load_prefs(), inc))
+                except Exception:
+                    pass
                 do_generate()                      # rebuild the dashboard from the merged archive
                 self._send(200, json.dumps({"ok": True, "added": added, "total": total,
                                             "log_count": state["log_count"]}))

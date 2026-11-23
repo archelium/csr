@@ -33,9 +33,32 @@ WEAPON_MAN = {
     "klwe": "Klaus & Werner", "behr": "Behring", "ksar": "Kastak Arms",
     "gemi": "Gemini", "apar": "Apocalypse Arms", "grin": "Greycat",
     "crlf": "CureLife", "volt": "Volt", "lbco": "Lightning Bolt Co.",
-    "gmni": "Gemini", "ndsl": "Klaus & Werner", "amrs": "Ammo Response",
-    "hdgw": "Hedeby Gunworks",
+    "gmni": "Gemini", "ndsl": "Klaus & Werner", "amrs": "Amon & Reese Co.",
+    "hdgw": "Hedeby Gunworks", "utfl": "UltiFlex", "sasu": "Sakura Sun", "vlk": "Behring",
+    "glsn": "Grey's Market",
 }
+# Grey's Market guns carry no maker in their class (none_...). Their wiki pages give the
+# maker code GLSN, which is Grey's Market. The Deadrig is listed as unknown everywhere.
+NONE_MAKER = {
+    "none_rifle_multi_01": "glsn",          # Killshot Rifle
+    "none_lmg_ballistic_01": "glsn",        # Pulverizer LMG
+    "none_smg_energy_01": "glsn",           # Ripper SMG
+    "none_pistol_ballistic_01": "glsn",     # Tripledown Pistol
+    "none_special_ballistic_01": "glsn",    # Boomtube Rocket Launcher
+}
+
+
+def weapon_maker_code(cls):
+    """The maker code of a weapon class ('behr', 'glsn'), '' when unknown."""
+    c = (cls or "").lower()
+    tok = c.split("_")[0]
+    if tok == "none":
+        for base, code in NONE_MAKER.items():
+            if c == base or c.startswith(base + "_"):
+                return code
+        return ""
+    return tok if tok in WEAPON_MAN else ""
+
 
 # Confirmed weapon/tool model names (base class -> model). Only entries we're
 # confident about; everything else uses the manufacturer + type fallback.
@@ -187,6 +210,7 @@ class ItemIndex:
         self.idx = {}
         self.guns = {}          # class -> [type, ammo class, image url] for personal weapons
         self.imgs = {}          # class -> catalogue image url, every item that has one
+        self.meta = {}          # class -> [class, grade, maker] for ship, FPS and wearable items
         self._by_name = None
         self.fetched = None
         self.ok = False
@@ -200,6 +224,7 @@ class ItemIndex:
                 if isinstance(raw, dict) and isinstance(raw.get("names"), dict):
                     self.idx, self.guns, self.fetched = raw["names"], raw.get("guns") or {}, raw.get("fetched")
                     self.imgs = raw.get("imgs") or {}
+                    self.meta = raw.get("meta") or {}
                 else:
                     self.idx, self.guns, self.fetched = raw or {}, {}, None
             except Exception:
@@ -212,7 +237,7 @@ class ItemIndex:
         return self.ok
 
     def _fetch(self):
-        names, guns, pics = {}, {}, {}
+        names, guns, pics, meta = {}, {}, {}, {}
         try:
             page, last = 1, 1
             while page <= last:
@@ -231,6 +256,12 @@ class ItemIndex:
                     img = next((u for u in imgs if "%22" not in u), imgs[0] if imgs else None)
                     if img and (cn not in pics or "%22" in pics[cn]):
                         pics[cn] = img
+                    # what the Blueprints board sorts components by: Military S2 grade A, Aegis
+                    if (i.get("classification") or "").startswith(("Ship.", "FPS.", "Char_")):
+                        mk = (i.get("manufacturer") or {}).get("name") or ""
+                        m = [i.get("class") or "", i.get("grade") or "", "" if mk.lower() == "unknown" else mk]
+                        if any(m):
+                            meta.setdefault(cn, m)
                     pw = i.get("personal_weapon") or {}
                     if pw.get("type"):
                         had = (guns.get(cn) or [None, None, None])[2]
@@ -244,10 +275,10 @@ class ItemIndex:
             return
         # items the API has dropped keep their last known name (old logs still carry them)
         names = {**{k: v for k, v in self.idx.items() if _real_name(k, v)}, **names}
-        self.idx, self.guns, self.imgs, self._by_name = names, guns, pics, None
+        self.idx, self.guns, self.imgs, self.meta, self._by_name = names, guns, pics, meta, None
         self.fetched = datetime.date.today().isoformat()
         with open(self.cache_path, "w", encoding="utf-8") as fh:
-            json.dump({"fetched": self.fetched, "names": names, "guns": guns, "imgs": pics}, fh)
+            json.dump({"fetched": self.fetched, "names": names, "guns": guns, "imgs": pics, "meta": meta}, fh)
 
     def image_for(self, name):
         """Catalogue image url for an item by the name CSR shows (skin names stripped),

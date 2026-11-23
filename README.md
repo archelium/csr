@@ -110,14 +110,14 @@ CSR is portable, so updating is just **replace the exe**:
 keeps sessions Star Citizen has since deleted from your log folder. If you want a
 belt-and-braces backup first, open CSR and use **💾 Backup & transfer → Export**.
 
-What happens on your first run of v1.10.0, depending on where you're coming from:
+What happens on your first run of v1.11.0, depending on where you're coming from:
 
 | Coming from | What to expect |
 |---|---|
 | **v1.0.0** | v1.0.0 kept no archive, so your history is rebuilt from whatever logs you still have. If your saved folder was `…\StarCitizen\LIVE`, CSR now finds `PTU` and `TECH-PREVIEW` beside it on its own — **no need to re-pick a folder** — and a **Channel** dropdown appears if it finds any. |
-| **v1.1.0 – v1.9.3** | Your archive carries over untouched. |
+| **v1.1.0 – v1.10.0** | Your archive carries over untouched. |
 | **v1.0.0 – v1.9.1** | The first scan re-reads **every** log (a minute or so). This is deliberate: each release fixes parsing bugs or extracts new data, so nothing older is trusted. It happens once — after that CSR starts, and refreshes, in about a second. |
-| **v1.9.2 – v1.9.3** | No re-read. The new look shows on the first page build. |
+| **v1.9.2 – v1.10.0** | No re-read. CSR opens on your stats since the 4.8 wipe, with Career one click away. |
 
 Coming from **v1.2.0** specifically, the first run also *moves* some existing numbers,
 because v1.3.0 converts session times from the log's UTC stamps to your own clock: the
@@ -152,12 +152,13 @@ share. Ship and item pictures load from RSI and starcitizen.tools when you view 
 
 ## What's in the dashboard
 
-A left sidebar of sections, with an **On this page** list of the open tab's groups on
-long tabs (click to jump, the group you're reading lights up); a top bar with an
-**account** dropdown, a **patch** dropdown (*Career*, then every patch found in your
-logs), a light/dark toggle, and Refresh. The page uses the full width of your window.
-Every section is scoped by account × patch. On **Overview**, click any bar in *Playtime by
-Patch* to filter to that patch (and *↩ View career* to reset).
+A left sidebar of pages; a top bar with an **account** dropdown, a **scope** dropdown
+(*Since 4.8 wipe*, which CSR opens on, then *Career*, *Before 4.8 wipe* and every patch
+found in your logs), a light/dark toggle, and Refresh. Each page has a menu across the
+top: one tab per section, with its icon and headline number, and one section on screen
+at a time. The layout fits phones and tablets too. Everything is scoped by account ×
+scope. On **Overview**, click any bar in *Playtime by Patch* to filter to that patch (and
+*↩ Since 4.8 wipe* to go back).
 
 - **Overview** — RSI profile, snapshot KPIs, click-to-filter playtime-by-patch,
   signature top-3 ships (by time aboard) & guns with artwork
@@ -176,7 +177,7 @@ Patch* to filter to that patch (and *↩ View career* to reset).
   Commander toggle) — the only builds that still logged combat client-side
 - **Missions** — outcomes, completion rate, mission types, contracts by name (4.5+), and cargo hauling: SCU delivered by commodity and destination
 - **Economy** — **real aUEC spent**, top items bought, what you buy, cargo & commodities
-- **Blueprints** — every crafting blueprint the game has handed you (4.7+), searchable, plus what you're still missing against the full ~1,600-blueprint catalogue; armour as sets (which one is a piece from complete), ship weapons as S1–S6 ladders, components as a type × size grid; and a **planner**: which missions drop a blueprint, what faction standing they need, and the reputation floor your completed contracts put you at
+- **Blueprints** — every crafting blueprint the game has handed you (4.7+), searchable, plus what you're still missing against the full ~1,600-blueprint catalogue; its own menu of pages: armour as sets (which one is a piece from complete), ship weapons as S1–S6 ladders, components as a type × size grid, every blueprint as a card, search and pins. Click any blueprint for the missions that drop it, the faction standing they need, and the reputation floor your completed contracts put you at
 - **Activity** — playtime by month, where your hours go (starting up, loading screens,
   main menu, aboard a ship, on foot), weekday×hour heatmap, session-length mix, streaks
 - **Your Machine** — the rig you played on (CPU, GPU + VRAM, memory, driver, renderer,
@@ -210,7 +211,7 @@ Patch* to filter to that patch (and *↩ View career* to reset).
   the dashboard within seconds of a crash, a lost player or a genuine disconnect, saying what broke and
   whether it was your PC or CIG's servers. Routine disconnect chatter is filtered out.
   A **🔔 bell in the top bar** carries a badge and keeps every alert raised while the page
-  has been open; *Stability → Live monitoring* shows the watcher's status lights. CSR also checks whether
+  has been open; the line at the top of every *Stability* page shows the watcher's status lights. CSR also checks whether
   `StarCitizen.exe` is running, so it knows the difference between a log being written
   because you're playing and one being written as the game shuts down — it reads only the
   process *name*, the same thing Task Manager lists, and never opens a handle to the game

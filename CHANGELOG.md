@@ -5,6 +5,100 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and CSR
 uses [Semantic Versioning](https://semver.org/) (MAJOR.MINOR.PATCH).
 
 
+## [1.11.0] — 2026-11-24
+
+### Added
+- **Since the 4.8 wipe, and before it.** Two new scopes next to Career and the patches.
+  CSR opens on **Since 4.8 wipe**. **Before 4.8 wipe** holds everything earlier. Patches
+  go by number, previews and unversioned builds by date. Players who started after the
+  wipe see Career only, since it's the same thing.
+  Playtime by Patch fades the patches outside the chosen side of the wipe.
+- **Every page has a menu across the top.** Each section of a page is a tab with its
+  icon, its name and its headline number. Only the open tab shows, so pages are a
+  fraction of the length. The menu sticks under the top bar and CSR remembers the open
+  tab per page. Flight & Travel, Combat, Legacy Combat, Missions, Economy, Activity and
+  Your Machine all use it. Missions is split into Outcomes, Contracts and Cargo Hauling,
+  Activity into Playtime and When You Play.
+- **Blueprints pages:** Overview, Find a Blueprint, Pinned, Collection, Standing, Your
+  Library and Unlock History. Collection has a chip per category (Armour, Ship
+  Components, Ship Weapons, FPS Weapons, Magazines & Gear) with your count, and Rows or
+  Cards.
+- **Stability pages:** Overview, Crashes, Back to Menu, Lost Player, Outcomes, Servers
+  and Inventory, each with its number on the tab. The Overview has the four headline numbers, your last crash, rough sessions by
+  patch and what has crashed you. Clicking a cause opens Crashes filtered to it.
+- **Live monitoring is one line** at the top of every Stability page: game state and
+  each channel's idle time.
+- **Every blueprint has a row.** Each collection page lists its blueprints as rows, a
+  square per blueprint.
+  - **Ship components**: a row per type and size, a column per class (Military,
+    Civilian, Industrial, Stealth, Competition), the grade on each square.
+  - **FPS weapons**: a row per gun, the base gun first, then its variants.
+  - **Magazines & gear**: magazines and mining lasers by maker, clothing and decor.
+  - **Armour** adds the pieces outside a set. **Ship weapons** adds the one-size weapons.
+  - Hover a square for its name, class, grade and maker. Amber: received in the last
+    30 days. Started, Complete and Untouched tabs on every board.
+- **Cards view.** Each collection page switches between Rows and Cards: every blueprint
+  as a card with its picture, size, class, grade and maker. Owned or missing, search. A
+  missing card says how many missions drop it.
+- **Click any blueprint for its missions.** Every square, set piece, ladder dot, card,
+  search result and latest unlock opens a panel on the right: picture, owned or missing,
+  pin, the missions that drop it, the standing each needs, the drop chance and a wiki
+  link per mission. Esc closes it.
+  Missions are grouped by faction with your standing at the top of each group. Each
+  mission is one line with an Open or "rep to go" badge, and a second line with the
+  drop chance, rep, what it needs and how often you've done it.
+- **Find a blueprint.** A search at the top of Blueprints: name, maker, class or grade.
+  Each result says owned or missing and the next step: "open now" with the mission, or
+  how much rep you're short and with whom. The search box in the menu goes straight to it.
+- **Pinned blueprints.** Every blueprint has a ☆ Pin button. Pinned ones turn amber and
+  read ★ Pinned. **Pinned** in the top bar lists your pins from any page with each one's
+  next step, and counts the ones still to get. Click one for its missions. Pins are saved
+  in your browser, per account.
+- **Card pages.** Cards page through 48 at a time.
+- **Retired or unknown missions are folded** under a line you can open, below the
+  missions you can run.
+- **Blueprints with no known source are marked.** The catalogue lists every craftable
+  blueprint in the game files. 920 of 1,628 have no mission and aren't given by default.
+  Their squares are dashed, their cards say "no known source", and the totals split what
+  you're missing into "from missions" and "no known source". Some come from events: your
+  XenoThreat rewards did.
+
+### Changed
+- **Pins and your main account are saved in CSR's data folder** (`csr_prefs.json`),
+  not the browser. They survive a new browser, a different port and a reinstall, and
+  Backup & Transfer carries them. Import adds the backup's pins to yours and keeps your
+  main account. Whatever an older CSR saved in the browser moves over on first start.
+- Titles and menus are in title case. Small words (a, and, of, to, per, with…) stay
+  lowercase.
+- Page banners are shorter.
+- Phones and tablets: the top bar scrolls away and the page menu takes the top of the
+  screen. Menus that don't fit scroll sideways with a fade at the edge. Headline tiles
+  sit two to a row, and the banner shows figures only.
+- The top bar on a phone is two rows: page title with pins, alerts and status, then the
+  account picker with backup, refresh and theme. The scope line under it is one line.
+- **Crafting catalogue updated to 4.10.3**: 1,628 blueprints. The Skarnov rifle and its
+  battery and the Raider Camo Palatino pieces now match.
+
+### Fixed
+- **Grey's Market guns had no maker or logo.** The Killshot, Pulverizer, Ripper,
+  Tripledown and Boomtube carry no maker in the game data. They now show Grey's Market.
+  UltiFlex and Sakura Sun guns got their makers too, and Amon & Reese replaces the
+  wrong "Ammo Response".
+- Sakura Sun and Vanduul showed a photo where their logo should be.
+- The scope line at the top of each page had no space under it.
+- **Home inventory showed 1% after a session that loaded only part of it.** The game
+  logs your home inventory only when you move an item, and only what it has loaded by
+  then. A reading under half of the ones around it is now a partial load. The headline
+  uses the last full load and names a newer partial one under it. A **Partial loads**
+  tile counts them. The chart is one bar per session, partial loads in grey. Other
+  locations show their highest reading in the last week each was read.
+- Notes and callouts use the full width of their box.
+- Crash rows are one line. The stock "fault inside Star Citizen" sentence is gone from
+  each row. A sentence about that crash still shows after the place.
+- **Every web link opens in a new tab**, including any built without one.
+- **Stealth components showed as "Sth/2/A Umbra" under Other.** The game writes stealth
+  as "Sth". They now read Umbra, Shimmer and Veil, under ship components.
+
 ## [1.10.0] — 2026-11-23
 
 ### Added
