@@ -8155,6 +8155,28 @@ nav a::after{background:var(--menu-bg);border-color:var(--glass-line);box-shadow
 .bph-p{flex:0 1 46%;min-width:0;font-size:12px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .bph-p .bpst{margin:0 6px 0 0}
 .bphit.own .bph-p{color:var(--dim)}
+.pinwrap{position:relative;align-self:center}
+.pinwrap .iconbtn{position:relative;overflow:visible}
+.pinwrap .iconbtn svg{width:18px;height:18px;display:block}
+.pinwrap.has .iconbtn{color:var(--amber);border-color:rgba(244,169,42,.5)}
+.pbadge{background:var(--amber);color:#06121f}
+.pinmenu{width:380px}
+.pm-it{display:flex;align-items:center;gap:10px;padding:10px 13px;border-bottom:1px solid var(--line);cursor:pointer}
+.pm-it:last-child{border-bottom:0}
+.pm-it:hover{background:var(--tint-cyan)}
+.pm-it.own{opacity:.7}
+.pm-tx{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
+.pm-tx b{font-size:13px;color:var(--txt);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pm-tx span{font-size:11.5px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pm-tx .bpst{margin:0 5px 0 0}
+.pm-empty{padding:14px 13px;font-size:13px;color:var(--muted)}
+.bpin.lbl{width:auto;padding:0 9px;height:26px;margin-left:auto;font-size:12px;font-family:var(--font-mono);letter-spacing:.04em;
+  border:1px solid var(--line);color:var(--muted)}
+.bpin.lbl.on{border-color:var(--amber);color:var(--amber)}
+.bpret{margin-top:8px}
+.bpret summary{cursor:pointer;font-family:var(--font-mono);font-size:11px;letter-spacing:.06em;color:var(--dim);padding:4px 2px}
+.bpret summary:hover{color:var(--muted)}
+.bph-x .bpph .bpin{display:none}
 .bph-c{flex:none;width:14px;height:14px;display:grid;place-items:center;color:var(--dim)}
 .bph-c::before{content:'';width:6px;height:6px;border-right:1.5px solid currentColor;border-bottom:1.5px solid currentColor;transform:translateY(-2px) rotate(45deg)}
 .bphit.open .bph-c::before{transform:translateY(2px) rotate(-135deg)}
@@ -8275,6 +8297,13 @@ nav a::after{background:var(--menu-bg);border-color:var(--glass-line);box-shadow
         <button class="stepbtn" id="patchNext" type="button" title="Next patch (→)" aria-label="Next patch"></button>
       </div>
       <div class="tb-controls">
+        <div class="pinwrap" id="pinWrap" style="display:none">
+          <button class="iconbtn" id="pinBtn" type="button" title="Pinned blueprints" aria-label="Pinned blueprints" aria-haspopup="true" aria-expanded="false">★<span class="bbadge pbadge" id="pinBadge"></span></button>
+          <div class="bellmenu pinmenu" id="pinMenu">
+            <div class="bm-head"><span>Pinned blueprints</span><button class="bm-clear" id="pinGo" type="button">Open Blueprints</button></div>
+            <div class="bm-list" id="pinList"></div>
+          </div>
+        </div>
         <button class="iconbtn" id="dataBtn" title="Backup &amp; transfer — export/import your career" aria-label="Backup and transfer" style="display:none">💾</button>
         <button class="iconbtn" id="refreshBtn" title="Refresh data — re-scan your logs" aria-label="Refresh data" style="display:none">⟳</button>
         <button class="iconbtn" id="themeBtn" title="Toggle light / dark" aria-label="Toggle theme">🌙</button>
@@ -9357,7 +9386,7 @@ function bpListHTML(v){
 let bpSetTab='partial', bpSetAll=false, bpFamAll=false;
 let bpLead=null;
 const BPB={comp:{tab:'all',all:false}, fps:{tab:'all',all:false}, gear:{tab:'all',all:false}};
-const BPA={cat:'Ship components', mode:'all', q:'', n:48};
+const BPA={cat:'Ship components', mode:'all', q:'', page:0};
 const BP_CLASSES=['Military','Civilian','Industrial','Stealth','Competition',''];
 const BP_CLS_SHORT={Military:'MIL', Civilian:'CIV', Industrial:'IND', Stealth:'STL', Competition:'CMP', '':'Other'};
 const BP_CATS=['Armor','Ship components','FPS weapons','Ship weapons','Flight suits','Magazines & batteries','Mining & salvage','Clothing','Flair & decor'];
@@ -9403,20 +9432,26 @@ function bpPathHTML(row){
   const owned=bpOwnedRow(row), recv=bpRecv(), d=recv[row[0]]||recv['n:'+row[1].toLowerCase()];
   const matched=(A().career||{}).contracts_matched||{}, meta=((DATA.bp_catalog||{}).meta||{})[row[0]]||[];
   const spec=[row[3], row[4], meta[0]&&meta[0]+(meta[1]?' grade '+meta[1]:''), meta[2]].filter(Boolean).map(esc).join(' \u00b7 ');
-  const head=`<div class="bpph">${bpPinBtn(row[0])}<b>${link(wikiURL(bpSkin(row[1])),esc(row[1]),'lk')}</b><span class="bpk">${spec}</span>`+
-    (owned?`<span class="bpok">in your library${d?' since '+ddmm(d):''}</span>`:row[5]?`<span class="bpok">known from the start</span>`:'')+`</div>`;
+  const head=`<div class="bpph"><b>${link(wikiURL(bpSkin(row[1])),esc(row[1]),'lk')}</b><span class="bpk">${spec}</span>`+
+    (owned?`<span class="bpok">in your library${d?' since '+ddmm(d):''}</span>`:row[5]?`<span class="bpok">known from the start</span>`:'')+
+    bpPinBtn(row[0], true)+`</div>`;
   const ps=bpPaths(row);
   if(!ps.length) return head+`<div class="empty">${row[5] ? 'Available by default. No mission needed.'
     : 'No mission drops this. It may come from an event (your XenoThreat rewards did) or not be obtainable yet.'}</div>`;
-  return head+`<div class="tline">`+ps.map(p=>{
-    if(p.retired) return `<div class="tev"><span class="td">${bpChance(p.ch)}</span><span class="tw">${esc(p.title)}</span><span class="tv"><span class="bph">retired or unknown mission</span></span></div>`;
+  // missions the wiki no longer lists are folded away: they can't be run
+  const live=ps.filter(p=>!p.retired), gone=ps.filter(p=>p.retired);
+  const goneH=gone.length?`<details class="bpret"><summary>${fmt(gone.length)} retired or unknown mission${gone.length===1?'':'s'}</summary><div class="tline">`+
+    gone.map(p=>`<div class="tev"><span class="td">${bpChance(p.ch)}</span><span class="tw">${esc(p.title)}</span><span class="tv"><span class="bph">retired or unknown</span></span></div>`).join('')+
+    `</div></details>`:'';
+  if(!live.length) return head+`<div class="empty">No mission running now drops this.</div>`+goneH;
+  return head+`<div class="tline">`+live.map(p=>{
     const m=p.m, stand=m[MIS_F.STAND], done=matched[String(p.mi)]||0;
     const gate = !p.fac ? `<span class="bph">no faction</span>` : stand ? `${esc(stand)} <span class="bph">\u00b7 ${fmt(p.thr)} rep</span>` : `<span class="bph">no standing needed</span>`;
     const st = !p.fac||!p.thr ? `<span class="bpst ok">open</span>` : p.open ? `<span class="bpst ok">open at your floor</span>`
       : `<span class="bpst no">${fmt(p.gap)} more rep with ${esc(p.fac)}</span>`;
     return `<div class="tev"><span class="td">${bpChance(p.ch)}</span>`+
       `<span class="tw">${m[MIS_F.URL]?link(m[MIS_F.URL],esc(m[MIS_F.TITLE]),'lk'):esc(m[MIS_F.TITLE])}<span class="bpk">${esc(p.fac||'')}${m[MIS_F.REP]?` \u00b7 +${fmt(m[MIS_F.REP])} rep`:''}${done?` \u00b7 done \u00d7${fmt(done)}`:''}</span></span>`+
-      `<span class="tv">${gate} ${st}</span></div>`; }).join('')+`</div>`;
+      `<span class="tv">${gate} ${st}</span></div>`; }).join('')+`</div>`+goneH;
 }
 function bpPlanHTML(){
   const M=DATA.missions, cat=DATA.bp_catalog; if(!M||!cat) return '';
@@ -9440,8 +9475,48 @@ function bpTogglePin(k){
   if(l.length===(m[currentAccount]||[]).length) l.unshift(k);
   m[currentAccount]=l; try{ localStorage.setItem(BP_PIN_KEY, JSON.stringify(m)); }catch(e){}
 }
-function bpPinBtn(k){ const on=bpPins().includes(k);
-  return `<button type="button" class="bpin ${on?'on':''}" data-bppin="${esc(k)}" aria-pressed="${on}" title="${on?'Unpin':'Pin it to track it'}">${on?'\u2605':'\u2606'}</button>`; }
+// the star alone in lists and on cards; a labelled button where a blueprint is opened
+const bpPinFace=(on, lbl)=>(on?'\u2605':'\u2606')+(lbl?(on?' Pinned':' Pin'):'');
+function bpPinBtn(k, lbl){ const on=bpPins().includes(k);
+  return `<button type="button" class="bpin${lbl?' lbl':''} ${on?'on':''}" data-bppin="${esc(k)}"${lbl?' data-lbl="1"':''} aria-pressed="${on}" title="${on?'Unpin':'Pin it to track it'}">${bpPinFace(on, lbl)}</button>`; }
+function bpPinsChanged(){
+  const c=$('#content');
+  if(c) c.querySelectorAll('[data-bppin]').forEach(x=>{ const on=bpPins().includes(x.dataset.bppin);
+    x.classList.toggle('on',on); x.textContent=bpPinFace(on, x.dataset.lbl); x.setAttribute('aria-pressed',on); x.title=on?'Unpin':'Pin it to track it'; });
+  const pc=$('#bpPinned'); if(pc) pc.innerHTML=bpPinnedHTML();
+  renderPinMenu();
+}
+// the top-bar pin menu: every pin with its next step, from any page. The badge counts
+// the ones still to get.
+function renderPinMenu(){
+  const w=$('#pinWrap'), cat=DATA.bp_catalog; if(!w) return;
+  w.style.display=cat?'':'none'; if(!cat) return;
+  const by={}; cat.rows.forEach(r=>{ by[r[0]]=r; });
+  const rows=bpPins().map(k=>by[k]).filter(Boolean), todo=rows.filter(r=>!bpOwnedRow(r)), got=rows.filter(bpOwnedRow);
+  const b=$('#pinBadge'); if(b){ b.textContent=todo.length; b.classList.toggle('on', todo.length>0); }
+  w.classList.toggle('has', todo.length>0);
+  const l=$('#pinList'); if(!l) return;
+  if(!rows.length){ l.innerHTML=`<div class="pm-empty">Nothing pinned. Pin a blueprint with \u2606 on the Blueprints page and it shows here with its next step.</div>`; return; }
+  const recv=bpRecv();
+  l.innerHTML=todo.concat(got).map(r=>{ const o=bpOwnedRow(r), d=recv[r[0]]||recv['n:'+r[1].toLowerCase()];
+    const st=o?['ok','OWNED']:r[5]?['ok','DEFAULT']:bpNoSource(r)?['ns','MISSING']:['no','MISSING'];
+    return `<div class="pm-it${o?' own':''}" data-pmopen="${esc(r[0])}" title="Open it in the planner">`+
+      `<span class="bph-s ${st[0]}">${st[1]}</span><div class="pm-tx"><b>${esc(r[1])}</b><span>${o?`received ${d?ddmm(d):''}`:bpBestHTML(r)}</span></div>`+
+      `<button type="button" class="bpin on" data-pmun="${esc(r[0])}" title="Unpin">\u2605</button></div>`; }).join('');
+}
+function pinMenu(on){
+  const m=$('#pinMenu'), b=$('#pinBtn'); if(!m) return;
+  m.classList.toggle('on', !!on); if(b) b.setAttribute('aria-expanded', on?'true':'false');
+  if(on){ renderPinMenu(); if(typeof openScope==='function') openScope(false); if(typeof bellMenu==='function') bellMenu(false); if(typeof statusMenu==='function') statusMenu(false); }
+}
+// open a blueprint in the planner from anywhere: switch to Blueprints, then scroll to it
+function bpOpenInPlanner(k){
+  const r=((DATA.bp_catalog||{}).rows||[]).find(x=>x[0]===k); if(!r) return;
+  bpPlanKey=k; bpPlanQ=r[1];
+  const a=document.querySelector('#nav a[data-sec="blueprints"]');
+  if(section!=='blueprints' && a) a.click(); else { const el=$('#bpPlan'); if(el) el.innerHTML=bpPlanHTML(); }
+  const el=$('#bpPlan'); if(el) scrollToY(el.getBoundingClientRect().top+window.pageYOffset-160);
+}
 // a result or a pinned blueprint: owned or not at a glance, the next step, the full path on open
 function bpHitRow(row, open, attr){
   const o=bpOwnedRow(row), recv=bpRecv(), d=recv[row[0]]||recv['n:'+row[1].toLowerCase()];
@@ -9633,7 +9708,9 @@ function bpAlbumList(catalog){
   rs.sort((a,b)=>grp(a).localeCompare(grp(b))||(sizeOf(a)??99)-(sizeOf(b)??99)||(on(b)-on(a))||
     (BP_CLASSES.indexOf(meta(a)[0]||'')-BP_CLASSES.indexOf(meta(b)[0]||''))||(meta(a)[1]||'Z').localeCompare(meta(b)[1]||'Z')||a[1].localeCompare(b[1]));
   if(!rs.length) return `<div class="empty">${q?'Nothing matches that.':'Nothing here.'}</div>`;
-  const shown=rs.slice(0,BPA.n); let out='', last=null;
+  const PER=48, pages=Math.ceil(rs.length/PER);
+  BPA.page=Math.max(0, Math.min(BPA.page||0, pages-1));
+  const shown=rs.slice(BPA.page*PER, BPA.page*PER+PER); let out='', last=null;
   shown.forEach(r=>{ const g=grp(r);
     if(g!==last){ if(last!==null) out+='</div>'; const all=rs.filter(x=>grp(x)===g);
       out+=`<div class="agh"><b>${esc(g)}</b><span>${fmt(all.filter(on).length)} of ${fmt(all.length)}</span></div><div class="alb">`; last=g; }
@@ -9643,7 +9720,9 @@ function bpAlbumList(catalog){
       `<div class="bd"><div class="nm">${esc(r[1])}</div><div class="cp">${z!=null?`<i>S${z}</i>`:''}${m[0]?`<i>${BP_CLS_SHORT[m[0]]||esc(m[0])}</i>`:''}`+
       `${m[1]?`<i class="g${esc(m[1])}">${esc(m[1])}</i>`:''}${m[2]?`<i>${esc(m[2])}</i>`:''}</div></div></div>`; });
   out+='</div>';
-  if(rs.length>shown.length) out+=`<button class="foot-link" data-bpan="1" style="margin-top:12px">Show ${fmt(Math.min(48, rs.length-shown.length))} more \u00b7 ${fmt(rs.length-shown.length)} left</button>`;
+  if(pages>1) out+=`<div class="pager"><button class="foot-link" data-bpap="${BPA.page-1}" ${BPA.page?'':'disabled'}>\u2190 Back</button>`+
+    `<span class="pgi">${fmt(BPA.page*PER+1)}\u2013${fmt(BPA.page*PER+shown.length)} of ${fmt(rs.length)}</span>`+
+    `<button class="foot-link" data-bpap="${BPA.page+1}" ${BPA.page<pages-1?'':'disabled'}>Next \u2192</button></div>`;
   return out;
 }
 // owned / total per category, on one shared scale so the bars are comparable
@@ -9714,8 +9793,8 @@ function secBlueprints(v){
         if(!$('#bpFind') && !$('#bpPlan')) return;
         const pin=e.target.closest('[data-bppin]');
         if(pin && c.contains(pin)){ e.preventDefault(); e.stopPropagation();
-          const k=pin.dataset.bppin; bpTogglePin(k); const on=bpPins().includes(k);
-          c.querySelectorAll(`[data-bppin="${CSS.escape(k)}"]`).forEach(x=>{ x.classList.toggle('on',on); x.textContent=on?'\u2605':'\u2606';
+          const k=pin.dataset.bppin; bpTogglePin(k); bpPinsChanged(); const on=bpPins().includes(k);
+          c.querySelectorAll(`[data-bppin="${CSS.escape(k)}"]`).forEach(x=>{ x.classList.toggle('on',on); x.textContent=bpPinFace(on, x.dataset.lbl);
             x.setAttribute('aria-pressed',on); x.title=on?'Unpin':'Pin it to track it'; });
           const pc=$('#bpPinned'); if(pc) pc.innerHTML=bpPinnedHTML();
           return; }
@@ -9757,11 +9836,14 @@ function secBlueprints(v){
   };
   const album=()=>{ const el=$('#bpAlbum'); if(!el||!catalog) return; el.innerHTML=bpAlbumHTML(catalog); wireAlbum(); };
   const wireAlbum=()=>{
-    document.querySelectorAll('#bpAlbum [data-bpac]').forEach(b=>b.onclick=()=>{ BPA.cat=b.dataset.bpac; BPA.q=''; BPA.n=48; album(); });
-    document.querySelectorAll('#bpAlbum [data-bpam]').forEach(b=>b.onclick=()=>{ BPA.mode=b.dataset.bpam; BPA.n=48; album(); });
-    const more=()=>document.querySelectorAll('#bpAlbum [data-bpan]').forEach(b=>b.onclick=()=>{ BPA.n+=48; const l=$('#bpAlbList'); if(l){ l.innerHTML=bpAlbumList(catalog); more(); } });
-    more();
-    const q=$('#bpAlbQ'); if(q) q.oninput=()=>{ BPA.q=q.value; BPA.n=48; const l=$('#bpAlbList'); if(l){ l.innerHTML=bpAlbumList(catalog); more(); } };
+    document.querySelectorAll('#bpAlbum [data-bpac]').forEach(b=>b.onclick=()=>{ BPA.cat=b.dataset.bpac; BPA.q=''; BPA.page=0; album(); });
+    document.querySelectorAll('#bpAlbum [data-bpam]').forEach(b=>b.onclick=()=>{ BPA.mode=b.dataset.bpam; BPA.page=0; album(); });
+    // a page change redraws the cards only and brings the album's top back into view
+    const pager=()=>document.querySelectorAll('#bpAlbum [data-bpap]').forEach(b=>b.onclick=()=>{ BPA.page=+b.dataset.bpap;
+      const l=$('#bpAlbList'); if(l){ l.innerHTML=bpAlbumList(catalog); pager(); }
+      const a=$('#bpAlbum'); if(a) scrollToY(a.getBoundingClientRect().top+window.pageYOffset-90); });
+    pager();
+    const q=$('#bpAlbQ'); if(q) q.oninput=()=>{ BPA.q=q.value; BPA.page=0; const l=$('#bpAlbList'); if(l){ l.innerHTML=bpAlbumList(catalog); pager(); } };
   };
   wireBoard();
   const fq=$('#bpFindQ'); if(fq) fq.oninput=()=>{ bpFindQ=fq.value; bpFindOpen=''; const o=$('#bpFindOut'); if(o) o.innerHTML=bpFindList(); };
@@ -11013,6 +11095,7 @@ function render(){
   renderLimitedNote();
   SECTIONS[section].fn(view());
   buildToc();
+  renderPinMenu();
 }
 // "On this page": the open tab's groups in the sidebar, the one in view lit. Only for
 // tabs with three or more groups. CSS hides it on the icon rail and on short windows.
@@ -11475,6 +11558,17 @@ pollStatus();
   document.addEventListener('click',e=>{ if(!e.target.closest('.bellwrap')) bellMenu(false); });
 }
 renderBell();
+{ const pb=$('#pinBtn'), pg=$('#pinGo'), pl=$('#pinList');
+  if(pb) pb.innerHTML=icon('star')+'<span class="bbadge pbadge" id="pinBadge"></span>';
+  if(pb) pb.onclick=e=>{ e.stopPropagation(); pinMenu(!$('#pinMenu').classList.contains('on')); };
+  if(pg) pg.onclick=e=>{ e.stopPropagation(); pinMenu(false); const a=document.querySelector('#nav a[data-sec="blueprints"]'); if(a) a.click(); };
+  if(pl) pl.addEventListener('click', e=>{ e.stopPropagation();
+    const un=e.target.closest('[data-pmun]'); if(un){ bpTogglePin(un.dataset.pmun); bpPinsChanged(); return; }
+    const it=e.target.closest('[data-pmopen]'); if(it){ pinMenu(false); bpOpenInPlanner(it.dataset.pmopen); } });
+  document.addEventListener('click',e=>{ if(!e.target.closest('.pinwrap')) pinMenu(false); });
+  document.addEventListener('keydown',e=>{ if(e.key==='Escape' && $('#pinMenu') && $('#pinMenu').classList.contains('on')){ pinMenu(false); if(pb) pb.focus(); } });
+}
+renderPinMenu();
 function csrShutdown(){
   $('#smBody').textContent='Shutting down…';
   fetch('/api/shutdown',{method:'POST'}).catch(()=>{});

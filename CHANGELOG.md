@@ -26,9 +26,13 @@ uses [Semantic Versioning](https://semver.org/) (MAJOR.MINOR.PATCH).
 - **Find a blueprint.** A search at the top of Blueprints: name, maker, class or grade.
   Each result says owned or missing and the next step: "open now" with the mission, or
   how much rep you're short and with whom. Open a result for every mission that drops it.
-- **Pinned blueprints.** Pin with ☆ in search, the planner or the album. Pinned keeps
-  each one's next step at the top of the page until it's in your library. Pins are saved
+- **Pinned blueprints.** Pin with ☆ in search, the album, or the Pin button in the
+  planner. The ★ next to save lists your pins from any page with each one's next step,
+  and counts the ones still to get. Click one to open it in the planner. Pins are saved
   in your browser, per account.
+- **Album pages.** The album pages through 48 cards at a time.
+- **Retired or unknown missions are folded** under a line you can open, below the
+  missions you can run.
 - **Blueprints with no known source are marked.** The catalogue lists every craftable
   blueprint in the game files. 920 of 1,628 have no mission and aren't given by default.
   Their squares are dashed, their cards say "no known source", and the totals split what
