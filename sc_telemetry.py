@@ -60,9 +60,11 @@ def wire_fields(b):
 T_DOUBLE, T_FLOAT, T_INT64, T_UINT64, T_INT32 = 1, 2, 3, 4, 5
 T_BOOL, T_STRING, T_MESSAGE, T_BYTES, T_UINT32, T_ENUM = 8, 9, 11, 12, 13, 14
 T_SINT32, T_SINT64 = 17, 18
+T_FIXED64, T_FIXED32, T_SFIXED32, T_SFIXED64 = 6, 7, 15, 16
 TYPE_NAMES = {1: "double", 2: "float", 3: "int64", 4: "uint64", 5: "int32", 8: "bool",
               9: "string", 11: "msg", 12: "bytes", 13: "uint32", 14: "enum",
-              17: "sint32", 18: "sint64"}
+              17: "sint32", 18: "sint64",
+              6: "fixed64", 7: "fixed32", 15: "sfixed32", 16: "sfixed64"}
 
 
 def find_exe():
@@ -75,12 +77,16 @@ def find_exe():
 
 
 def descriptor_blobs(exe_path, match=b"telemetry"):
-    """Serialized FileDescriptorProtos in the exe whose file name contains `match`."""
-    with open(exe_path, "rb") as fh:
-        m = mmap.mmap(fh.fileno(), 0, access=mmap.ACCESS_READ)
+    """Serialized FileDescriptorProtos in the exe whose file name contains `match`.
+
+    Only the game's own protos (sc/game/telemetry/) are kept, the exe also carries
+    opentelemetry protos."""
+    with open(exe_path, "rb") as fh, mmap.mmap(fh.fileno(), 0, access=mmap.ACCESS_READ) as m:
         out = []
         for x in re.finditer(rb"\x0a([\x05-\x7f])([ -~]*" + match + rb"[ -~]*\.proto)", m):
             if len(x.group(2)) != x.group(1)[0]:
+                continue
+            if not x.group(2).startswith(b"sc/game/telemetry/"):
                 continue
             b = bytes(m[x.start():x.start() + 200000])
             i = 0
@@ -233,6 +239,12 @@ class Schema:
             return [round(x, 4) for x in struct.unpack(f"<{len(b) // 4}f", b)]
         if t in (T_DOUBLE,):
             return [round(x, 4) for x in struct.unpack(f"<{len(b) // 8}d", b)]
+        if t in (T_FIXED32, T_SFIXED32):
+            code = "<i" if t == T_SFIXED32 else "<I"
+            return [struct.unpack(code, b[i:i + 4])[0] for i in range(0, len(b) - 3, 4)]
+        if t in (T_FIXED64, T_SFIXED64):
+            code = "<q" if t == T_SFIXED64 else "<Q"
+            return [struct.unpack(code, b[i:i + 8])[0] for i in range(0, len(b) - 7, 8)]
         vals, i = [], 0
         while i < len(b):
             v, i = _varint(b, i)
@@ -250,6 +262,10 @@ class Schema:
             return round(struct.unpack("<f", v)[0], 4)
         if t == T_DOUBLE:
             return round(struct.unpack("<d", v)[0], 4)
+        if t in (T_FIXED32, T_SFIXED32):
+            return struct.unpack("<i" if t == T_SFIXED32 else "<I", v)[0]
+        if t in (T_FIXED64, T_SFIXED64):
+            return struct.unpack("<q" if t == T_SFIXED64 else "<Q", v)[0]
         if t == T_BOOL:
             return bool(v)
         if t == T_ENUM:

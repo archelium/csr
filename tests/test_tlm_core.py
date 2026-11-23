@@ -1,5 +1,6 @@
 """Telemetry core: protobuf decode, schema cache, gRPC stream reassembly."""
 import os
+import struct
 import sys
 import tempfile
 import unittest
@@ -9,6 +10,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import sc_telemetry as tlm  # noqa: E402
 from tests.tlm_helpers import (RESP, FakeGrpcServer, enc_field, enc_varint, exe_bytes,  # noqa: E402
                                f32, make_descriptor)
+
+
+PKG_SPAN = tlm.PKG + ".Span"
 
 
 def schema():
@@ -52,6 +56,69 @@ class DecodeTests(unittest.TestCase):
         self.assertEqual(s2.hash, s.hash)
         self.assertEqual(len(s.hash), 12)
         self.assertEqual(s2.services, s.services)
+
+
+class SchemaFixesTests(unittest.TestCase):
+    def test_only_game_protos_kept(self):
+        from tests import tlm_helpers as h
+        other = h._file("opentelemetry/proto/trace/v1/trace.proto",
+                        [h._msg("Span", [h._field("name", 1, tlm.T_STRING)])])
+        blobs = make_descriptor() + [("opentelemetry/proto/trace/v1/trace.proto", other)]
+        with tempfile.TemporaryDirectory() as d:
+            exe = os.path.join(d, "StarCitizen.exe")
+            with open(exe, "wb") as fh:
+                fh.write(exe_bytes(blobs))
+            found = tlm.descriptor_blobs(exe)
+            names = [n for n, _ in found]
+            self.assertEqual(sorted(names), ["sc/game/telemetry/v1/api.proto",
+                                             "sc/game/telemetry/v1/types.proto"])
+            self.assertEqual(tlm.Schema.from_blobs(found).hash, schema().hash)
+            self.assertNotIn(PKG_SPAN, schema().messages)
+
+    def test_mmap_closed(self):
+        closed = []
+        real = tlm.mmap.mmap
+
+        class Spy:
+            def __init__(self, *a, **k):
+                self._m = real(*a, **k)
+
+            def __enter__(self):
+                self._m.__enter__()
+                return self._m
+
+            def __exit__(self, *e):
+                closed.append(True)
+                return self._m.__exit__(*e)
+
+            def close(self):
+                closed.append(True)
+                self._m.close()
+
+        with tempfile.TemporaryDirectory() as d:
+            exe = os.path.join(d, "x.exe")
+            with open(exe, "wb") as fh:
+                fh.write(exe_bytes(make_descriptor()))
+            with mock.patch.object(tlm.mmap, "mmap", Spy):
+                tlm.descriptor_blobs(exe)
+        self.assertTrue(closed)
+
+    def test_fixed_ints(self):
+        from tests import tlm_helpers as h
+        P = tlm.PKG
+        fields = [h._field("a", 1, 7), h._field("b", 2, 6), h._field("c", 3, 15),
+                  h._field("d", 4, 16), h._field("e", 5, 15, h.LABEL_REP)]
+        f = h._file("sc/game/telemetry/v1/fx.proto", [h._msg("Fx", fields)])
+        s = tlm.Schema.from_blobs([("sc/game/telemetry/v1/fx.proto", f)])
+        raw = (enc_field(1, 5, struct.pack("<I", 4000000000))
+               + enc_field(2, 1, struct.pack("<Q", 2 ** 63 + 5))
+               + enc_field(3, 5, struct.pack("<i", -7))
+               + enc_field(4, 1, struct.pack("<q", -9))
+               + enc_field(5, 2, struct.pack("<ii", -1, 2)))
+        self.assertEqual(s.decode(P + ".Fx", raw),
+                         {"a": 4000000000, "b": 2 ** 63 + 5, "c": -7, "d": -9, "e": [-1, 2]})
+        self.assertEqual(tlm.TYPE_NAMES[7], "fixed32")
+        self.assertEqual(tlm.TYPE_NAMES[16], "sfixed64")
 
 
 class LoadSchemaTests(unittest.TestCase):
