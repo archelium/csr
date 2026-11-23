@@ -5732,10 +5732,10 @@ def stamp_online(key):
 def refresh_online_data():
     """Force a re-fetch of everything CSR pulls from the network.
 
-    Clears the profile/org cache and drops art entries that previously FAILED (a
-    cached null means "tried once, got nothing" — usually the source was down, and
-    without this they would never be retried). Fetched art is kept: each entry
-    remembers its source URL, and a new URL in a refreshed catalogue re-fetches it."""
+    Clears the profile/org cache, drops logo and wiki-image lookups that previously
+    FAILED (a cached null means "tried once, got nothing" — usually the source was down,
+    and without this they would never be retried) and picks every gun's picture again.
+    Pictures themselves are loaded by the page, so a new render shows up on its own."""
     global _PROFILE_CACHE
     _PROFILE_CACHE = {}
     try:
@@ -5743,15 +5743,11 @@ def refresh_online_data():
     except OSError:
         pass
     dropped = 0
-    for cache in (_SHIP_IMG, _GUN_IMG, _MAN_IMG):
-        for k in [k for k, v in cache.items() if not (v[1] if isinstance(v, list) else v)]:
-            del cache[k]
-            dropped += 1
-    _GUN_PICK.clear()                  # gun pictures are chosen again from the wiki
-    for cache in (_URL_IMG, _WIKI_LEAD):
+    for cache in (_MAN_IMG, _WIKI_LEAD):
         for k in [k for k, v in cache.items() if not v]:
             del cache[k]
             dropped += 1
+    _GUN_PICK.clear()                  # gun pictures are chosen again from the wiki
     save_img_cache()
     reload_catalogues()
     stamp_online("forced")
@@ -5809,27 +5805,10 @@ def fetch_profile_cached(handle, force=False):
     return prof, orgs
 
 
-# image caches so each asset is only downloaded once across all patch views.
-# Persisted to disk (app_dir/sc_images.json) so Refresh reuses already-fetched
-# art instead of re-downloading ~5 MB every run. Keyed by ship/gun display name.
-# Ship and gun entries are [source url, data-uri]: a catalogue that points at new art
-# re-fetches it. Name-only keys kept the Galaxy's pre-release render after RSI
-# replaced it. Logos are a bare data-uri. A cached null means "tried, no image".
-_SHIP_IMG, _GUN_IMG, _MAN_IMG = {}, {}, {}
+# Persisted to disk (app_dir/sc_images.json): maker logos (small, embedded in the page),
+# the picture chosen for each gun and each wiki page's lead image (urls the page loads).
+_MAN_IMG = {}
 _GUN_PICK = {}      # gun name -> chosen picture URL, re-chosen by Update now
-
-
-def _art(cache, key, src, fetch, retry_miss=False):
-    """The cached image for `key` while its source is still `src`, else `fetch()`.
-    A legacy entry (bare data-uri, no source) counts as a changed source. A failed
-    re-fetch keeps the old picture and tries again next time."""
-    ent = cache.get(key)
-    old_src, old = ent if isinstance(ent, list) else (None, ent)
-    if key in cache and old_src == src and (old or not retry_miss):
-        return old
-    new = fetch()
-    cache[key] = [src, new] if (new or not old) else [old_src, old]
-    return cache[key][1]
 
 
 def _img_cache_path():
@@ -5839,21 +5818,17 @@ def _img_cache_path():
 def load_img_cache():
     try:
         d = json.load(open(_img_cache_path(), encoding="utf-8"))
-        _SHIP_IMG.update(d.get("ship", {}))
-        _GUN_IMG.update(d.get("gun", {}))
         _MAN_IMG.update(d.get("man", {}))
         _GUN_PICK.update(d.get("pick", {}))
-        _URL_IMG.update(d.get("url", {}))
         _WIKI_LEAD.update(d.get("lead", {}))
-        csub(f"art cache mounted — {len(_SHIP_IMG)} hulls · {len(_GUN_IMG)} arms · {len(_MAN_IMG)} makers")
+        csub(f"art cache mounted — {len(_GUN_PICK)} arms · {len(_MAN_IMG)} makers")
     except Exception:
         pass
 
 
 def save_img_cache():
     try:
-        json.dump({"ship": _SHIP_IMG, "gun": _GUN_IMG, "man": _MAN_IMG, "pick": _GUN_PICK,
-                   "url": _URL_IMG, "lead": _WIKI_LEAD},
+        json.dump({"man": _MAN_IMG, "pick": _GUN_PICK, "lead": _WIKI_LEAD},
                   open(_img_cache_path(), "w", encoding="utf-8"))
     except Exception as e:
         cerr(f"could not save image cache: {e}")
@@ -5883,13 +5858,8 @@ def _man_logo(name):
 
 
 def _ship_img(rec):
-    if not rec:
-        return None
-    # prefer the large store render (crisp on hi-dpi cards), fall back to small
-    src = rec.get("img_large") or rec.get("img_small")
-    return _art(_SHIP_IMG, rec.get("name"), src,
-                lambda: (sc_names.fetch_data_uri(rec.get("img_large"))
-                         or sc_names.fetch_data_uri(rec.get("img_small"))))
+    """The large store render's url: the page loads it."""
+    return (rec.get("img_large") or rec.get("img_small")) if rec else None
 
 
 def _gun_pick(name, api_url=None):
@@ -5906,19 +5876,16 @@ def _gun_pick(name, api_url=None):
         import urllib.parse
         fname = urllib.parse.unquote(api_url.split("?")[0].rsplit("/", 1)[-1])
         u = api_url if sc_names.gun_image_score(fname) >= 0 else None
-    u = u or sc_names.wiki_gun_image(name, min_score=0)
+    u = u or sc_names.wiki_gun_image(name, min_score=0) or _gun_page_img(name)
     if u:
         _GUN_PICK[name] = u
     return u
 
 
 def _gun_img(name, url=None):
-    """The gun card picture (see _gun_pick), else the lead image of its wiki page.
-    A miss is retried: the wiki gets pages later than the game gets guns."""
-    pick = _gun_pick(name, url)
-    return _art(_GUN_IMG, name, pick or "page",
-                lambda: (pick and sc_names.fetch_data_uri(pick)) or _gun_page_img(name),
-                retry_miss=True)
+    """The gun card picture's url (see _gun_pick). A miss is retried on the next run:
+    the wiki gets pages later than the game gets guns."""
+    return _gun_pick(name, url)
 
 
 def _gun_page_img(name):
@@ -5929,12 +5896,11 @@ def _gun_page_img(name):
         titles.append(short)
     if short == name and " " not in name:       # a bare model name: try the wiki's typed titles
         titles += [f"{name} Rifle", f"{name} Pistol", f"{name} SMG", f"{name} Shotgun"]
-    img = None
     for t in titles:
-        img = sc_names.fetch_data_uri(sc_names.wiki_weapon_image(t))
-        if img:
-            break
-    return img
+        u = sc_names.wiki_weapon_image(t)
+        if u:
+            return u
+    return None
 
 
 def _ship_entry(name, count, first=None, last=None, takeoffs=0, aboard=0, seat=0, rank="sessions",
@@ -5987,72 +5953,23 @@ def build_showcase(career, patches, order):
 
 
 # ---- list art: pictures for the ranked lists on Flight, Combat, Missions, Economy and
-# Blueprints. Every picture is a URL fetched once (cached in sc_images.json under "url")
-# and stored once in the page: views point at it by key. Three sizes per subject: a row
-# thumbnail, a gallery tile for the top 3, and a hero for the page's #1.
-_URL_IMG = {}           # source url -> data-uri, or None when it couldn't be fetched
+# Blueprints, and the Overview cards. The page holds where each picture lives and the
+# browser loads it when it's on screen: the scan downloads nothing, the page stays small,
+# and a new render at the source shows up on its own. Sizes are picked in the page.
 _WIKI_LEAD = {}         # starcitizen.tools page title -> lead image url, "" when none
-ART_THUMB, ART_TILE, ART_HERO = 200, 480, 960
 
 
-def _wiki_w(url, w):
-    """Candidate urls for a starcitizen.tools picture at width w, best first. The wiki
-    resizes any file on request (a 200 px WebP of a 160 KB cargo render is 10 KB) but
-    answers 404 for a width past the original's, so the file itself is the last try.
-    Other hosts' urls pass through."""
-    if not url:
-        return []
-    if "media.starcitizen.tools/" not in url:
-        return [url]
-    base = url.split("?")[0]
-    m = re.match(r"(https://media\.starcitizen\.tools)/thumb/(\w/\w\w/([^/]+))/\d+px-[^/]+$", base)
-    if m:
-        root, path, name = m.groups()
-    else:
-        m = re.match(r"(https://media\.starcitizen\.tools)/(\w/\w\w/([^/]+))$", base)
-        if not m:
-            return [url]
-        root, path, name = m.groups()
-    thumb = lambda px: f"{root}/thumb/{path}/{px}px-{name}" + ("" if name.lower().endswith(".webp") else ".webp")
-    return [thumb(w)] + ([thumb(600)] if w > 600 else []) + [f"{root}/{path}"]
-
-
-def _fetch_urls(urls):
-    """Download every url not cached yet, eight at a time. Stops early when the network
-    is clearly down, so an offline refresh doesn't wait on hundreds of timeouts."""
-    # a failed download is tried again on the next run: the wiki drops requests under load
-    todo = [u for u in dict.fromkeys(urls) if u and not _URL_IMG.get(u)]
-    if not todo:
-        return
-    from concurrent.futures import ThreadPoolExecutor
-    fails = [0]
-
-    def get(u):
-        if fails[0] >= 12:
-            return u, None, False
-        d = sc_names.fetch_data_uri(u, timeout=12, max_bytes=500_000)
-        fails[0] = 0 if d else fails[0] + 1
-        return u, d, True
-    csub(f"fetching {len(todo):,} list pictures")
-    for workers in (6, 2):                    # a gentler second pass for what failed
-        with ThreadPoolExecutor(workers) as ex:
-            for u, d, tried in ex.map(get, todo):
-                if tried:
-                    _URL_IMG[u] = d
-        todo = [u for u in todo if not _URL_IMG.get(u)]
-        if not todo or fails[0] >= 12:
-            break
-
-
-def _fetch_first(cands_list, caps):
-    """For each candidate list, the first url that downloads within its byte cap. Tries
-    the best candidates of every list in one pass, then the fallbacks of the ones that
-    failed. The cap keeps a 600 KB original out of a 56 px row thumbnail."""
-    ok = lambda x, cap: bool(_URL_IMG.get(x)) and len(_URL_IMG[x]) <= cap
-    for depth in range(3):
-        _fetch_urls([c[depth] for c, cap in zip(cands_list, caps) if len(c) > depth
-                     and not any(ok(x, cap) for x in c[:depth])])
-    return [next((_URL_IMG[x] for x in c if ok(x, cap)), None) for c, cap in zip(cands_list, caps)]
+def art_src(src):
+    """Where a picture lives, compact for the page: ["r", small, large] for an RSI ship
+    matrix record, ["w", "a/ab/File.png"] for a starcitizen.tools file (the page asks the
+    wiki for the width it needs), ["u", url] for anything else, None for nothing."""
+    if not src:
+        return None
+    if isinstance(src, dict):
+        big = src.get("img_large")
+        return ["r", src.get("img_small") or big, big] if big else None
+    m = re.match(r"https://media\.starcitizen\.tools/(?:thumb/)?(\w/\w\w/[^/?]+)", src)
+    return ["w", m.group(1)] if m else ["u", src]
 
 
 def _wiki_leads(titles):
@@ -6109,40 +6026,20 @@ def _is_system(name):
 
 
 def build_list_art(data):
-    """{kind: {name: [thumb, tile, hero]}} for every picture-carrying list in every view,
-    as data-uris (render_html stores each once). Thumbnails for every row, tiles for the
-    top 3 of a list long enough for a gallery, heroes for what a page opens on. A missing
-    size is null: the page draws the list's icon in its place."""
-    rows, tiles, heroes = set(), set(), set()
+    """{kind: {name: source}} for every picture-carrying list in every view and the
+    Overview cards (see art_src). A name with no picture is left out: the page draws the
+    list's icon in its place."""
+    rows = set()
     for v in _views(data):
         for kind, ns in _view_lists(v):
-            keyed = [(("ship" if SHIPS.record_by_name(n) else "item") if kind == "mixed" else kind, n)
-                     for n in ns]
-            rows.update(keyed)
-            if len(keyed) >= 4:
-                tiles.update(k for k in keyed[:3] if not _is_system(k[1]))
-        # the hero each page opens on (see mountHero calls in the page)
-        top = v.get("ships_top") or []
-        if top:
-            heroes.add(("ship", top[0][0]))
-        gun = next((w[0] for w in v.get("weapons_top") or [] if not w[2]), None)
-        if gun:
-            heroes.add(("gun", gun))
-        bought = [r[0] for r in v.get("top_items") or []]
-        ship = next((n for n in bought if SHIPS.record_by_name(n)), None)
-        if ship:
-            heroes.add(("ship", ship))
-        elif bought:
-            heroes.add(("item", bought[0]))
-        dest = next((r[0] for r in (v.get("haul") or {}).get("dest") or [] if not _is_system(r[0])), None)
-        if dest:
-            heroes.add(("place", dest))
+            rows.update((("ship" if SHIPS.record_by_name(n) else "item") if kind == "mixed" else kind, n)
+                        for n in ns)
     # blueprint sets and size ladders you've started: the core piece, the first owned size
     owned = set()
     for v in _views(data):
         owned.update(r[6] for r in v.get("blueprints") or [] if len(r) > 6 and r[6])
     cat = _bp_catalog_payload() if BPS.ok else None
-    bp, lead = {}, []
+    bp = {}
     if cat:
         cls_of = {r[0]: r[2] for r in cat["rows"]}
         for name, _c, _w, pcs in cat["sets"]:
@@ -6150,8 +6047,6 @@ def build_list_art(data):
             if o:
                 core = next((p for p in pcs if p[0] == 1), pcs[0])     # slot 1 is the core
                 bp[name] = cls_of.get(core[1])
-                lead.append((o == len(pcs), len(pcs) - o, -o, name))
-        heroes.update(("bp", x[3]) for x in sorted(lead)[:3])           # closest unfinished set
         for f in cat["fams"]:
             if any(p[1] in owned for p in f[2]):
                 bp[f[0]] = cls_of.get(f[2][0][1])
@@ -6180,27 +6075,11 @@ def build_list_art(data):
         elif kind == "place" and not _is_system(n):
             picks[(kind, n)] = _WIKI_LEAD.get(n) or _WIKI_LEAD.get(re.sub(r"\s*\(.*?\)$", "", n))
 
-    def cands(key, size):
-        p = picks.get(key)
-        if not p:
-            return []
-        if isinstance(p, dict):                       # RSI ship matrix record
-            big = p["img_large"]
-            # a gallery tile is ~200 px wide: RSI's 180 px thumb serves both small sizes
-            return [[p.get("img_small") or big], [p.get("img_small") or big], [big]][size]
-        return _wiki_w(p, (ART_THUMB, ART_TILE, ART_HERO)[size])
-    keys = [k for k in picks if picks[k]]
-    plan = [(k, 0) for k in keys] + [(k, 1) for k in keys if k in tiles] + [(k, 2) for k in keys if k in heroes]
-    caps = (90_000, 200_000, 700_000)          # data-uri bytes for a thumb, a tile, a hero
-    lists = [cands(k, s) for k, s in plan]
-    got = _fetch_first(lists, [caps[s] for _k, s in plan])
-    used = {x for c in lists for x in c}
-    for u in [u for u in _URL_IMG if u not in used]:   # nothing on the page uses it any more
-        del _URL_IMG[u]
     out = defaultdict(dict)
-    for (key, size), d in zip(plan, got):
+    for (kind, n), p in picks.items():
+        d = art_src(p)
         if d:
-            out[key[0]].setdefault(key[1], [None, None, None])[size] = d
+            out[kind][n] = d
     return dict(out)
 
 
@@ -6705,6 +6584,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
 <title>CSR · Citizen Service Record</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 90 110'><polygon points='45,4 86,58 68,58 45,30 22,58 4,58' fill='%235bd1e6'/><polygon points='45,44 70,78 52,78 45,68 38,78 20,78' fill='%23e7edf2' opacity='0.85'/><line x1='45' y1='90' x2='45' y2='104' stroke='%235bd1e6' stroke-width='3' stroke-linecap='round'/></svg>">
 <style>
@@ -8095,7 +7975,10 @@ nav a::after{background:var(--menu-bg);border-color:var(--glass-line);box-shadow
 .phero{position:relative;height:340px;border-radius:var(--r-lg,12px);overflow:hidden;margin:6px 0 26px;
   border:1px solid rgba(91,209,230,.24);background:#070b11 linear-gradient(135deg,#0d1824,#070b11)}
 .phero.nok{height:230px}
-.phero .phi{position:absolute;inset:0;background-size:cover;background-position:center 45%}
+.phero .phi{position:absolute;inset:0}
+.phero .phi>img{object-position:center 45%}
+.phi>img,.bgi>img,.bthumb>img,.bxth>img,.sig-art>img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:block}
+.bgi,.bthumb,.bxth,.sig-art{position:relative;overflow:hidden}
 .phero .phi.ph{display:flex;align-items:center;justify-content:flex-end;padding-right:6%;color:rgba(91,209,230,.16)}
 .phero .phi.ph .csr-ic{width:240px;height:240px;stroke-width:.8}
 .phero::after{content:"";position:absolute;inset:0;pointer-events:none;
@@ -8376,20 +8259,41 @@ const DATA = /*__DATA__*/;
 const LART=DATA.list_art||{};
 const ART_IC={ship:'ship', gun:'gun', item:'cargo', place:'planet', bp:'blueprints'};
 function lart(kind, name){ const k=LART[kind]; return (k && k[name]) || null; }
-// a picture box in one of three sizes (0 row, 1 tile, 2 hero); with no picture, the
-// list's icon on a hatched panel of the same size
+// Pictures load from their source when on screen. Each size is a list of urls, best
+// first: the wiki answers 404 for a width past the original's, RSI lacks a hub render for
+// some hulls, so a failed url steps to the next and the last failure leaves the icon.
+const WIKI_MEDIA='https://media.starcitizen.tools/';
+function artUrls(d, size){
+  if(!d) return [];
+  if(d[0]==='r'){ const sm=d[1], lg=d[2];
+    return [[sm, lg], [lg, sm], [lg.replace('store_large','store_hub_large'), lg]][size]; }
+  if(d[0]==='w'){ const p=d[1], n=p.split('/').pop(), orig=WIKI_MEDIA+p;
+    const t=w=>`${WIKI_MEDIA}thumb/${p}/${w}px-${n}${/\.webp$/i.test(n)?'':'.webp'}`;
+    return [[t(200), orig], [t(640), t(400), orig], [t(1280), t(960), t(600), orig]][size]; }
+  return [d[1]];
+}
+function artNext(img){
+  const rest=(img.dataset.alt||'').split('|').filter(Boolean);
+  if(rest.length){ img.dataset.alt=rest.slice(1).join('|'); img.src=rest[0]; } else img.remove();
+}
+function artImg(urls, eager){
+  return urls.length ? `<img src="${esc(urls[0])}" data-alt="${esc(urls.slice(1).join('|'))}" alt=""`+
+    ` ${eager?'fetchpriority="high"':'loading="lazy"'} decoding="async" onerror="artNext(this)">` : '';
+}
+// a picture box in one of three sizes (0 row, 1 tile, 2 hero). The list's icon on a
+// hatched panel sits under the picture: it shows while loading, offline, and for
+// anything with no picture at all.
 function artBox(kind, name, size, cls){
-  // any size on hand beats the icon: it is already in the page
-  const a=lart(kind, name), src=a && (a[size] || a[1] || a[0] || a[2]);
-  return src ? `<span class="${cls}" style="background-image:url('${src}')" role="img" aria-label="${esc(name)}"></span>`
-             : `<span class="${cls} ph" aria-hidden="true">${ICON[ART_IC[kind]]||ICON.cargo}</span>`;
+  const u=artUrls(lart(kind, name), size);
+  return `<span class="${cls} ph"${u.length?` role="img" aria-label="${esc(name)}"`:' aria-hidden="true"'}>`+
+    `${ICON[ART_IC[kind]]||ICON.cargo}${artImg(u)}</span>`;
 }
 // the page opens on its #1: picture, name, a value line, and the first KPI row moved in
 function mountHero(kind, name, eyebrow, sub, href, kpis=true){
   const c=$('#content'); if(!c || !name) return;
-  const a=lart(kind, name), src=a && (a[2] || a[1] || a[0]);
-  const img = src ? `<div class="phi" style="background-image:url('${src}')" role="img" aria-label="${esc(name)}"></div>`
-                  : `<div class="phi ph" aria-hidden="true">${ICON[ART_IC[kind]]||ICON.cargo}</div>`;
+  const u=artUrls(lart(kind, name), 2);
+  const img=`<div class="phi ph"${u.length?` role="img" aria-label="${esc(name)}"`:' aria-hidden="true"'}>`+
+    `${ICON[ART_IC[kind]]||ICON.cargo}${artImg(u, true)}</div>`;
   const t = href ? link(href, esc(name)) : esc(name);
   const h=document.createElement('div'); h.className='phero'+(kpis?'':' nok');
   h.innerHTML=img+`<div class="ph-tx"><div class="ph-eb">${esc(eyebrow)}</div><div class="ph-t" title="${esc(name)}">${t}</div>`+
@@ -8592,9 +8496,9 @@ function chip(txt, cls){ return txt ? `<span class="chip-c ${cls||''}">${esc(txt
 function showCard(item, rank, kind){
   const url = wikiURL(item.name);
   const placard = item.logo ? `<div class="sig-placard"><img src="${item.logo}" alt="${esc(item.man||'')}" title="${esc(item.man||'')}" loading="lazy"></div>` : '';
-  const art = item.img
-    ? `<div class="sig-art" style="background-image:url('${item.img}')" role="img" aria-label="${esc(item.name)}"><span class="sig-rank">#${rank}</span>${placard}</div>`
-    : `<div class="sig-art ph">${kind==='ship'?ICON.ship:ICON.gun}<span class="sig-rank">#${rank}</span>${placard}</div>`;
+  const au=artUrls(lart(kind, item.name), 1), urls=au.length ? au : (item.img ? [item.img] : []);
+  const art = `<div class="sig-art ph"${urls.length?` role="img" aria-label="${esc(item.name)}"`:''}>`+
+    `${kind==='ship'?ICON.ship:ICON.gun}${artImg(urls)}<span class="sig-rank">#${rank}</span>${placard}</div>`;
   const maker = item.logo ? '' : (item.man ? `<span class="chip-c mk">${esc(item.man)}</span>` : (item.code ? `<span class="chip-c mk">${esc(item.code)}</span>` : ''));
   let chips, cnt;
   if(kind==='ship'){

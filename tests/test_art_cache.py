@@ -10,35 +10,6 @@ import sc_names  # noqa: E402
 import sc_stats  # noqa: E402
 
 
-class ArtCacheTests(unittest.TestCase):
-    def test_same_source_uses_the_cache(self):
-        cache = {"Galaxy": ["https://a/old.jpg", "data:old"]}
-        got = sc_stats._art(cache, "Galaxy", "https://a/old.jpg", lambda: self.fail("fetched"))
-        self.assertEqual(got, "data:old")
-
-    def test_new_source_refetches(self):
-        cache = {"Galaxy": ["https://a/old.jpg", "data:old"]}
-        got = sc_stats._art(cache, "Galaxy", "https://a/new.jpg", lambda: "data:new")
-        self.assertEqual(got, "data:new")
-        self.assertEqual(cache["Galaxy"], ["https://a/new.jpg", "data:new"])
-
-    def test_legacy_entry_is_refetched(self):
-        cache = {"Galaxy": "data:old"}
-        self.assertEqual(sc_stats._art(cache, "Galaxy", "https://a/new.jpg", lambda: "data:new"),
-                         "data:new")
-
-    def test_failed_refetch_keeps_the_old_picture_and_retries(self):
-        cache = {"Galaxy": ["https://a/old.jpg", "data:old"]}
-        self.assertEqual(sc_stats._art(cache, "Galaxy", "https://a/new.jpg", lambda: None), "data:old")
-        self.assertEqual(cache["Galaxy"][0], "https://a/old.jpg")
-
-    def test_miss_is_retried_only_when_asked(self):
-        cache = {"Arlington Rifle": ["page", None]}
-        self.assertIsNone(sc_stats._art(cache, "Arlington Rifle", "page", lambda: "data:x"))
-        self.assertEqual(sc_stats._art(cache, "Arlington Rifle", "page", lambda: "data:x",
-                                       retry_miss=True), "data:x")
-
-
 class ItemIndexTests(unittest.TestCase):
     def _index(self, raw):
         fd, path = tempfile.mkstemp(suffix=".json")
@@ -100,7 +71,7 @@ class GunPictureTests(unittest.TestCase):
         self.addCleanup(sc_stats._GUN_PICK.pop, name, None)
         with mock.patch.object(sc_names, "wiki_gun_image",
                                side_effect=lambda t, min_score=1: wiki if min_score == 1 else wiki0), \
-                mock.patch.object(sc_names, "wiki_file_logo", return_value=pin_url):
+                mock.patch.object(sc_names, "wiki_file_logo", return_value=pin_url),                 mock.patch.object(sc_names, "wiki_weapon_image", return_value=None):
             return sc_stats._gun_pick(name, api)
 
     def test_pinned_file_wins(self):

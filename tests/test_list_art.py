@@ -2,7 +2,6 @@ import json
 import os
 import sys
 import unittest
-from unittest import mock
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 import sc_stats  # noqa: E402
@@ -10,38 +9,20 @@ import sc_stats  # noqa: E402
 TOOLS = "https://media.starcitizen.tools"
 
 
-class WikiSizeTests(unittest.TestCase):
-    def test_thumbnail_is_resized(self):
-        u = f"{TOOLS}/thumb/c/cb/Medpen_-_SCT_BG.png/600px-Medpen_-_SCT_BG.png.webp?f0r5z"
-        self.assertEqual(sc_stats._wiki_w(u, 200), [
-            f"{TOOLS}/thumb/c/cb/Medpen_-_SCT_BG.png/200px-Medpen_-_SCT_BG.png.webp",
-            f"{TOOLS}/c/cb/Medpen_-_SCT_BG.png"])
+class ArtSourceTests(unittest.TestCase):
+    def test_wiki_thumbnail_and_original_give_the_file(self):
+        self.assertEqual(sc_stats.art_src(f"{TOOLS}/thumb/c/cb/Medpen_-_SCT_BG.png/600px-Medpen_-_SCT_BG.png.webp?f0r5z"),
+                         ["w", "c/cb/Medpen_-_SCT_BG.png"])
+        self.assertEqual(sc_stats.art_src(f"{TOOLS}/0/07/Cargo_-_Waste.png?t5h0b"), ["w", "0/07/Cargo_-_Waste.png"])
 
-    def test_original_gets_a_thumbnail_and_falls_back_to_itself(self):
-        u = f"{TOOLS}/0/07/Cargo_-_Waste.png?t5h0b"
-        self.assertEqual(sc_stats._wiki_w(u, 960), [
-            f"{TOOLS}/thumb/0/07/Cargo_-_Waste.png/960px-Cargo_-_Waste.png.webp",
-            f"{TOOLS}/thumb/0/07/Cargo_-_Waste.png/600px-Cargo_-_Waste.png.webp",
-            f"{TOOLS}/0/07/Cargo_-_Waste.png"])
+    def test_rsi_record_and_other_hosts(self):
+        self.assertEqual(sc_stats.art_src({"img_small": "s.jpg", "img_large": "l.jpg"}), ["r", "s.jpg", "l.jpg"])
+        self.assertEqual(sc_stats.art_src({"img_large": "l.jpg"}), ["r", "l.jpg", "l.jpg"])
+        self.assertEqual(sc_stats.art_src("https://cstone.space/x.png"), ["u", "https://cstone.space/x.png"])
 
-    def test_other_hosts_pass_through(self):
-        u = "https://media.robertsspaceindustries.com/x/store_large.jpg"
-        self.assertEqual(sc_stats._wiki_w(u, 200), [u])
-        self.assertEqual(sc_stats._wiki_w(None, 200), [])
-
-
-class FetchFirstTests(unittest.TestCase):
-    def test_first_candidate_within_the_cap_wins(self):
-        cache = {"a": "data:image/png;" + "x" * 500, "b": "data:image/webp;xx"}
-        with mock.patch.dict(sc_stats._URL_IMG, cache, clear=True), \
-                mock.patch.object(sc_stats, "_fetch_urls"):
-            self.assertEqual(sc_stats._fetch_first([["a", "b"], ["a"]], [100, 1000]),
-                             ["data:image/webp;xx", cache["a"]])
-
-    def test_nothing_downloads(self):
-        with mock.patch.dict(sc_stats._URL_IMG, {}, clear=True), \
-                mock.patch.object(sc_stats, "_fetch_urls"):
-            self.assertEqual(sc_stats._fetch_first([["a"], []], [100, 100]), [None, None])
+    def test_nothing(self):
+        self.assertIsNone(sc_stats.art_src(None))
+        self.assertIsNone(sc_stats.art_src({"img_small": "s.jpg"}))
 
 
 class PackImagesTests(unittest.TestCase):
