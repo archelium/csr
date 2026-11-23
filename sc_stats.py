@@ -8112,9 +8112,9 @@ nav a::after{background:var(--menu-bg);border-color:var(--glass-line);box-shadow
 /* ---- page art (layout B): a hero on the page's #1, top-3 picture tiles, row thumbnails.
    A subject with no picture keeps its slot: the list's icon on a dark panel, same size,
    so rows stay aligned and the ranking never skips anyone. */
-.phero{position:relative;height:340px;border-radius:var(--r-lg,12px);overflow:hidden;margin:6px 0 26px;
+.phero{position:relative;height:290px;border-radius:var(--r-lg,12px);overflow:hidden;margin:6px 0 16px;
   border:1px solid rgba(91,209,230,.24);background:#070b11 linear-gradient(135deg,#0d1824,#070b11)}
-.phero.nok{height:230px}
+.phero.nok{height:190px}
 .phero .phi{position:absolute;inset:0}
 .phero .phi>img{object-position:center 45%}
 .phi>img,.bgi>img,.bthumb>img,.bxth>img,.sig-art>img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:block}
@@ -8124,14 +8124,14 @@ nav a::after{background:var(--menu-bg);border-color:var(--glass-line);box-shadow
 .phero::after{content:"";position:absolute;inset:0;pointer-events:none;
   background:linear-gradient(90deg,rgba(7,11,17,.96) 0%,rgba(7,11,17,.8) 32%,rgba(7,11,17,.18) 72%,rgba(7,11,17,0) 100%),
              linear-gradient(0deg,rgba(7,11,17,.92),rgba(7,11,17,0) 48%)}
-.phero .ph-tx{position:absolute;left:32px;top:28px;z-index:2;max-width:70%}
+.phero .ph-tx{position:absolute;left:32px;top:22px;z-index:2;max-width:70%}
 .phero .ph-eb{font-family:var(--font-mono);font-size:var(--fs-xs,12px);letter-spacing:.16em;text-transform:uppercase;color:#f4a92a}
 .phero .ph-t{font-family:var(--font-display);font-size:34px;font-weight:700;line-height:1.1;margin-top:8px;color:#fff;
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .phero .ph-t a{color:inherit;text-decoration:none}
 .phero .ph-t a:hover{color:#5bd1e6}
 .phero .ph-s{font-family:var(--font-mono);font-size:var(--fs-sm,13px);color:#9fb4c6;margin-top:8px}
-.phero .ph-k{position:absolute;left:24px;right:24px;bottom:20px;z-index:2}
+.phero .ph-k{position:absolute;left:24px;right:24px;bottom:18px;z-index:2}
 .phero .ph-k .hero{margin:0;display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px}
 .phero .ph-k .kpi{background:rgba(10,18,28,.74);backdrop-filter:blur(6px);border-color:rgba(91,209,230,.22);
   padding:12px 16px;min-height:0;color:#dbe7f4}
@@ -8253,36 +8253,50 @@ nav a::after{background:var(--menu-bg);border-color:var(--glass-line);box-shadow
 .bxtot .bxkey span{display:inline-flex;align-items:center;gap:6px}
 .bxtot .bxkey .bsq{width:14px;height:14px;cursor:default;border-radius:3px}
 .bsq[data-bpplan]:hover,.bdot[data-bpplan]:hover{outline:2px solid var(--cyan);outline-offset:1px}
-/* an in-page app: an icon rail down the left, one page at a time on the right. Blueprints and Stability */
-.sapp{display:grid;grid-template-columns:78px minmax(0,1fr);gap:24px;align-items:start}
-.stree{position:sticky;top:96px;z-index:20;display:flex;flex-direction:column;gap:3px;border:1px solid var(--line);border-radius:14px;background:var(--tile);padding:8px 7px}
-.stree button{all:unset;box-sizing:border-box;position:relative;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;
-  min-height:58px;padding:9px 2px;border-radius:10px;color:var(--muted);cursor:pointer;text-align:center}
-.stree button i{display:grid;place-items:center;width:24px;height:24px}
-.stree button i svg{width:22px;height:22px;display:block}
-.stree button .rl{display:none}
-.stree button b{font-family:var(--font-mono);font-size:10.5px;font-weight:500;line-height:1.1;color:var(--dim);max-width:66px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.stree button b:empty{display:none}
-.stree button b.warn{color:var(--amber)} .stree button b.bad{color:var(--red)} .stree button b.ok{color:var(--green)}
-.stree button:hover{color:var(--txt);background:rgba(255,255,255,.04)}
-.stree button.on{background:var(--tint-cyan);color:var(--cyan);box-shadow:inset 3px 0 0 var(--cyan)}
-.stree button.on b{color:var(--cyan)}
-.stree button:focus-visible{outline:2px solid var(--cyan)}
-.stree button::after{content:attr(data-tip);position:absolute;left:calc(100% + 14px);top:50%;transform:translate(-4px,-50%);white-space:nowrap;z-index:40;
-  padding:7px 11px;border-radius:8px;background:var(--panel2);border:1px solid var(--line);color:var(--txt);font-family:var(--font-body);font-size:13px;font-weight:500;
-  box-shadow:0 10px 28px rgba(0,0,0,.45);opacity:0;pointer-events:none;transition:opacity .12s,transform .12s}
-.stree button:hover::after,.stree button:focus-visible::after{opacity:1;transform:translate(0,-50%)}
-@media (prefers-reduced-motion:reduce){ .stree button::after{transition:none} }
-.stree .t-sep{border:0;border-top:1px solid var(--line);margin:5px 8px;width:auto}
-.smain{min-width:0;display:flex;flex-direction:column;gap:24px}
-.smain>*{margin-top:0!important}
-.smain>.phero{margin-bottom:0}
-.sp-h{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
-.sp-h>i{display:grid;place-items:center;width:44px;height:44px;border-radius:12px;background:var(--tint-cyan);color:var(--cyan);flex:none}
-.sp-h>i svg{width:24px;height:24px;display:block}
-.sp-t{display:flex;flex-direction:column;gap:3px;min-width:0}
-.sp-h h2{margin:0;font-family:var(--font-display);font-size:24px;font-weight:600;letter-spacing:.01em;color:var(--txt);line-height:1.15}
-.sp-h .sp-t>span{font-size:14px;color:var(--muted)}
+/* the top menu: a page's sections as tabs, icon, name and headline number. Sticks under
+   the top bar on wide screens, scrolls sideways when it doesn't fit */
+.snav-at{height:0}
+.snav{display:block;min-width:0;max-width:100%;box-sizing:border-box;position:sticky;top:var(--tbh,0px);z-index:12;margin:0 0 4px;padding:5px;border:1px solid var(--line);border-radius:14px;
+  background:var(--topbar-bg);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px)}
+.snav-in{display:flex;gap:3px;width:100%;min-width:0;overflow-x:auto;scrollbar-width:none;scroll-snap-type:x proximity;overscroll-behavior-x:contain}
+.snav-in::-webkit-scrollbar{display:none}
+.snav-in.ovf{-webkit-mask-image:linear-gradient(90deg,#000 calc(100% - 48px),transparent);mask-image:linear-gradient(90deg,#000 calc(100% - 48px),transparent)}
+.snav-in.ovl{-webkit-mask-image:linear-gradient(90deg,transparent,#000 48px);mask-image:linear-gradient(90deg,transparent,#000 48px)}
+.snav-in.ovf.ovl{-webkit-mask-image:linear-gradient(90deg,transparent,#000 48px,#000 calc(100% - 48px),transparent);mask-image:linear-gradient(90deg,transparent,#000 48px,#000 calc(100% - 48px),transparent)}
+.snav-b{all:unset;box-sizing:border-box;flex:none;scroll-snap-align:start;display:flex;align-items:center;gap:9px;min-height:44px;padding:7px 14px;
+  border-radius:10px;color:var(--muted);cursor:pointer;font-size:14px;font-weight:500;white-space:nowrap;transition:background .12s,color .12s}
+.snav-b i{display:grid;place-items:center;width:20px;height:20px;flex:none}
+.snav-b i svg{width:19px;height:19px;display:block}
+.snav-b b{font-family:var(--font-mono);font-size:11px;font-weight:500;line-height:1;padding:4px 7px;border-radius:999px;background:rgba(139,155,180,.14);color:var(--muted)}
+.snav-b b.warn{color:var(--amber);background:rgba(244,169,42,.14)} .snav-b b.bad{color:var(--red);background:rgba(255,84,104,.14)} .snav-b b.ok{color:var(--green);background:rgba(74,222,128,.12)}
+.snav-b:hover{color:var(--txt);background:rgba(139,155,180,.08)}
+.snav-b.on{color:var(--cyan);background:var(--tint-cyan);box-shadow:inset 0 -2px 0 var(--cyan)}
+.snav-b.on b:not(.warn):not(.bad):not(.ok){background:rgba(91,209,230,.18);color:var(--cyan)}
+.snav-b:focus-visible{outline:2px solid var(--cyan);outline-offset:-2px}
+@media (prefers-reduced-motion:reduce){ .snav-b{transition:none} }
+.snav-sep{flex:none;width:1px;align-self:stretch;margin:8px 3px;background:var(--line)}
+.snav-cap{font-size:13.5px;color:var(--muted);margin:10px 4px 16px}
+.snav + .gsec,.snav + .spage{margin-top:16px}
+.snav-cap + .gsec,.snav-cap + .spage{margin-top:0}
+.gsec.tabbed{margin-top:0}
+.gsec.tabbed>.ghead{display:none}
+.gsec[hidden]{display:none!important}
+.spage{min-width:0;display:flex;flex-direction:column;gap:20px}
+.spage>*{margin-top:0!important}
+.lstrip{margin:0 0 12px}
+/* Blueprints collection: the five pages as chips, Rows or Cards at the end */
+.bpcat{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.bpc{all:unset;box-sizing:border-box;display:flex;align-items:center;gap:8px;min-height:40px;padding:6px 12px;border:1px solid var(--line);border-radius:10px;
+  color:var(--muted);cursor:pointer;font-size:13.5px;white-space:nowrap}
+.bpc i{display:grid;place-items:center;width:18px;height:18px} .bpc i svg{width:17px;height:17px}
+.bpc b{font-family:var(--font-mono);font-size:11px;font-weight:500;color:var(--dim)}
+.bpc:hover{color:var(--txt);border-color:rgba(91,209,230,.4)}
+.bpc.on{color:var(--cyan);border-color:var(--cyan);background:var(--tint-cyan)} .bpc.on b{color:var(--cyan)}
+.bpc:focus-visible{outline:2px solid var(--cyan)}
+.bpcat .vt{margin-left:auto;display:flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.bpcat .vt button{all:unset;cursor:pointer;padding:9px 14px;font-family:var(--font-mono);font-size:11.5px;color:var(--muted)}
+.bpcat .vt button.on{background:var(--cyan);color:#06121f}
+.bpcat .vt button:focus-visible{outline:2px solid var(--cyan)}
 /* Stability: the live watcher as one line on every page */
 .lstrip>.card{padding:10px 14px;margin:0}
 .lstrip #watchBody{display:flex;align-items:center;gap:10px 16px;flex-wrap:wrap}
@@ -8327,14 +8341,26 @@ nav a::after{background:var(--menu-bg);border-color:var(--glass-line);box-shadow
 .bpdr .tline .tev{display:grid;grid-template-columns:84px minmax(0,1fr);column-gap:12px;row-gap:3px}
 .bpdr .tline .tev .tv{grid-column:2;margin-left:0;text-align:left;white-space:normal;display:flex;flex-wrap:wrap;gap:4px 8px}
 @media(max-width:1100px){ .bpov{grid-template-columns:1fr} }
-@media(max-width:900px){
-  .sapp{grid-template-columns:1fr}
-  .stree{position:static;flex-direction:row;overflow-x:auto;gap:4px;padding:6px}
-  .stree button{flex:none;flex-direction:row;min-height:0;padding:8px 12px;gap:8px}
-  .stree button i,.stree button i svg{width:18px;height:18px}
-  .stree button .rl{display:inline;font-size:13px;white-space:nowrap}
-  .stree button::after,.stree .t-sep{display:none}
-  .stree button.on{box-shadow:inset 0 -2px 0 var(--cyan)}
+/* phones and tablets: the top bar scrolls away so the menu gets the top of the screen */
+@media(max-width:760px){
+  .topbar{position:relative}
+  .snav{border-radius:0;border-left:0;border-right:0;margin-left:-14px;margin-right:-14px;padding:4px 8px}
+  .snav-b{padding:7px 11px;font-size:13px;gap:7px}
+  .snav-cap{margin:8px 2px 12px;font-size:13px}
+  .bpcat{flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none;margin:0 -14px;padding:0 14px}
+  .bpcat::-webkit-scrollbar{display:none}
+  .bpc{flex:none}
+  /* the page banner: figures only, no notes or icons, so it fits a phone screen */
+  .phero .ph-k .kpi{padding:10px 12px}
+  .phero .ph-k .kpi .s,.phero .ph-k .kpi .v .csr-ic,.phero .ph-k .kpi .v svg{display:none}
+  .phero .ph-k .kpi .v{font-size:21px}
+  .lstrip .slight{flex:none;width:auto}
+  .lstrip .slights{gap:6px;display:flex!important;flex-direction:row;flex-wrap:wrap;grid-template-columns:none}
+  .lstrip .wscan-top{flex-wrap:wrap;row-gap:2px}
+  /* headline tiles two to a row */
+  .hero{grid-template-columns:repeat(2,minmax(0,1fr))!important;gap:10px}
+  .kpi{padding:12px 14px}
+  .kpi .v{font-size:26px}
 }
 .ac[data-bpplan]:hover{border-color:var(--cyan)}
 .alb{display:grid;grid-template-columns:repeat(auto-fill,minmax(168px,1fr));gap:10px}
@@ -8753,17 +8779,6 @@ const ICON = {
   mag:_SVG('<rect x="8" y="2.8" width="8" height="18.4" rx="1.6"/><path d="M8 8.4h8M8 13.6h8"/>')
 };
 function icon(name){ return ICON[name]||''; }
-// one item of a page's side rail: an icon with its count under it, the name as a tooltip.
-// On a phone the rail turns into a row and shows the name.
-function railItem(attrs, ic, label, cnt, on, cls, id){
-  const c=cnt==null?'':String(cnt);
-  return `<button type="button" class="${on?'on':''}" ${attrs} data-tip="${esc(label)}${c?' \u00b7 '+esc(c):''}" aria-label="${esc(label)}${c?', '+esc(c):''}"${on?' aria-current="page"':''}>`+
-    `<i>${icon(ic)}</i><span class="rl">${esc(label)}</span><b class="${cls||''}"${id?` id="${id}"`:''}>${esc(c)}</b></button>`;
-}
-// a page's title inside one of those apps: icon, name, one line under it
-function pageHead(ic, title, sub, extra){
-  return `<div class="sp-h">${ic?`<i>${icon(ic)}</i>`:''}<div class="sp-t"><h2>${esc(title)}</h2>${sub?`<span>${sub}</span>`:''}</div>${extra||''}</div>`;
-}
 
 // ---- external link helpers ----
 const RSI='https://robertsspaceindustries.com';
@@ -8807,6 +8822,70 @@ function barsCard(title, unit, innerId){
 // A titled group of cards. Used where one tab holds several distinct subjects (the
 // Combat tab covers ship combat, on-foot combat and looting) — the numbered badge and
 // full-width rule make the boundaries obvious instead of relying on a small caption.
+// ---- the top menu: one tab per section of a page, with its icon, its name and its headline
+// number. Only the open tab shows. Pages built from group() get it on their own; Blueprints
+// and Stability build theirs from their own pages. The open tab is kept per page.
+let TABS={}; try{ TABS=JSON.parse(localStorage.getItem('csr_tabs')||'{}')||{}; }catch(e){}
+function tabsSave(){ try{ localStorage.setItem('csr_tabs', JSON.stringify(TABS)); }catch(e){} }
+// items: [attributes, icon html, name, number, number class, open?] or '|' for a divider
+function snavHTML(items, label, cap){
+  return `<div class="snav-at"></div><nav class="snav" aria-label="${esc(label)}"><div class="snav-in">`+
+    items.map(x=>x==='|' ? '<span class="snav-sep" aria-hidden="true"></span>' :
+      `<button type="button" class="snav-b${x[5]?' on':''}" ${x[0]}${x[5]?' aria-current="page"':''}>`+
+      `<i>${x[1]}</i><span class="snav-l">${esc(x[2])}</span>`+
+      (x[3]!==''&&x[3]!=null?`<b class="${x[4]||''}">${esc(String(x[3]))}</b>`:'')+`</button>`).join('')+
+    `</div></nav>`+(cap?`<div class="snav-cap">${cap}</div>`:'');
+}
+// the menu sticks under the top bar, which only sticks on wide screens
+function snavTop(){
+  const t=document.querySelector('.topbar');
+  const h=t && getComputedStyle(t).position==='sticky' ? Math.round(t.getBoundingClientRect().height) : 0;
+  document.documentElement.style.setProperty('--tbh', h+'px');
+  document.querySelectorAll('.snav-in').forEach(x=>{
+    const fade=()=>{ x.classList.toggle('ovf', x.scrollWidth>x.clientWidth+2 && x.scrollLeft+x.clientWidth<x.scrollWidth-2);
+      x.classList.toggle('ovl', x.scrollLeft>2); };
+    if(!x.dataset.fade){ x.dataset.fade='1'; x.addEventListener('scroll', fade, {passive:true}); }
+    fade(); });
+  return h;
+}
+// after a tab change: the open tab in view inside the menu, and the page back at the menu
+// when it had scrolled past it
+function snavSettle(){
+  const c=$('#content'); if(!c) return;
+  const on=c.querySelector('.snav-b.on'), box=on&&on.parentElement;
+  if(box && box.scrollWidth>box.clientWidth) box.scrollLeft=on.offsetLeft-box.clientWidth/2+on.offsetWidth/2;
+  const at=c.querySelector('.snav-at'), tb=snavTop();
+  if(at){ const y=at.getBoundingClientRect().top; if(y<tb) scrollToY(window.pageYOffset+y-tb); }
+}
+const NO_TABS=['overview','orgs'];
+function tabify(){
+  const c=$('#content'); if(!c || NO_TABS.includes(section) || c.querySelector('.snav')) return;
+  const gs=[...c.children].filter(e=>e.classList.contains('gsec') && e.id);
+  if(gs.length<2){ snavTop(); return; }
+  const act=gs.find(g=>g.id===TABS[section])||gs[0];
+  const items=gs.map((g,i)=>{
+    // the number on a tab: the section's first headline figure. The first section's
+    // figures may have moved up into the page's banner
+    const k=g.querySelector('.kpi')||(i===0?c.querySelector('.phero .kpi'):null);
+    let n=k?((k.querySelector('.v')||{}).textContent||'').trim():'';
+    if(n.length>9||n==='N/A'||n==='\u2014') n='';
+    const cls=k&&/\b(bad|warn)\b/.exec(k.className);
+    return [`data-tab="${g.id}"`, (g.querySelector('.gic')||{}).innerHTML||'', (g.querySelector('.gt')||{}).textContent||'', n, cls?cls[1]:'', g===act]; });
+  gs[0].insertAdjacentHTML('beforebegin', snavHTML(items, 'Sections', esc((act.querySelector('.gs')||{}).textContent||'')));
+  gs.forEach(g=>{ g.classList.add('tabbed'); g.hidden=g!==act; });
+  snavTop();
+}
+document.addEventListener('click', e=>{
+  const b=e.target.closest('#content .snav [data-tab]'); if(!b) return;
+  const c=$('#content'), id=b.dataset.tab; TABS[section]=id; tabsSave();
+  c.querySelectorAll('.gsec.tabbed').forEach(g=>{ g.hidden=g.id!==id; });
+  c.querySelectorAll('.snav [data-tab]').forEach(x=>{ const on=x===b; x.classList.toggle('on',on);
+    if(on) x.setAttribute('aria-current','page'); else x.removeAttribute('aria-current'); });
+  const g=document.getElementById(id), cap=c.querySelector('.snav-cap');
+  if(cap) cap.textContent=g?((g.querySelector('.gs')||{}).textContent||''):'';
+  snavSettle();
+});
+window.addEventListener('resize', ()=>snavTop());
 function group(n, ic, title, sub, body){
   return `<section class="gsec" id="grp-${n}">`+
     `<div class="ghead"><div class="gnum">${String(n).padStart(2,'0')}</div>`+
@@ -9421,7 +9500,7 @@ function secLegacy(v){
     (anyData ? info : '')+
     `<div class="vtoggle">${pill('pu',icon('space')+' Persistent Universe',pu,puHas)}${pill('ac',icon('combat')+' Arena Commander',ac,acHas)}</div>`;
   const wire=()=>document.querySelectorAll('#content .vpill').forEach(b=>b.onclick=()=>{
-    if(!b.disabled&&b.dataset.v!==legacyVenue){ legacyVenue=b.dataset.v; secLegacy(view()); }});
+    if(!b.disabled&&b.dataset.v!==legacyVenue){ legacyVenue=b.dataset.v; secLegacy(view()); tabify(); }});
   const opts = legacyVenue==='pu' ? {
       prefix, after:wire, rivalsTag:'open-world PvP · ship + on-foot',
       empty:`No <b>persistent-universe</b> combat for <b>${scopeLabel()}</b> — pick a pre-4.4 patch (4.3 or below) or Career.`,
@@ -9633,7 +9712,10 @@ function bpPinsChanged(){
   document.querySelectorAll('#content [data-bppin], #bpDrawer [data-bppin]').forEach(x=>{ const on=bpPins().includes(x.dataset.bppin);
     x.classList.toggle('on',on); x.textContent=bpPinFace(on); x.setAttribute('aria-pressed',on); x.title=on?'Unpin':'Pin it to track it'; });
   const pc=$('#bpPinned'); if(pc) pc.innerHTML=bpPinnedHTML();
-  const tp=$('#bptPin'); if(tp) tp.textContent=bpPins().length?fmt(bpPinTodo()):'';
+  const tp=$('#bptPin');
+  if(tp){ const n=bpPins().length?fmt(bpPinTodo()):''; let b=tp.querySelector('b');
+    if(n && !b){ b=document.createElement('b'); tp.append(b); }
+    if(b){ if(n) b.textContent=n; else b.remove(); } }
   renderPinMenu();
 }
 // the top-bar pin menu: every pin with its next step, from any page. The badge counts
@@ -9942,14 +10024,15 @@ function secBlueprints(v){
   const grpCats=g=>g[0]==='gear'?g[2].concat(Object.keys(byCat).filter(c=>!BP_CATS.includes(c))):g[2];
   const gcount=g=>{ const rs=grpCats(g).flatMap(c=>byCat[c]||[]); return [rs.filter(on).length, rs.length]; };
   const G=BP_GROUPS.find(x=>x[0]===BPV.grp)||BP_GROUPS[1];
-  const it=(page,ic,label,cnt,grp,id)=>railItem(`data-bpv="${page}"${grp?` data-bpvg="${grp}"`:''}`, ic, label, cnt,
-    BPV.page===page&&(!grp||BPV.grp===grp), '', id);
-  const tree=`<nav class="stree" aria-label="Blueprints">`+
-    (catalog?it('overview','overview','Overview','')+it('find','search','Find a Blueprint','')+
-      it('pinned','star','Pinned',bpPins().length?fmt(bpPinTodo()):'',null,'bptPin')+`<hr class="t-sep">`+
-      BP_GROUPS.map(g=>{ const [o,t]=gcount(g); return it('collection',BP_GROUP_IC[g[0]],g[1],`${fmt(o)}/${fmt(t)}`,g[0]); }).join('')+`<hr class="t-sep">`:'')+
-    (DATA.missions&&catalog?it('standing','scales','Standing',''):'')+
-    it('library','blueprints','Your Library',fmt(owned.length))+it('history','calendar','Unlock History','')+`</nav>`;
+  const [cO,cT]=[ownedAll,total];
+  const tab=(page,ic,label,n,attr)=>[`data-bpv="${page}"${attr||''}`, icon(ic), label, n, '', BPV.page===page];
+  const nav=snavHTML((catalog?[tab('overview','overview','Overview',''), tab('find','search','Find a Blueprint',''),
+      tab('pinned','star','Pinned',bpPins().length?fmt(bpPinTodo()):'',' id="bptPin"'), '|',
+      tab('collection','blueprints','Collection',`${fmt(cO)}/${fmt(cT)}`)]:[])
+    .concat(DATA.missions&&catalog?[tab('standing','scales','Standing','')]:[])
+    .concat(['|', tab('library','import','Your Library',fmt(owned.length)), tab('history','calendar','Unlock History','')]), 'Blueprints',
+    {standing:'Where your completed contracts put you with each faction', library:'Every blueprint the game told you it handed over',
+     history:'When the blueprints arrived, and how far along each category is'}[BPV.page]||'');
   const listCard=`<div class="card"><h3>${listTitle}</h3>${bar}<div id="bpList">${bpListHTML(v)}</div></div>`;
   const aboutFold=noteFold(
       `Blueprints the game announced to you, counted once each. The log has no ownership list, so this is a minimum.`,
@@ -9960,23 +10043,26 @@ function secBlueprints(v){
       `<span class="tw">${esc(b[0])}<span class="bpk">${esc(b[2]||'')}</span></span><span class="tv"><span class="bph">${esc(b[1])}</span></span></div>`).join('')+`</div>`
     :`<div class="empty">No blueprints received in this scope.</div>`)+`</div>`;
   let body='';
-  if(BPV.page==='overview') body=K+`<div class="bpov"><div class="bpov-c"><div class="card" id="bpPinned">${bpPinnedHTML()}</div>${recentCard}</div>`+
+  if(BPV.page==='overview') body=`<div class="bpov"><div class="bpov-c"><div class="card" id="bpPinned">${bpPinnedHTML()}</div>${recentCard}</div>`+
     `<div class="bpov-c">${P.totals}</div></div>`+aboutFold;
   else if(BPV.page==='find') body=`<div class="card" id="bpFind">${bpFindHTML()}</div>`;
   else if(BPV.page==='pinned') body=`<div class="card" id="bpPinned">${bpPinnedHTML()}</div>`;
-  else if(BPV.page==='collection'){ const [o,t]=gcount(G);
-    body=pageHead(BP_GROUP_IC[G[0]], G[1], `${fmt(o)} of ${fmt(t)} owned`,
-      `<div class="vt" role="group" aria-label="Show as">${[['rows','Rows'],['cards','Cards']].map(([k,l])=>`<button type="button" data-bpvv="${k}" class="${BPV.view===k?'on':''}" aria-pressed="${BPV.view===k}">${l}</button>`).join('')}</div>`)+
+  else if(BPV.page==='collection'){
+    // the five collection pages as a row of chips, Rows or Cards at the end
+    body=`<div class="bpcat" role="group" aria-label="Collection">`+BP_GROUPS.map(g=>{ const [o,t]=gcount(g), on=g===G;
+        return `<button type="button" class="bpc${on?' on':''}" data-bpv="collection" data-bpvg="${g[0]}"${on?' aria-pressed="true"':' aria-pressed="false"'}>`+
+          `<i>${icon(BP_GROUP_IC[g[0]])}</i><span>${esc(g[1])}</span><b>${fmt(o)}/${fmt(t)}</b></button>`; }).join('')+
+      `<div class="vt" role="group" aria-label="Show as">${[['rows','Rows'],['cards','Cards']].map(([k,l])=>`<button type="button" data-bpvv="${k}" class="${BPV.view===k?'on':''}" aria-pressed="${BPV.view===k}">${l}</button>`).join('')}</div></div>`+
       `<div id="bpBoard">${BPV.view==='cards'?`<div class="card bxalb" id="bpAlbum">${bpAlbumHTML(catalog, grpCats(G))}</div>`
         :{armour:P.sets+P.arm, comp:P.comp, sw:P.lad, fps:P.fps, gear:P.gear}[G[0]]}</div>`; }
-  else if(BPV.page==='standing') body=pageHead('scales','Standing','Where your completed contracts put you with each faction')+
+  else if(BPV.page==='standing') body=
       `<div class="card"><h3>Standing Floors <span class="u">\u2014 rep your matched completions alone would have earned</span></h3>${bpFloorsHTML()}</div>`+
       noteFold(`A floor, not your standing. The game never writes reputation to the log. Missions CIG has retired, event bonuses and resets are invisible here.`,
         `Each completed contract in your log is matched to the SC-Wiki\u2019s mission list by its class name and credited with that mission\u2019s reputation. Generated hauling contracts are matched by family. Gates and ladders come from the same data (${esc(String(DATA.missions.version||'').split('-')[0])}). If you know your real rank is higher, the plan is at least that good.`);
   else if(BPV.page==='library') body=listCard+aboutFold;
   else body=`<div class="grid2">`+cardHTML('Received per Month','notifications, not distinct blueprints','bpMonths')+
       cardHTML(catalog?'Progress by category':'By category', catalog?'owned / in the catalogue':'distinct blueprints in this scope','bpCats')+`</div>`;
-  $('#content').innerHTML=metaLine(v)+`<div class="sapp">${tree}<div class="smain" id="bpMain">${body}</div></div>`;
+  $('#content').innerHTML=metaLine(v)+K+nav+`<div class="spage" id="bpMain">${body}</div>`;
   const content=$('#content');
   if(content && !content.dataset.bpWired){ content.dataset.bpWired='1';
     content.addEventListener('click', e=>{
@@ -9986,7 +10072,7 @@ function secBlueprints(v){
       if(e.target.closest('a')) return;            // a wiki link inside a row opens itself
       const nav=e.target.closest('[data-bpv]');
       if(nav && content.contains(nav)){ BPV.page=nav.dataset.bpv; if(nav.dataset.bpvg) BPV.grp=nav.dataset.bpvg; bpSaveView();
-        secBlueprints(view()); buildToc(); scrollToY(0);
+        secBlueprints(view()); buildToc(); snavSettle();
         if(BPV.page==='find'){ const f=$('#bpFindQ'); if(f) f.focus({preventScroll:true}); } return; }
       const vv=e.target.closest('[data-bpvv]');
       if(vv && content.contains(vv)){ BPV.view=vv.dataset.bpvv; bpSaveView(); secBlueprints(view()); return; }
@@ -10035,9 +10121,9 @@ function secBlueprints(v){
     if(BPV.page!=='find'){ BPV.page='find'; bpSaveView(); secBlueprints(view()); buildToc();
       const n=$('#bpTreeQ'); if(n){ n.focus(); n.setSelectionRange(n.value.length,n.value.length); } return; }
     const f=$('#bpFindQ'); if(f) f.value=bpFindQ; findOut(); };
-  if(BPV.page==='overview' && bpLead){ mountHero('bp', bpLead.name, bpLead.o===bpLead.t?'Complete armour set':'Closest armour set',
+  if(bpLead) mountHero('bp', bpLead.name, bpLead.o===bpLead.t?'Complete armour set':'Closest armour set',
     `${bpLead.o} of ${bpLead.t} pieces`, wikiURL(bpLead.name));
-    const ph=$('#content > .phero'), mn=$('#bpMain'); if(ph&&mn) mn.prepend(ph); }
+  snavTop();
   if(!$('#bpMonths')) return;
   const months=v.bp_months||[];
   if(months.length) vbars($('#bpMonths'), months.map(([m,n])=>({label:MON[+m.slice(5,7)-1]+' '+m.slice(2,4), full:m, value:n})), {w:560,h:200,rot:months.length>9});
@@ -10061,22 +10147,21 @@ function secMissions(v){
     [icon('quit'), fmt(m.abandon), 'Abandoned', ``],
   ]);
   const h=v.haul||{};
-  const H = h.scu ? `<section class="gsec"><div class="ghead"><div class="gnum">—</div><div class="gic">${icon('cargo')}</div>`+
-      `<div class="gtx"><div class="gt">Cargo Hauling</div><div class="gs">SCU delivered on hauling contracts you completed — from the delivery objectives, 4.5 onward</div></div></div><div class="gbody">`+
+  const H = h.scu ? group(3,'cargo','Cargo Hauling','SCU delivered on hauling contracts you completed, from the delivery objectives, 4.5 onward',
       kpiRow([
         [icon('cargo'), fmt(h.scu), 'SCU delivered', `${fmt(h.runs)} contracts · ${fmt(h.sessions)} sessions`],
         [icon('yes'), fmt(h.max), 'Biggest contract', `SCU on one run`],
         [icon('no'), fmt(h.lost), 'SCU not delivered', `contracts that failed or were abandoned`],
         [icon('scales'), fmt(h.runs ? Math.round(h.scu/h.runs) : 0), 'SCU per contract', `average`],
       ])+`<div class="grid2">`+barsCard('By Commodity','SCU delivered','haulComBars')+barsCard('By Destination','SCU delivered','haulDestBars')+`</div>`+
-      noteFold(`A contract counts when it completes; the SCU is its delivery target. Partial drops on a run that failed or was abandoned aren’t counted.`)+
-      `</div></section>` : '';
-  $('#content').innerHTML=metaLine(v)+K+H+
-    cardHTML('Outcomes','completed / failed / abandoned','missionChart')+
-    `<div style="margin-top:16px">`+barsCard('Mission Types','by contract category','typeBars')+`</div>`+
-    ((v.contracts_named||[]).length ? `<div style="margin-top:16px">`+
-      barsCard('Contracts by Name','accepted · completed — as the game titled them (4.5+)','contractBars')+`</div>`+
-      noteFold(`Contract names come from the HUD notices (4.5 onward), language-pack tags stripped. Accepted but not completed covers failed, abandoned, lost on log-off, or still open.`) : '');
+      noteFold(`A contract counts when it completes. The SCU is its delivery target. Partial drops on a run that failed or was abandoned aren’t counted.`)) : '';
+  $('#content').innerHTML=metaLine(v)+K+
+    group(1,'missions','Outcomes','Completed, failed and abandoned, and the kinds of mission',
+      cardHTML('Outcomes','completed / failed / abandoned','missionChart')+
+      `<div style="margin-top:16px">`+barsCard('Mission Types','by contract category','typeBars')+`</div>`)+
+    ((v.contracts_named||[]).length ? group(2,'yes','Contracts','Every contract by the name the game gave it, 4.5 onward',
+      barsCard('Contracts by Name','accepted · completed — as the game titled them (4.5+)','contractBars')+
+      noteFold(`Contract names come from the HUD notices (4.5 onward), language-pack tags stripped. Accepted but not completed covers failed, abandoned, lost on log-off, or still open.`)) : '')+H;
   splitbar($('#missionChart'), [{label:'Completed',value:m.complete,color:'#4ade80'},{label:'Failed',value:m.fail,color:'#ff5468'},{label:'Abandoned',value:m.abandon,color:'#f4a92a'}], {big:(m.rate||0)+'%', small:m.total+' total'});
   hbars($('#typeBars'), toItems(v.mission_types,'#4ade80'));
   const cb=$('#contractBars'); if(cb) hbars(cb, (v.contracts_named||[]).map(([n,a,d,f])=>({label:n, full:n, value:a, disp:`${fmt(a)} <span class="vv-u">acc</span> · ${fmt(d)} done${f?` · ${fmt(f)} failed`:''}`})));
@@ -10113,13 +10198,14 @@ function secActivity(v){
     [icon('night'), v.longest_h+'h', 'Longest session', `single sitting`],
   ]);
   $('#content').innerHTML=metaLine(v)+K+
-    cardHTML('Playtime by Month','hours per calendar month','monthChart')+
-    hoursCard(v)+
-    `<div style="margin-top:16px">`+cardHTML('When You Play','sessions started · weekday × hour','heatChart')+`</div>`+
-    `<div class="grid3" style="margin-top:16px">`+
-    cardHTML('By Hour','play start time','hourChart')+
-    cardHTML('By Weekday','','dowChart')+
-    barsCard('Session Length','how long you play','distBars')+`</div>`;
+    group(1,'calendar','Playtime','Hours per month, and what you spent them on',
+      cardHTML('Playtime by Month','hours per calendar month','monthChart')+hoursCard(v))+
+    group(2,'time','When You Play','Weekday, hour and how long you play',
+      cardHTML('When You Play','sessions started · weekday × hour','heatChart')+
+      `<div class="grid3" style="margin-top:16px">`+
+      cardHTML('By Hour','play start time','hourChart')+
+      cardHTML('By Weekday','','dowChart')+
+      barsCard('Session Length','how long you play','distBars')+`</div>`);
   const ms=Object.keys(v.months).sort();
   const mitems=ms.map(m=>{const [y,mm]=m.split('-');return {label:MON[+mm-1]+" '"+y.slice(2), value:+(v.months[m]/3600).toFixed(1), disp:(v.months[m]/3600).toFixed(0)+' h', full:m, color:'#3fd0e6'};});
   if(mitems.length) vbars($('#monthChart'), mitems, {h:230, w:Math.max(560,mitems.length*54), rot:true, fmtY:x=>x+'h'});
@@ -11062,32 +11148,36 @@ function secSystem(v, STAB){
     const PAGES=['overview','crashes','menu','lost','outcomes','servers','inventory'];
     if(!PAGES.includes(SV.page)) SV.page='overview';
     const hp=inv&&inv.home?Math.round(inv.home.pct):null, top=sv&&sv.regions&&sv.regions[0];
-    const it=(page,ic,label,cnt,cls)=>railItem(`data-sv="${page}"`, ic, label, cnt, SV.page===page, cls);
-    const tree=`<nav class="stree" aria-label="Stability">`+
-      it('overview','overview','Overview','')+it('crashes','bug','Crashes',fmt(oc.crash||0))+`<hr class="t-sep">`+
-      it('menu','quit','Back to the Menu',b?fmt(b.n):'0',b&&b.n?'warn':'ok')+
-      it('lost','space','Lost Your Player',sf?fmt(sf.n):'0',sf&&sf.n?'warn':'ok')+`<hr class="t-sep">`+
-      it('outcomes','pulse','Session Outcomes',rated?(thin?`${fmt(oc.clean||0)}/${fmt(rated)}`:okPct):'')+
-      it('servers','satellite','Servers',top?top[0]:'')+it('inventory','cargo','Home Inventory',hp!=null?hp+'%':'',hp!=null?invCls(hp):'')+`</nav>`;
-    const head=(ic,t,sub)=>pageHead(ic,t,sub);
+    const it=(page,ic,label,n,cls)=>[`data-sv="${page}"`, icon(ic), label, n, cls, SV.page===page];
+    const CAP={overview:'Headline numbers, your last crash and what has crashed you', crashes:'What Star Citizen said went wrong',
+      menu:'Returned to the front end mid-session and carried on. A server drop or an exit to menu.',
+      lost:'The game kept running but your client had no player entity. No body, nothing responds.',
+      outcomes:'How your sessions ended', servers:'Which region you played on, and how often you changed server mid-session',
+      inventory:'How full your home inventory is, and whether Sort still works'};
+    const nav=snavHTML([it('overview','overview','Overview',''), it('crashes','bug','Crashes',fmt(oc.crash||0)), '|',
+      it('menu','quit','Back to Menu',b?fmt(b.n):'0',b&&b.n?'warn':'ok'),
+      it('lost','space','Lost Player',sf?fmt(sf.n):'0',sf&&sf.n?'warn':'ok'), '|',
+      it('outcomes','pulse','Outcomes',rated?(thin?`${fmt(oc.clean||0)}/${fmt(rated)}`:okPct):''),
+      it('servers','satellite','Servers',top?top[0]:''), it('inventory','cargo','Inventory',hp!=null?hp+'%':'',hp!=null?invCls(hp):'')],
+      'Stability', CAP[SV.page]);
     const rough=hasPatchTrend?barsCard('Rough Sessions by Patch','% ending badly','roughByPatch')
       :'<div class="card"><div class="empty">Only one patch in this scope.</div></div>';
     let body='';
-    if(SV.page==='overview') body=head('overview','Overview','Headline numbers, your last crash and what has crashed you')+(rated?kpiRow([
+    if(SV.page==='overview') body=(rated?kpiRow([
         [icon('yes'), thin?`${fmt(oc.clean||0)}/${fmt(rated)}`:okPct, 'Sessions ended normally', thin?'too few rated sessions for a rate':`${fmt(oc.clean||0)} of ${fmt(rated)}`],
         [icon('bug'), fmt(oc.crash||0), 'Crashes', lc&&lc.date?`last ${ddmm(lc.date)}`:'the game reported these itself'],
         [icon('no'), b&&b.per10h!=null?b.per10h.toFixed(2):'0', 'Back to menu per 10 h', b?`${fmt(b.n)} in all`:'none in this scope'],
         [icon('satellite'), sv?sv.hop_pct+'%':'N/A', 'Sessions with a server hop', sv?`${fmt(sv.hop_sessions)} of ${fmt(sv.sessions)}`:'no server joins here', sv?'':'na'],
       ]):'')+`<div class="grid2 stov">${lastCrashHTML(v)}${rated?rough:''}</div>`+crashCausesHTML(v)+NOTE;
-    else if(SV.page==='crashes') body=head('bug','Crashes','What Star Citizen said went wrong')+lastCrashHTML(v)+crashCausesHTML(v)+crashListHTML(v);
-    else if(SV.page==='menu') body=head('quit','Back to the Main Menu','Returned to the front end mid-session and carried on. A server drop or an exit to menu.')+bootsHTML(v);
-    else if(SV.page==='lost') body=head('space','Lost Your Player','The game kept running but your client had no player entity. No body, nothing responds.')+softHTML(v);
-    else if(SV.page==='servers') body=head('satellite','Servers','Which region you played on, and how often you changed server mid-session')+serversHTML(v);
-    else if(SV.page==='inventory') body=head('cargo','Home Inventory','How full your home inventory is, and whether Sort still works')+inventoryHTML(v);
-    else body=head('pulse','Session Outcomes','How your sessions ended')+(rated ? stabKpis+ctx+newcomerVerdict(v,oc,rated,thin)+stabNote+
+    else if(SV.page==='crashes') body=lastCrashHTML(v)+crashCausesHTML(v)+crashListHTML(v);
+    else if(SV.page==='menu') body=bootsHTML(v);
+    else if(SV.page==='lost') body=softHTML(v);
+    else if(SV.page==='servers') body=serversHTML(v);
+    else if(SV.page==='inventory') body=inventoryHTML(v);
+    else body=(rated ? stabKpis+ctx+newcomerVerdict(v,oc,rated,thin)+stabNote+
         `<div class="grid2">`+cardHTML('How Sessions Ended','share of '+fmt(rated)+' sessions','outcomeChart')+rough+`</div>`
         : `<div class="card"><div class="empty">No completed sessions rated yet.</div></div>`);
-    stabHTML=metaLine(v)+`<div class="sapp">${tree}<div class="smain" id="stMain"><div class="lstrip">${watchHTML()}</div>${body}</div></div>`;
+    stabHTML=metaLine(v)+`<div class="lstrip">${watchHTML()}</div>`+nav+`<div class="spage" id="stMain">${body}</div>`;
   }
   $('#content').innerHTML = STAB ? stabHTML : (metaLine(v)+
     group(1,'system','Your Machine','What the game reports your rig as',
@@ -11139,7 +11229,7 @@ function secSystem(v, STAB){
     });
   });
 
-  if(STAB) document.querySelectorAll('#content [data-sv]').forEach(b=>b.onclick=()=>{ SV.page=b.dataset.sv; svSave(); render(); scrollToY(0); });
+  if(STAB) document.querySelectorAll('#content [data-sv]').forEach(b=>b.onclick=()=>{ SV.page=b.dataset.sv; svSave(); render(); snavSettle(); });
   if(STAB && LAST_WATCH) renderWatch(LAST_WATCH);
   if(SERVED) pollStatus();          // fills the Live monitoring card immediately
   document.querySelectorAll('[data-cpg]').forEach(b=>{
@@ -11315,6 +11405,7 @@ function render(){
     sb.classList.toggle('patch', current!=='all'); }
   renderLimitedNote();
   SECTIONS[section].fn(view());
+  tabify();
   buildToc();
   renderPinMenu();
   bpDrawerRefresh();
@@ -11324,7 +11415,7 @@ function render(){
 function buildToc(){
   const el=$('#sideToc'); if(!el) return;
   const gs=[...document.querySelectorAll('#content .gsec[id]')];
-  if(gs.length<3){ el.hidden=true; el.innerHTML=''; return; }
+  if(gs.length<3 || $('#content .snav')){ el.hidden=true; el.innerHTML=''; return; }
   el.innerHTML='<div class="toc-h">On This Page</div>'+gs.map(g=>
     `<button type="button" data-g="${g.id}"><i>${esc((g.querySelector('.gnum')||{}).textContent||'')}</i>`+
     `${esc((g.querySelector('.gt')||{}).textContent||'')}</button>`).join('');

@@ -8,15 +8,18 @@ uses [Semantic Versioning](https://semver.org/) (MAJOR.MINOR.PATCH).
 ## [Unreleased]
 
 ### Added
-- **Blueprints has its own menu.** An icon rail down the left of the page: Overview,
-  Find a Blueprint, Pinned, one page per collection (Armour, Ship Components, Ship
-  Weapons, FPS Weapons, Magazines & Gear) with your count under each icon, Standing, Your
-  Library and Unlock History. Hover an icon for its name. One page on screen at a time,
-  each with its own title. CSR remembers the page you were on. On a phone the rail is a
-  row with names.
-- **Stability has the same menu.** Overview, Crashes, Back to the Menu, Lost Your
-  Player, Session Outcomes, Servers and Home Inventory, each with its number under the
-  icon. The Overview has the four headline numbers, your last crash, rough sessions by
+- **Every page has a menu across the top.** Each section of a page is a tab with its
+  icon, its name and its headline number. Only the open tab shows, so pages are a
+  fraction of the length. The menu sticks under the top bar and CSR remembers the open
+  tab per page. Flight & Travel, Combat, Legacy Combat, Missions, Economy, Activity and
+  Your Machine all use it. Missions is split into Outcomes, Contracts and Cargo Hauling,
+  Activity into Playtime and When You Play.
+- **Blueprints pages:** Overview, Find a Blueprint, Pinned, Collection, Standing, Your
+  Library and Unlock History. Collection has a chip per category (Armour, Ship
+  Components, Ship Weapons, FPS Weapons, Magazines & Gear) with your count, and Rows or
+  Cards.
+- **Stability pages:** Overview, Crashes, Back to Menu, Lost Player, Outcomes, Servers
+  and Inventory, each with its number on the tab. The Overview has the four headline numbers, your last crash, rough sessions by
   patch and what has crashed you. Clicking a cause opens Crashes filtered to it.
 - **Live monitoring is one line** at the top of every Stability page: game state and
   each channel's idle time.
@@ -55,6 +58,10 @@ uses [Semantic Versioning](https://semver.org/) (MAJOR.MINOR.PATCH).
 ### Changed
 - Titles and menus are in title case. Small words (a, and, of, to, per, with…) stay
   lowercase.
+- Page banners are shorter.
+- Phones and tablets: the top bar scrolls away and the page menu takes the top of the
+  screen. Menus that don't fit scroll sideways with a fade at the edge. Headline tiles
+  sit two to a row, and the banner shows figures only.
 - **Crafting catalogue updated to 4.10.3**: 1,628 blueprints. The Skarnov rifle and its
   battery and the Raider Camo Palatino pieces now match.
 
