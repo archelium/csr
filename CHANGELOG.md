@@ -39,6 +39,9 @@ uses [Semantic Versioning](https://semver.org/) (MAJOR.MINOR.PATCH).
   search result and latest unlock opens a panel on the right: picture, owned or missing,
   pin, the missions that drop it, the standing each needs, the drop chance and a wiki
   link per mission. Esc closes it.
+  Missions are grouped by faction with your standing at the top of each group. Each
+  mission is one line with an Open or "rep to go" badge, and a second line with the
+  drop chance, rep, what it needs and how often you've done it.
 - **Find a blueprint.** A search at the top of Blueprints: name, maker, class or grade.
   Each result says owned or missing and the next step: "open now" with the mission, or
   how much rep you're short and with whom. The search box in the menu goes straight to it.

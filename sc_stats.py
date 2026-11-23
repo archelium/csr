@@ -8336,10 +8336,42 @@ nav a::after{background:var(--menu-bg);border-color:var(--glass-line);box-shadow
 .bpdr .dr-pic{position:relative;aspect-ratio:16/9;border-radius:8px;overflow:hidden;margin-bottom:12px;background:#0b1520;display:grid;place-items:center;color:var(--dim)}
 .bpdr .dr-pic>svg{width:36px;height:36px}
 .bpdr .dr-pic img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
-.bpdr .bpph{flex-wrap:wrap;row-gap:8px}
-.bpdr .bpph .bpin.lbl{margin-left:0}
-.bpdr .tline .tev{display:grid;grid-template-columns:84px minmax(0,1fr);column-gap:12px;row-gap:3px}
-.bpdr .tline .tev .tv{grid-column:2;margin-left:0;text-align:left;white-space:normal;display:flex;flex-wrap:wrap;gap:4px 8px}
+.bpdr .dr-eb{font-family:var(--font-mono);font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--dim)}
+.bpdr .dr-id{display:flex;flex-direction:column;gap:4px;margin:2px 0 14px}
+.bpdr .dr-nm{font-family:var(--font-display);font-size:22px;font-weight:600;line-height:1.2;color:var(--txt)}
+.bpdr .dr-nm a{color:inherit;text-decoration:none}
+.bpdr .dr-nm a:hover{color:var(--cyan)}
+.bpdr .dr-sp{font-size:13px;color:var(--muted)}
+.bpdr .dr-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:10px}
+.bpdr .dr-row .bpin.lbl{margin-left:auto}
+.bpdr .dr-state{font-size:12.5px;font-weight:600;padding:6px 11px;border-radius:8px;border:1px solid transparent}
+.bpdr .dr-state.ok{color:var(--green);background:rgba(74,222,128,.1);border-color:rgba(74,222,128,.3)}
+.bpdr .dr-state.no{color:var(--amber);background:rgba(244,169,42,.1);border-color:rgba(244,169,42,.3)}
+.bpdr .dr-state.ns{color:var(--muted);border:1px dashed var(--dim)}
+.bpdr .dr-sum{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;padding:12px 0 2px;border-top:1px solid var(--line);font-size:13.5px;color:var(--muted)}
+.bpdr .dr-sum b{color:var(--txt)}
+.bpdr .dr-sum .ok{margin-left:auto;color:var(--green);font-size:12.5px}
+.bpdr .dr-sum .no{margin-left:auto;color:var(--amber);font-size:12.5px}
+.bpdr .dr-fac{margin-top:12px;border:1px solid var(--line);border-radius:12px;overflow:hidden}
+.bpdr .dr-fh{display:flex;align-items:baseline;gap:10px;padding:9px 14px;background:rgba(91,209,230,.06);border-bottom:1px solid var(--line)}
+.bpdr .dr-fh b{font-size:13px;font-weight:600;color:var(--txt);min-width:0}
+.bpdr .dr-fh span{margin-left:auto;flex:none;font-family:var(--font-mono);font-size:11px;color:var(--dim)}
+.bpdr .dr-m{padding:10px 14px;border-bottom:1px solid var(--line)}
+.bpdr .dr-m:last-child{border-bottom:0}
+.bpdr .dr-m1{display:flex;align-items:flex-start;gap:12px}
+.bpdr .dr-m1>a,.bpdr .dr-m1>span:first-child{flex:1;min-width:0;font-size:14px;line-height:1.35;color:var(--txt);text-decoration:none}
+.bpdr .dr-m1>a:hover{color:var(--cyan)}
+.bpdr .dr-st{flex:none;font-family:var(--font-mono);font-size:10.5px;letter-spacing:.03em;padding:3px 9px;border-radius:999px;white-space:nowrap;margin-top:1px}
+.bpdr .dr-st.ok{color:var(--green);background:rgba(74,222,128,.1);border:1px solid rgba(74,222,128,.35)}
+.bpdr .dr-st.no{color:var(--amber);background:rgba(244,169,42,.1);border:1px solid rgba(244,169,42,.35)}
+.bpdr .dr-m2{margin-top:4px;font-size:12px;color:var(--muted);display:flex;flex-wrap:wrap;gap:2px 0}
+.bpdr .dr-m2 i{font-style:normal;color:var(--dim);margin:0 6px}
+.bpdr .dr-m2 .g1{color:var(--cyan)}
+.bpdr .dr-m2 .gp{color:var(--amber)}
+.bpdr .dr-empty{font-size:13.5px;color:var(--muted);padding:14px 0;border-top:1px solid var(--line)}
+.bpdr .bpret{margin-top:14px}
+.bpdr .dr-gone .dr-g{display:flex;gap:12px;justify-content:space-between;padding:6px 2px;font-size:12.5px;color:var(--dim);border-bottom:1px dashed var(--line)}
+.bpdr .dr-gone .dr-g em{font-style:normal;font-family:var(--font-mono);font-size:11px;flex:none}
 @media(max-width:1100px){ .bpov{grid-template-columns:1fr} }
 /* phones and tablets: the top bar scrolls away so the menu gets the top of the screen */
 @media(max-width:760px){
@@ -9667,30 +9699,43 @@ function bpBestHTML(row){
   return p.open ? `<span class="bpst ok">open now</span> ${esc(p.title)}${ch?' \u00b7 '+ch:''}${more}`
                 : `<span class="bpst no">${fmt(p.gap)} rep to go</span> ${esc(p.title)} \u00b7 ${esc(p.fac)}${more}`;
 }
+// the drawer's body: who it is, owned or not, then every mission that drops it grouped by
+// faction, the faction's standing once at the top of its group
 function bpPathHTML(row){
   const owned=bpOwnedRow(row), recv=bpRecv(), d=recv[row[0]]||recv['n:'+row[1].toLowerCase()];
   const matched=(A().career||{}).contracts_matched||{}, meta=((DATA.bp_catalog||{}).meta||{})[row[0]]||[];
   const spec=[row[3], row[4], meta[0]&&meta[0]+(meta[1]?' grade '+meta[1]:''), meta[2]].filter(Boolean).map(esc).join(' \u00b7 ');
-  const head=`<div class="bpph"><b>${link(wikiURL(bpSkin(row[1])),esc(row[1]),'lk')}</b><span class="bpk">${spec}</span>`+
-    (owned?`<span class="bpok">in your library${d?' since '+ddmm(d):''}</span>`:row[5]?`<span class="bpok">known from the start</span>`:'')+
-    bpPinBtn(row[0], true)+`</div>`;
+  const state = owned ? ['ok', `In your library${d?' since '+ddmm(d):''}`] : row[5] ? ['ok','Known from the start']
+    : bpNoSource(row) ? ['ns','Missing \u00b7 no known source'] : ['no','Missing'];
+  const head=`<div class="dr-id"><div class="dr-nm">${link(wikiURL(bpSkin(row[1])),esc(row[1]),'')}</div>`+
+    (spec?`<div class="dr-sp">${spec}</div>`:'')+
+    `<div class="dr-row"><span class="dr-state ${state[0]}">${state[1]}</span>${bpPinBtn(row[0], true)}</div></div>`;
   const ps=bpPaths(row);
-  if(!ps.length) return head+`<div class="empty">${row[5] ? 'Available by default. No mission needed.'
+  if(!ps.length) return head+`<div class="dr-empty">${row[5] ? 'Available by default. No mission needed.'
     : 'No mission drops this. It may come from an event (your XenoThreat rewards did) or not be obtainable yet.'}</div>`;
   // missions the wiki no longer lists are folded away: they can't be run
   const live=ps.filter(p=>!p.retired), gone=ps.filter(p=>p.retired);
-  const goneH=gone.length?`<details class="bpret"><summary>${fmt(gone.length)} retired or unknown mission${gone.length===1?'':'s'}</summary><div class="tline">`+
-    gone.map(p=>`<div class="tev"><span class="td">${bpChance(p.ch)}</span><span class="tw">${esc(p.title)}</span><span class="tv"><span class="bph">retired or unknown</span></span></div>`).join('')+
-    `</div></details>`:'';
-  if(!live.length) return head+`<div class="empty">No mission running now drops this.</div>`+goneH;
-  return head+`<div class="tline">`+live.map(p=>{
-    const m=p.m, stand=m[MIS_F.STAND], done=matched[String(p.mi)]||0;
-    const gate = !p.fac ? `<span class="bph">no faction</span>` : stand ? `${esc(stand)} <span class="bph">\u00b7 ${fmt(p.thr)} rep</span>` : `<span class="bph">no standing needed</span>`;
-    const st = !p.fac||!p.thr ? `<span class="bpst ok">open</span>` : p.open ? `<span class="bpst ok">open at your floor</span>`
-      : `<span class="bpst no">${fmt(p.gap)} more rep with ${esc(p.fac)}</span>`;
-    return `<div class="tev"><span class="td">${bpChance(p.ch)}</span>`+
-      `<span class="tw">${m[MIS_F.URL]?link(m[MIS_F.URL],esc(m[MIS_F.TITLE]),'lk'):esc(m[MIS_F.TITLE])}<span class="bpk">${esc(p.fac||'')}${m[MIS_F.REP]?` \u00b7 +${fmt(m[MIS_F.REP])} rep`:''}${done?` \u00b7 done \u00d7${fmt(done)}`:''}</span></span>`+
-      `<span class="tv">${gate} ${st}</span></div>`; }).join('')+`</div>`+goneH;
+  const goneH=gone.length?`<details class="bpret"><summary>${fmt(gone.length)} retired or unknown mission${gone.length===1?'':'s'}</summary><div class="dr-gone">`+
+    gone.map(p=>`<div class="dr-g"><span>${esc(p.title)}</span><em>${bpChance(p.ch)}</em></div>`).join('')+`</div></details>`:'';
+  if(!live.length) return head+`<div class="dr-empty">No mission running now drops this.</div>`+goneH;
+  const nOpen=live.filter(p=>p.open).length, allG=live.every(p=>p.ch>=1);
+  const sum=`<div class="dr-sum"><span><b>${fmt(live.length)}</b> mission${live.length===1?'':'s'} drop${live.length===1?'s':''} it${allG?`, ${live.length===1?'':'all '}guaranteed`:''}</span>`+
+    (nOpen?`<span class="ok">${fmt(nOpen)} open to you</span>`:`<span class="no">none open to you yet</span>`)+`</div>`;
+  // one group per faction, in path order: the faction with something open comes first
+  const groups=[], at={};
+  live.forEach(p=>{ const k=p.fac||''; if(!(k in at)){ at[k]=groups.length; groups.push({fac:k, ps:[]}); } groups[at[k]].ps.push(p); });
+  const body=groups.map(g=>{
+    const floor=g.fac?bpFloorOf(g.fac):0, rank=g.fac?bpRankAt(g.fac,floor):'';
+    const fh=`<div class="dr-fh"><b>${esc(g.fac||'No faction')}</b>`+
+      (g.fac?`<span title="Rep your matched completions alone would have earned">you: ${rank?esc(rank)+' \u00b7 ':''}${fmt(floor)} rep</span>`:'')+`</div>`;
+    return `<div class="dr-fac">`+fh+g.ps.map(p=>{
+      const m=p.m, done=matched[String(p.mi)]||0, stand=m[MIS_F.STAND], ch=bpChance(p.ch);
+      const nm=m[MIS_F.URL]?link(m[MIS_F.URL],esc(m[MIS_F.TITLE]),''):`<span>${esc(m[MIS_F.TITLE])}</span>`;
+      const st=p.open?`<span class="dr-st ok">Open</span>`:`<span class="dr-st no">${fmt(p.gap)} rep to go</span>`;
+      const bits=[ch&&!allG?`<span class="${p.ch>=1?'g1':'gp'}">${ch}</span>`:'', m[MIS_F.REP]?`+${fmt(m[MIS_F.REP])} rep`:'',
+        !p.open&&stand?`needs ${esc(stand)} (${fmt(p.thr)})`:'', done?`done \u00d7${fmt(done)}`:''].filter(Boolean).join('<i>\u00b7</i>');
+      return `<div class="dr-m"><div class="dr-m1">${nm}${st}</div>${bits?`<div class="dr-m2">${bits}</div>`:''}</div>`; }).join('')+`</div>`; }).join('');
+  return head+sum+body+goneH;
 }
 // ---- pinned blueprints: kept in this browser, per account, like your main account
 const BP_PIN_KEY='csr_bp_pins';
@@ -9754,9 +9799,9 @@ function bpDrawer(k){
       if(e.target.closest('[data-bpdrx]')){ bpDrawer(null); return; }
       const pin=e.target.closest('[data-bppin]'); if(pin){ e.preventDefault(); bpTogglePin(pin.dataset.bppin); bpPinsChanged(); } }); }
   const was=bpDrKey; bpDrKey=k;
-  const o=bpOwnedRow(r), st=o?['ok','OWNED']:r[5]?['ok','DEFAULT']:bpNoSource(r)?['ns','MISSING']:['no','MISSING'], im=(cat.img||{})[k];
+  const im=(cat.img||{})[k];
   d.setAttribute('aria-label', r[1]);
-  d.innerHTML=`<div class="dr-h"><span class="bph-s ${st[0]}">${st[1]}</span><button type="button" class="dr-x" data-bpdrx title="Close">Esc \u2715</button></div>`+
+  d.innerHTML=`<div class="dr-h"><span class="dr-eb">Blueprint</span><button type="button" class="dr-x" data-bpdrx title="Close">Esc \u2715</button></div>`+
     (im?`<div class="dr-pic">${ICON.blueprints}${artImg(artUrls(im,1), true)}</div>`:'')+bpPathHTML(r);
   d.classList.add('on'); if(was!==k) d.scrollTop=0;
 }
