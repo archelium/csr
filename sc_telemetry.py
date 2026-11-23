@@ -6,6 +6,7 @@ Stdlib only. The game serves sc.game.telemetry.v1.GameTelemetryService on 127.0.
 Field names come from the FileDescriptorProtos compiled into StarCitizen.exe, so a patch
 that adds or renumbers fields needs no code change here.
 """
+import gzip
 import hashlib
 import json
 import mmap
@@ -14,6 +15,7 @@ import re
 import socket
 import struct
 import sys
+import zlib
 
 PKG = "sc.game.telemetry.v1"
 STREAM_PATH = f"/{PKG}.GameTelemetryService/TelemetryStream"
@@ -426,3 +428,172 @@ class GrpcStream:
                     grpc_buf = grpc_buf[5 + mlen:]
                 if flags & F_END_STREAM:
                     return
+
+
+# --- recording ---------------------------------------------------------------------
+
+FLOAT_SENTINEL = 1e38   # the game sends ~3.4e38 for "no value"
+
+GROUPS = [
+    ("wallet", ("actor.state.uec_balance",)),
+    ("vitals", ("actor.vitals.",)),
+    ("surroundings", ("actor.environment.",)),
+    ("you", ("actor.state.",)),
+    ("events", ("events.",)),
+    ("settings", ("vehicle.state.flight.settings.", "weapons.settings.")),
+    ("flight", ("vehicle.state.flight.instruments.", "vehicle.state.flight.state.")),
+    ("ship", ("vehicle.",)),
+    ("weapons", ("weapons.",)),
+    ("turret", ("turret.",)),
+    ("force_feedback", ("force_feedback.",)),
+]
+DEFAULT_GROUPS = [g for g, _ in GROUPS if g != "force_feedback"] + ["other"]
+SMOOTH_SUFFIXES = ("speed", "heading", "altitude", "radar_altitude", "vertical_speed_indicator",
+                   "atmospheric_density", "hydrogen_fuel", "quantum_fuel", "g_meter.current",
+                   "boost.output", "boost.reserves", "heart_rate", "body_temperature.current",
+                   "gravity", "pressure", "external_temperature", "ambient_radiation_rate",
+                   "stick_shaker", "gunfire")
+DETAIL_SECONDS = {"full": 0.0, "normal": 0.5, "light": 5.0}
+FLUSH_SECONDS = 5.0
+
+
+def _clean(v):
+    if isinstance(v, float) and v >= FLOAT_SENTINEL:
+        return None
+    return v
+
+
+def flatten(frame):
+    """Nested frame dict -> {dotted.path: scalar or list of scalars}. `events` is left out."""
+    out = {}
+
+    def walk(prefix, node):
+        if isinstance(node, dict):
+            for k, v in node.items():
+                walk(f"{prefix}.{k}" if prefix else k, v)
+        elif isinstance(node, list) and node and all(isinstance(x, dict) for x in node):
+            for i, x in enumerate(node):
+                walk(f"{prefix}[{i}]", x)
+        elif isinstance(node, list):
+            out[prefix] = [_clean(x) for x in node]
+        else:
+            out[prefix] = _clean(node)
+
+    for k, v in frame.items():
+        if k != "events":
+            walk(k, v)
+    return out
+
+
+def frame_events(frame):
+    evs = (frame.get("events") or {}).get("events") or []
+    return [str(e.get("type", "UNSPECIFIED")) for e in evs]
+
+
+def group_of(path):
+    for name, prefixes in GROUPS:
+        if any(path.startswith(p) if p.endswith(".") else path == p for p in prefixes):
+            return name
+    return "other"
+
+
+def is_smooth(path):
+    if path.startswith("force_feedback."):
+        return True
+    return any(path.endswith("." + s) for s in SMOOTH_SUFFIXES)
+
+
+def _same(a, b):
+    return type(a) is type(b) and a == b
+
+
+def _number(v):
+    return isinstance(v, (int, float)) and not isinstance(v, bool)
+
+
+class RecordingWriter:
+    """Gzip JSONL writer: header line, then change-only lines.
+
+    Smooth values are sampled at most every DETAIL_SECONDS[detail]. Highs and lows seen
+    since the last written sample go out as `path^` / `path_` when they differ from it."""
+
+    def __init__(self, path, header, detail, groups):
+        self.detail = detail if detail in DETAIL_SECONDS else "normal"
+        self._every = DETAIL_SECONDS[self.detail]
+        wanted = set(groups)
+        self.groups = [g for g in DEFAULT_GROUPS + ["force_feedback"] if g in wanted]
+        self._wanted = wanted
+        self._last = {}      # path -> last written value
+        self._smooth = {}    # path -> [last_sample_t, hi, lo]
+        self._flushed_t = None
+        self._path = path
+        self._fh = gzip.open(path, "wt", encoding="utf-8")
+        head = dict(header)
+        head["detail"] = self.detail
+        head["groups"] = self.groups
+        self._fh.write(json.dumps(head, separators=(",", ":")) + "\n")
+        self._sync()
+
+    @property
+    def bytes_written(self):
+        try:
+            return os.path.getsize(self._path)
+        except OSError:
+            return 0
+
+    def _sync(self):
+        self._fh.flush()
+        self._fh.buffer.flush(zlib.Z_SYNC_FLUSH)
+
+    def add(self, t, flat, events):
+        line = {}
+        cur = {p: v for p, v in flat.items() if group_of(p) in self._wanted}
+        for path, v in cur.items():
+            st = self._smooth.get(path)
+            if self.detail != "full" and is_smooth(path) and _number(v):
+                if st is None:
+                    self._smooth[path] = [t, None, None]
+                    self._put(line, path, v)
+                    continue
+                st[1] = v if st[1] is None else max(st[1], v)
+                st[2] = v if st[2] is None else min(st[2], v)
+                if t - st[0] < self._every:
+                    continue
+                if not _same(v, self._last.get(path)):
+                    self._put(line, path, v)
+                if st[1] != v:
+                    line[path + "^"] = st[1]
+                if st[2] != v:
+                    line[path + "_"] = st[2]
+                st[0], st[1], st[2] = t, None, None
+            else:
+                self._smooth.pop(path, None)
+                if path not in self._last or not _same(v, self._last[path]):
+                    self._put(line, path, v)
+        gone = [p for p in self._last if p not in cur]
+        for p in gone:
+            del self._last[p]
+            self._smooth.pop(p, None)
+        if gone:
+            line["-"] = gone
+        if events:
+            line["ev"] = list(events)
+        if line:
+            out = {"t": round(t, 2)}
+            out.update(line)
+            self._fh.write(json.dumps(out, separators=(",", ":")) + "\n")
+        if self._flushed_t is None:
+            self._flushed_t = t
+        elif t - self._flushed_t >= FLUSH_SECONDS:
+            self._flushed_t = t
+            self._sync()
+
+    def _put(self, line, path, v):
+        line[path] = v
+        self._last[path] = v
+
+    def close(self):
+        if self._fh is not None:
+            self._sync()
+            self._fh.close()
+            self._fh = None
