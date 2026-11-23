@@ -65,7 +65,8 @@ first.
 
 ## Get started
 
-Pick whichever fits you:
+Pick whichever fits you. To record the game's live telemetry, see
+[Telemetry](#telemetry) below.
 
 ### 1. The app (recommended — no Python needed)
 **Extract the zip**, then double-click **`CSR.exe`**. A console window opens and
@@ -218,6 +219,21 @@ Patch* to filter to that patch (and *↩ View career* to reset).
 
 Stats the game stopped recording (or never did) show **N/A** rather than a
 misleading `0` — see the CHANGELOG for which, and why.
+
+### Telemetry
+
+CSR can record the telemetry stream the game serves on your own PC: wallet, flight,
+weapons, warnings, on-foot and seat state, survival. It adds stat cards to Economy,
+Flight & Travel, Combat and Activity, and a **Live view** page in the sidebar.
+
+- **Turn it on** in the Telemetry card of **💾 Backup & transfer**. It adds
+  `grpc.client.server.enabled = true` to your channel's user.cfg and keeps a `.csr-bak`
+  backup. It takes effect on the next game launch.
+- **Disk use** per hour of play: Full 1.7 MB, Normal 0.4 MB, Light 0.1 MB. Keep
+  recordings forever, 1 year, 3 months or 1 month.
+- **Phone access** is off by default. When on, the card shows a QR code and a private
+  link on port 7890-7899. It shows the live view only and works on your LAN only.
+- **CSR must be open while you play.** Nothing is recorded while it's closed.
 
 ### Playing on more than one PC
 

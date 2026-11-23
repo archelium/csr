@@ -5,6 +5,31 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and CSR
 uses [Semantic Versioning](https://semver.org/) (MAJOR.MINOR.PATCH).
 
 
+## [Unreleased]
+
+### Added
+- **Telemetry recording.** CSR can record the game's own telemetry stream while you play:
+  wallet, flight, weapons, warnings, on-foot and seat state, survival. Off by default.
+  Turn it on in the Telemetry card of Backup & transfer (💾). The card adds
+  `grpc.client.server.enabled = true` to your channel's user.cfg and keeps a `.csr-bak`
+  backup. It takes effect on the next game launch. CSR must be open while you play.
+- **Detail and retention.** Full, Normal or Light (about 1.7, 0.4 and 0.1 MB per hour).
+  Keep recordings forever, 1 year, 3 months or 1 month. Pick which groups to record.
+- **Live view** (sidebar). The current stream, updated as it arrives.
+- **Phone access.** Turn it on in the Telemetry card for a QR code and a private link on
+  port 7890-7899. Live view only, LAN only. Windows asks to allow CSR on the network the
+  first time.
+- **Career stats from telemetry.** Wallet on Economy. Flight records, How you fly and
+  Weapons on Flight & Travel. Warnings & countermeasures on Combat. On foot & in seat and
+  Survival on Activity. Cards show "From N of M sessions with telemetry".
+
+### Changed
+- **Config saves are atomic.** CSR never overwrites a csr_config.json it can't read.
+- **CSR refuses requests from other websites.** Origin and Host are checked.
+- **Idle auto-exit waits while the game is streaming.** CSR stays open when the tab is
+  closed. One CSR window records at a time.
+
+
 ## [1.10.0] — 2026-11-23
 
 ### Added
