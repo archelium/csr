@@ -110,14 +110,14 @@ CSR is portable, so updating is just **replace the exe**:
 keeps sessions Star Citizen has since deleted from your log folder. If you want a
 belt-and-braces backup first, open CSR and use **💾 Backup & transfer → Export**.
 
-What happens on your first run of v1.10.0, depending on where you're coming from:
+What happens on your first run of v1.11.0, depending on where you're coming from:
 
 | Coming from | What to expect |
 |---|---|
 | **v1.0.0** | v1.0.0 kept no archive, so your history is rebuilt from whatever logs you still have. If your saved folder was `…\StarCitizen\LIVE`, CSR now finds `PTU` and `TECH-PREVIEW` beside it on its own — **no need to re-pick a folder** — and a **Channel** dropdown appears if it finds any. |
-| **v1.1.0 – v1.9.3** | Your archive carries over untouched. |
+| **v1.1.0 – v1.10.0** | Your archive carries over untouched. |
 | **v1.0.0 – v1.9.1** | The first scan re-reads **every** log (a minute or so). This is deliberate: each release fixes parsing bugs or extracts new data, so nothing older is trusted. It happens once — after that CSR starts, and refreshes, in about a second. |
-| **v1.9.2 – v1.9.3** | No re-read. The new look shows on the first page build. |
+| **v1.9.2 – v1.10.0** | No re-read. CSR opens on your stats since the 4.8 wipe, with Career one click away. |
 
 Coming from **v1.2.0** specifically, the first run also *moves* some existing numbers,
 because v1.3.0 converts session times from the log's UTC stamps to your own clock: the
@@ -152,12 +152,13 @@ share. Ship and item pictures load from RSI and starcitizen.tools when you view 
 
 ## What's in the dashboard
 
-A left sidebar of sections, with an **On this page** list of the open tab's groups on
-long tabs (click to jump, the group you're reading lights up); a top bar with an
-**account** dropdown, a **patch** dropdown (*Career*, then every patch found in your
-logs), a light/dark toggle, and Refresh. The page uses the full width of your window.
-Every section is scoped by account × patch. On **Overview**, click any bar in *Playtime by
-Patch* to filter to that patch (and *↩ View career* to reset).
+A left sidebar of pages; a top bar with an **account** dropdown, a **scope** dropdown
+(*Since 4.8 wipe*, which CSR opens on, then *Career*, *Before 4.8 wipe* and every patch
+found in your logs), a light/dark toggle, and Refresh. Each page has a menu across the
+top: one tab per section, with its icon and headline number, and one section on screen
+at a time. The layout fits phones and tablets too. Everything is scoped by account ×
+scope. On **Overview**, click any bar in *Playtime by Patch* to filter to that patch (and
+*↩ Since 4.8 wipe* to go back).
 
 - **Overview** — RSI profile, snapshot KPIs, click-to-filter playtime-by-patch,
   signature top-3 ships (by time aboard) & guns with artwork

@@ -5,7 +5,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and CSR
 uses [Semantic Versioning](https://semver.org/) (MAJOR.MINOR.PATCH).
 
 
-## [Unreleased]
+## [1.11.0] — 2026-11-24
 
 ### Added
 - **Since the 4.8 wipe, and before it.** Two new scopes next to Career and the patches.
