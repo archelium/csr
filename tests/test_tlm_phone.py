@@ -191,14 +191,14 @@ class PhoneConfigTests(_PhoneBase):
     def test_error_names_busy_ports(self):
         import socket
         blocker = socket.socket()
-        blocker.bind(("0.0.0.0", 0))
+        blocker.bind(("127.0.0.1", 0))
         busy = blocker.getsockname()[1]
         try:
             sc_stats.save_tlm_settings({"phone": True})
             sc_stats.new_phone_key()
             msg = sc_stats.phone_sync_error(port_range=range(busy, busy + 1),
                                             live=lambda: LIVE, on_seen=lambda: None,
-                                            host="0.0.0.0")
+                                            host="127.0.0.1")
         finally:
             blocker.close()
         self.assertIn("no free port", msg)

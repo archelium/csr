@@ -11711,7 +11711,8 @@ function tlmRecText(r){
   r=r||{};
   if(r.state==='live') return 'Recording · '+tlmMB(r.bytes||0);
   if(r.state==='waiting') return 'Waiting for the game';
-  if(r.state==='off' && r.reason==='port') return 'Telemetry off in the game';
+  if(r.state==='off') return r.reason==='schema' ? 'No telemetry schema for this game build.'
+    : 'Telemetry off in the game';
   return 'Not running';
 }
 function tlmErr(t){ const e=$('#tlmErr'); if(e) e.textContent=t||''; }
@@ -11727,21 +11728,27 @@ function tlmSave(change){
 }
 function tlmRenderChannels(chs){
   const box=$('#tlmChannels'); if(!box) return;
-  box.innerHTML=Object.keys(chs||{}).map(lab=>{
+  box.textContent='';
+  Object.keys(chs||{}).forEach(lab=>{
     const c=chs[lab]||{};
     const t=c.applied?'On in the game':(c.line?'Line added. Takes effect next launch.':'Off in the game');
-    return `<div class="tlmrow"><span class="tlml">${esc(lab)}</span><span>${esc(t)}</span>`+
-      (c.line?'':`<button class="mbtn ghost tlmbtn" id="tlmEnable-${esc(lab)}" data-ch="${esc(lab)}">Turn on</button>`)+
-      `</div>`;
-  }).join('');
-  box.querySelectorAll('button[data-ch]').forEach(b=>{
-    b.onclick=()=>confirmBtn(b,'Confirm',()=>{
-      tlmErr('');
-      tlmPost('/api/telemetry/enable',{channel:b.dataset.ch}).then(res=>{
-        if(!res.ok) tlmErr(res.msg||'Could not change user.cfg.');
-        tlmLoad();
-      }).catch(()=>tlmErr('Lost contact with CSR.'));
-    });
+    const row=document.createElement('div'); row.className='tlmrow';
+    const n=document.createElement('span'); n.className='tlml'; n.textContent=lab;
+    const m=document.createElement('span'); m.textContent=t;
+    row.append(n,m);
+    if(!c.line){
+      const b=document.createElement('button');
+      b.className='mbtn ghost tlmbtn'; b.id='tlmEnable-'+lab; b.textContent='Turn on';
+      b.onclick=()=>confirmBtn(b,'Confirm',()=>{
+        tlmErr('');
+        tlmPost('/api/telemetry/enable',{channel:lab}).then(res=>{
+          if(!res.ok) tlmErr(res.msg||'Could not change user.cfg.');
+          tlmLoad();
+        }).catch(()=>tlmErr('Lost contact with CSR.'));
+      });
+      row.append(b);
+    }
+    box.append(row);
   });
 }
 function tlmRender(st){
@@ -11788,10 +11795,14 @@ $('#tlmDetail').onchange=e=>tlmSave({detail:e.target.value});
 $('#tlmKeep').onchange=e=>tlmSave({keep_days:e.target.value===''?null:+e.target.value});
 $('#tlmPhone').onchange=e=>tlmSave({phone:e.target.checked});
 $('#tlmNewLink').onclick=()=>{
-  tlmPost('/api/telemetry/new-link').then(res=>{ if(!res.ok) tlmErr(res.error); tlmLoad(); });
+  tlmErr('');
+  tlmPost('/api/telemetry/new-link').then(res=>{ if(!res.ok) tlmErr(res.error||'Could not save.'); tlmLoad(); })
+    .catch(()=>tlmErr('Lost contact with CSR.'));
 };
 $('#tlmDeleteAll').onclick=()=>confirmBtn($('#tlmDeleteAll'),'Confirm. Deletes every recording. Career stats stay.',()=>{
-  tlmPost('/api/telemetry/delete-all').then(()=>tlmLoad());
+  tlmErr('');
+  tlmPost('/api/telemetry/delete-all').then(res=>{ if(!res.ok) tlmErr(res.error||'Could not delete.'); tlmLoad(); })
+    .catch(()=>tlmErr('Lost contact with CSR.'));
 });
 let tlmTimer=null;
 function tlmOpen(on){
