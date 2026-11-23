@@ -11,6 +11,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import sc_stats  # noqa: E402
 
 LINE = "grpc.client.server.enabled = true"
+BOM = bytes([0xEF, 0xBB, 0xBF])
 
 
 class _TmpDir(unittest.TestCase):
@@ -73,6 +74,37 @@ class ConfigTests(_TmpDir):
             self.assertIsNone(sc_stats.update_config(keep=4))
         self.assertEqual(sc_stats.load_config(), {"keep": 2})
         self.assertEqual(os.listdir(self.tmp), [sc_stats.CONFIG_NAME])
+
+    def test_config_bom_and_empty(self):
+        with open(sc_stats.config_path(), "wb") as fh:
+            fh.write(BOM + json.dumps({"live_path": "C:/x"}).encode())
+        self.assertEqual(sc_stats.load_config(), {"live_path": "C:/x"})
+        self.assertEqual(sc_stats.remember_folder("C:/y"), {"live_path": "C:/y"})
+        for raw in (b"", b"  \r\n", BOM, BOM + b" \n"):
+            with open(sc_stats.config_path(), "wb") as fh:
+                fh.write(raw)
+            self.assertEqual(sc_stats.load_config(), {})
+            self.assertEqual(sc_stats.remember_folder("C:/z"), {"live_path": "C:/z"})
+            self.assertEqual(sc_stats.load_config(), {"live_path": "C:/z"})
+
+    def test_unreadable_config_error_names_path(self):
+        with open(sc_stats.config_path(), "wb") as fh:
+            fh.write(b"{broken")
+        with mock.patch.object(sc_stats, "cerr") as err:
+            self.assertIsNone(sc_stats.remember_folder("C:/y"))
+        self.assertIn(sc_stats.config_path(), err.call_args[0][0])
+
+    def test_settings_reply_survives_status_error(self):
+        saved = sc_stats.save_tlm_settings({"detail": "light", "phone_key": "secret"})
+
+        def boom():
+            raise RuntimeError("x")
+
+        out = sc_stats.tlm_settings_reply(boom, saved)
+        self.assertTrue(out["ok"])
+        self.assertEqual(out["settings"]["detail"], "light")
+        self.assertNotIn("phone_key", out["settings"])
+        self.assertEqual(sc_stats.tlm_settings_reply(lambda: {"a": 1}, saved), {"ok": True, "a": 1})
 
     def test_tlm_settings_defaults(self):
         s = sc_stats.tlm_settings()
@@ -249,12 +281,54 @@ class ChannelNowTests(_TmpDir):
             os.utime(os.path.join(old, "Game.log"), (t, t))
             self.assertEqual(sc_stats.tlm_channel_now(), ("LIVE", old))
 
+    def test_tlm_channel_now_stale_log(self):
+        d = os.path.join(self.tmp, "LIVE")
+        os.makedirs(d)
+        log = os.path.join(d, "Game.log")
+        with open(log, "w") as fh:
+            fh.write("x")
+        t = time.time()
+        os.utime(log, (t - 660, t - 660))
+        with mock.patch.dict(sc_stats._CHANNEL_DIRS, {"LIVE": d}, clear=True):
+            self.assertIsNone(sc_stats.tlm_channel_now())
+            os.utime(log, (t - 500, t - 500))
+            self.assertEqual(sc_stats.tlm_channel_now(), ("LIVE", d))
+
     def test_tlm_channel_now_none(self):
         with mock.patch.dict(sc_stats._CHANNEL_DIRS, {"LIVE": os.path.join(self.tmp, "x")},
                              clear=True):
             self.assertIsNone(sc_stats.tlm_channel_now())
         with mock.patch.dict(sc_stats._CHANNEL_DIRS, {}, clear=True):
             self.assertIsNone(sc_stats.tlm_channel_now())
+
+
+class RouteTests(unittest.TestCase):
+    def test_live_get_counts_as_seen(self):
+        state = {"seen": 0.0}
+        seen = lambda: state.__setitem__("seen", time.time())  # noqa: E731
+        body = sc_stats.tlm_api_get("/api/telemetry/live", lambda: {"state": "live", "x": float("nan")},
+                                    lambda: {"status": 1}, seen)
+        self.assertEqual(json.loads(body), {"state": "live", "x": None})
+        self.assertGreater(state["seen"], time.time() - 5)
+        state["seen"] = 0.0
+        body = sc_stats.tlm_api_get("/api/telemetry/status", lambda: {}, lambda: {"status": 1}, seen)
+        self.assertEqual(json.loads(body), {"status": 1})
+        self.assertEqual(state["seen"], 0.0)
+
+    def test_local_request(self):
+        ok = sc_stats.local_request_ok
+        for host in ("127.0.0.1:7931", "localhost:7931", "LOCALHOST:7931"):
+            self.assertTrue(ok("GET", {"Host": host}, 7931))
+            self.assertTrue(ok("POST", {"Host": host}, 7931))
+        for origin in ("http://127.0.0.1:7931", "http://localhost:7931"):
+            self.assertTrue(ok("POST", {"Host": "127.0.0.1:7931", "Origin": origin}, 7931))
+        for host in ("evil.example:7931", "127.0.0.1:7878", "127.0.0.1", "", None):
+            self.assertFalse(ok("GET", {"Host": host} if host is not None else {}, 7931), host)
+        for origin in ("http://evil.example", "http://127.0.0.1:7878", "null",
+                       "https://127.0.0.1:7931", ""):
+            self.assertFalse(ok("POST", {"Host": "127.0.0.1:7931", "Origin": origin}, 7931), origin)
+        # a foreign Origin on a GET is the browser's business: the page can't read the reply
+        self.assertTrue(ok("GET", {"Host": "127.0.0.1:7931", "Origin": "http://evil.example"}, 7931))
 
 
 class JsonSafeTests(unittest.TestCase):

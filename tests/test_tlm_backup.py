@@ -196,6 +196,25 @@ class Import(BackupBase):
         e = {"file": "20260501-100000.jsonl.gz", "sum": {"a": "x" * 300000}}
         self.assertEqual(sc_stats.import_telemetry([e], {}, root=self.root_b), 0)
 
+    def test_sum_values_checked(self):
+        ok_sum = {"dist_m": 5.0, "takeoffs": 2, "warn": {"pwr": 1}, "t_ifcs": {"esp": 2.5},
+                  "uec_series": [["2026-05-01T10:00:00", 100]]}
+        bads = ({"dist_m": "5"}, {"dist_m": True}, {"warn": {"pwr": "1"}}, {"warn": [1]},
+                {"uec_series": {"a": 1}}, {"uec_series": [["t"]]}, {"uec_series": [[1, 2]]},
+                {"dist_m": None}, {"dist_m": float("nan")}, {"warn": {"pwr": {"x": 1}}})
+        es = [{"file": "20260501-100000.jsonl.gz", "sum": ok_sum}]
+        es += [{"file": "2026050%d-100000.jsonl.gz" % (i + 2) if i < 8 else
+                "2026051%d-100000.jsonl.gz" % i, "sum": b} for i, b in enumerate(bads)]
+        self.assertEqual(sc_stats.import_telemetry(es, {}, root=self.root_b), 1)
+        self.assertEqual(st.load_index(self.root_b)["20260501-100000.jsonl.gz"]["sum"], ok_sum)
+
+    def test_imported_file_not_recent(self):
+        with open(st.recording_files(self.root)[0], "rb") as f:
+            data = f.read()
+        self.assertEqual(sc_stats.import_telemetry([], {"LIVE/20260501-100000.jsonl.gz": data},
+                                                   root=self.root_b), 1)
+        self.assertEqual(list(st.refresh_index(self.root_b)), ["20260501-100000.jsonl.gz"])
+
     def test_existing_entries_untouched(self):
         name = "20260501-100000.jsonl.gz"
         before = dict(st.load_index(self.root)[name])

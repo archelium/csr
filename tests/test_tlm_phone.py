@@ -203,6 +203,8 @@ class PhoneConfigTests(_PhoneBase):
             blocker.close()
         self.assertIn("no free port", msg)
         self.assertIn(str(busy), msg)
+        st = sc_stats.phone_status()
+        self.assertEqual((st["on"], st["url"], st["why"]), (True, None, "ports"))
 
     def test_error_names_unreadable_config(self):
         sc_stats.save_tlm_settings({"phone": True})
