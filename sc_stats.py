@@ -8140,6 +8140,9 @@ nav a::after{background:var(--menu-bg);border-color:var(--glass-line);box-shadow
 .chead{border-bottom:1px solid var(--line)!important;padding-top:0!important}
 .chead .ccol{font-family:var(--font-mono);font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
 .bsq.on.new{background:var(--amber);border-color:var(--amber)}
+[data-bpplan]{cursor:pointer}
+.bsq[data-bpplan]:hover,.bdot[data-bpplan]:hover{outline:2px solid var(--cyan);outline-offset:1px}
+.ac[data-bpplan]:hover{border-color:var(--cyan)}
 .alb{display:grid;grid-template-columns:repeat(auto-fill,minmax(168px,1fr));gap:10px}
 .ac{position:relative;background:var(--tile);border:1px solid var(--track-line);border-radius:8px;overflow:hidden;display:flex;flex-direction:column;min-width:0}
 .ac .pic{position:relative;aspect-ratio:16/10;display:grid;place-items:center;color:rgba(91,209,230,.35);
@@ -9389,7 +9392,7 @@ function bpBoardHTML(catalog){
   const setRow=s=>{ const labels=BP_SLOTS[s.cat]||[];
     const sq=labels.map((L,i)=>{ const p=s.pcs.filter(x=>x.si===i);
       if(!p.length) return `<i class="bsq na" title="no ${L.toLowerCase()} in the catalogue for this set"></i>`;
-      return p.map(x=>`<i class="bsq ${x.on?'on':''}" title="${esc(x.n)} — ${x.on?'owned':'missing'}">${L[0]}</i>`).join(''); }).join('');
+      return p.map(x=>`<i class="bsq ${x.on?'on':''}" data-bpplan="${esc(x.key)}" title="${esc(x.n)} — ${x.on?'owned':'missing'} · click for its missions">${L[0]}</i>`).join(''); }).join('');
     const togo=s.pcs.filter(p=>!p.on).map(p=>labels[p.si]||'').filter(Boolean);
     const tail= s.o===s.t ? `<span class="bsgo done">complete</span>`
       : s.o ? `<span class="bsgo" title="${esc(togo.join(', '))}">${esc(togo.join(', '))} to go</span>`
@@ -9409,7 +9412,7 @@ function bpBoardHTML(catalog){
   const started=ladders.filter(f=>f.o), rest=ladders.filter(f=>!f.o);
   const lad=f=>{ const dots=Array.from({length:maxS},(_,i)=>i+1).map(s=>{ const p=f.sz.find(x=>x.s===s);
       if(!p) return `<i class="bdot na"></i>`;
-      return `<i class="bdot ${p.on?'on':''}" title="${esc(p.n)} — ${p.on?'owned':'missing'}">${s}</i>`; }).join('');
+      return `<i class="bdot ${p.on?'on':''}" data-bpplan="${esc(p.key)}" title="${esc(p.n)} — ${p.on?'owned':'missing'} · click for its missions">${s}</i>`; }).join('');
     return `<div class="blad"><span class="bsn bxa">${artBox('bp', f.name, 0, 'bxth')}<span>${esc(f.name)}<span class="bpk">${esc(f.kind)}</span></span></span><span class="bsl">${dots}</span><span class="bsc">${f.o}<span class="u">/${f.t}</span></span></div>`; };
   const restH=rest.length?(bpFamAll?rest.map(lad).join(''):'')+`<button class="foot-link" data-bpfa="1">${bpFamAll?'Hide':'Show'} the ${fmt(rest.length)} you haven\u2019t started</button>`:'';
   const singlesOwned=singles.filter(f=>f.o).length;
@@ -9423,7 +9426,7 @@ function bpBoardHTML(catalog){
   const on=r=>has(r[0],r[1]), fresh=r=>{ const d=recv[r[0]]||recv['n:'+r[1].toLowerCase()]; return d && Date.parse(d)>=cut; };
   const sq=(r,label)=>{ const m=meta(r), o=on(r);
     const t=[r[1], m[0]&&m[0]+(m[1]?' grade '+m[1]:''), m[2]].filter(Boolean).join(' \u00b7 ')+(o?' \u2014 owned':' \u2014 missing');
-    return `<i class="bsq ${o?(fresh(r)?'on new':'on'):''}" title="${esc(t)}">${esc(label||'')}</i>`; };
+    return `<i class="bsq ${o?(fresh(r)?'on new':'on'):''}" data-bpplan="${esc(r[0])}" title="${esc(t)} · click for its missions">${esc(label||'')}</i>`; };
   const pic=rs=>{ const img=catalog.img||{}, r=rs.find(x=>on(x)&&img[x[0]])||rs.find(x=>img[x[0]]);
     return `<span class="bxth ph">${ICON.blueprints}${r?artImg(artUrls(img[r[0]],0)):''}</span>`; };
   const status=rs=>{ const o=rs.filter(on).length; return o===rs.length?'complete':o?'partial':'untouched'; };
@@ -9514,7 +9517,7 @@ function bpAlbumList(catalog){
       out+=`<div class="agh"><b>${esc(g)}</b><span>${fmt(all.filter(on).length)} of ${fmt(all.length)}</span></div><div class="alb">`; last=g; }
     const m=meta(r), o=on(r), d=recv[r[0]]||recv['n:'+r[1].toLowerCase()], nw=o&&d&&Date.parse(d)>=cut, z=sizeOf(r);
     const st = o ? (nw?'NEW \u00b7 '+ddmm(d).slice(0,6):'OWNED') : r[5] ? 'default' : (r[6]?fmt(r[6])+(r[6]===1?' mission':' missions'):'missing');
-    out+=`<div class="ac ${o?'on':''} ${nw?'new':''}" title="${esc(r[1])}"><div class="pic">${ICON.blueprints}${img[r[0]]?artImg(artUrls(img[r[0]],1)):''}<span class="st">${st}</span></div>`+
+    out+=`<div class="ac ${o?'on':''} ${nw?'new':''}" data-bpplan="${esc(r[0])}" title="${esc(r[1])} · click for its missions"><div class="pic">${ICON.blueprints}${img[r[0]]?artImg(artUrls(img[r[0]],1)):''}<span class="st">${st}</span></div>`+
       `<div class="bd"><div class="nm">${esc(r[1])}</div><div class="cp">${z!=null?`<i>S${z}</i>`:''}${m[0]?`<i>${BP_CLS_SHORT[m[0]]||esc(m[0])}</i>`:''}`+
       `${m[1]?`<i class="g${esc(m[1])}">${esc(m[1])}</i>`:''}${m[2]?`<i>${esc(m[2])}</i>`:''}</div></div></div>`; });
   out+='</div>';
@@ -9582,10 +9585,13 @@ function secBlueprints(v){
       `Only the Received Blueprint notice is logged; the library itself sits on CIG\u2019s servers. Blueprints from before 4.7, or from another PC whose logs weren\u2019t imported, won\u2019t appear. Language packs (StarStrings, ScCompLangPack) rename items in the notice; CSR matches them back to the real item and keeps your wording as a search alias. <span class="bpx">\u00d72</span> marks a duplicate drop. PTU and Tech Preview run a copy of your account and get their own libraries. Armour sets are read off the game\u2019s item ids (pieces of one set share a variant number), ship-weapon families off the class with the size removed; single pieces aren\u2019t sets and only show in the list.${catalog?` Missing is measured against the SC-Wiki\u2019s extraction of the game data (${fmt(catalog.n)} blueprints, ${esc(String(catalog.version||'').split('-')[0])}), which includes blueprints you can\u2019t get yet — a wish-list, not a to-do list.`:''}`);
   const plan=()=>{ const el=$('#bpPlan'); if(!el) return; el.innerHTML=bpPlanHTML(); wirePlan(); };
   const wirePlan=()=>{
-    document.querySelectorAll('#content [data-bpplan]').forEach(b=>b.onclick=()=>{
-      bpPlanKey=b.dataset.bpplan; const r=(DATA.bp_catalog.rows||[]).find(x=>x[0]===bpPlanKey); if(r) bpPlanQ=r[1];
-      plan(); const el=$('#bpPlan'); if(el) scrollToY(el.getBoundingClientRect().top+window.pageYOffset-160);
-    });
+    const c=$('#content');
+    if(c && !c.dataset.bpplanWired){ c.dataset.bpplanWired='1';
+      c.addEventListener('click', e=>{ const b=e.target.closest('[data-bpplan]'); if(!b || !c.contains(b) || !$('#bpPlan')) return;
+        e.preventDefault();
+        bpPlanKey=b.dataset.bpplan; const r=(DATA.bp_catalog.rows||[]).find(x=>x[0]===bpPlanKey); if(r) bpPlanQ=r[1];
+        const el=$('#bpPlan'); if(!el) return; el.innerHTML=bpPlanHTML(); wirePlan();
+        scrollToY(el.getBoundingClientRect().top+window.pageYOffset-160); }); }
     const pq=$('#bpPlanQ'); if(pq){ pq.oninput=()=>{ bpPlanQ=pq.value; bpPlanKey=''; const o=$('#bpPlan'); if(o){ o.innerHTML=bpPlanHTML(); wirePlan(); const nq=$('#bpPlanQ'); if(nq){ nq.focus(); nq.setSelectionRange(nq.value.length,nq.value.length); } } }; }
   };
   const draw=()=>{ const el=$('#bpList'); if(!el) return; el.innerHTML=bpListHTML(v); wire(); wirePlan(); };

@@ -20,6 +20,9 @@ uses [Semantic Versioning](https://semver.org/) (MAJOR.MINOR.PATCH).
 - **Album** under the boards: every blueprint as a card with its picture, size, class,
   grade and maker. One category at a time, owned or missing, search. A missing card
   says how many missions drop it.
+- **Click any blueprint for its missions.** Every square, set piece, ladder dot and album
+  card opens the planner on it: the missions that drop it, the standing each needs, the
+  drop chance and a wiki link per mission.
 
 ### Changed
 - **Crafting catalogue updated to 4.10.3**: 1,628 blueprints. The Skarnov rifle and its
