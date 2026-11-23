@@ -361,9 +361,10 @@ def _request_headers(authority, path):
 
 
 class GrpcStream:
-    """One server-streaming call. Yields raw gRPC message payloads."""
+    """One server-streaming call. Yields raw gRPC message payloads.
+    With read_timeout set, messages() yields None whenever that long passes without data."""
 
-    def __init__(self, host, port, path, request=b"", timeout=5.0):
+    def __init__(self, host, port, path, request=b"", timeout=5.0, read_timeout=None):
         self.sock = socket.create_connection((host, port), timeout=timeout)
         self.sock.settimeout(None)
         self.buf = b""
@@ -374,6 +375,7 @@ class GrpcStream:
         out += _frame(HEADERS, F_END_HEADERS, 1, _request_headers(f"{host}:{port}", path))
         out += _frame(DATA, F_END_STREAM, 1, b"\x00" + struct.pack(">I", len(request)) + request)
         self.sock.sendall(out)
+        self.sock.settimeout(read_timeout)
         self.received = 0
 
     def close(self):
@@ -392,11 +394,25 @@ class GrpcStream:
         b, self.buf = self.buf[:n], self.buf[n:]
         return b
 
+    def _need(self, n):
+        """Wait until n bytes are buffered. A timeout leaves the buffer as it was."""
+        while len(self.buf) < n:
+            chunk = self.sock.recv(65536)
+            if not chunk:
+                raise ConnectionError("game closed the connection")
+            self.buf += chunk
+
     def messages(self):
         grpc_buf = b""
         while True:
+            try:
+                self._need(9)
+                ln = int.from_bytes(self.buf[:3], "big")
+                self._need(9 + ln)
+            except socket.timeout:
+                yield None
+                continue
             hdr = self._read(9)
-            ln = int.from_bytes(hdr[:3], "big")
             ftype, flags = hdr[3], hdr[4]
             stream = int.from_bytes(hdr[5:9], "big") & 0x7FFFFFFF
             payload = self._read(ln)
@@ -686,12 +702,17 @@ POLL_S = 1.0           # how often the game and the record flag are re-checked w
 IDLE_S = 1.0           # re-check interval while the game is not running
 ERROR_BACKOFF_S = 5.0  # after an unexpected error
 CONNECT_TIMEOUT_S = 2.0
+SILENT_S = 15.0        # connected but no frames this long -> drop and reconnect
 EVENT_KEEP = 50
 
 
 class Recorder:
     """Background thread: connects to the game's telemetry port while the game runs and
     writes one recording file per connected stretch.
+
+    status()["reason"]: "port" (state off, refused for OFF_AFTER_S), "schema" (state off, no
+    schema from the exe or cache), "channel" (state waiting, pick_channel found nothing),
+    "error" (state waiting, unexpected error in the loop). Empty otherwise.
 
     Locking: `_lock` guards status and live data (`_st`, `_live`, `_events`, `_stream`,
     `_writer`). Only the recorder thread uses the writer. stop() sets `_stop` and closes the
@@ -720,8 +741,13 @@ class Recorder:
     # -- public ---------------------------------------------------------------
 
     def start(self):
-        if self._thread and self._thread.is_alive():
-            return
+        old = self._thread
+        if old and old.is_alive():
+            if not self._stop.is_set():
+                return
+            old.join(CONNECT_TIMEOUT_S + 2.0)
+            if old.is_alive():
+                return
         self._stop.clear()
         self._thread = threading.Thread(target=self._run, name="tlm-recorder", daemon=True)
         self._thread.start()
@@ -813,16 +839,23 @@ class Recorder:
             return IDLE_S
         picked = self.pick_channel()
         if not picked:
-            self._set("idle", "channel")
+            self._set("waiting", "channel", file="", frames=0)
             return IDLE_S
         label, cdir = picked
         self._set(channel=label)
+        if self._stop.is_set():
+            return 0
         schema = self._schema_for(label, cdir)
+        if self._stop.is_set():
+            return 0
         if schema is None:
             self._set("off", "schema")
             return RETRY_S
+        if self._st["state"] == "idle" or self._st["reason"] == "channel":
+            self._set("waiting", "")
         try:
-            stream = GrpcStream(self.host, self.port, STREAM_PATH, timeout=CONNECT_TIMEOUT_S)
+            stream = GrpcStream(self.host, self.port, STREAM_PATH, timeout=CONNECT_TIMEOUT_S,
+                                read_timeout=POLL_S)
         except OSError:
             now = time.monotonic()
             if refused[0] is None:
@@ -875,7 +908,7 @@ class Recorder:
     def _open_file(self, label, cdir, schema, settings):
         folder = os.path.join(self.root, label)
         os.makedirs(folder, exist_ok=True)
-        now = datetime.now().replace(microsecond=0)
+        now = datetime.now(timezone.utc).replace(microsecond=0).astimezone()
         while True:
             path = os.path.join(folder, now.strftime("%Y%m%d-%H%M%S") + ".jsonl.gz")
             if not os.path.exists(path):
@@ -883,8 +916,8 @@ class Recorder:
             now += timedelta(seconds=1)
         header = {"v": 1, "csr": settings.get("csr"), "channel": label,
                   "build": self._build_of(cdir),
-                  "started": datetime.now().replace(microsecond=0).isoformat(),
-                  "started_utc": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+                  "started": now.replace(tzinfo=None).isoformat(),
+                  "started_utc": now.astimezone(timezone.utc).replace(tzinfo=None).isoformat(),
                   "schema": schema.hash}
         w = RecordingWriter(path, header, settings.get("detail", "normal"),
                             settings.get("groups") or DEFAULT_GROUPS)
@@ -895,19 +928,26 @@ class Recorder:
 
     def _read(self, stream, schema, label, cdir):
         settings = self.get_settings() or {}
-        last_check = time.monotonic()
+        last_check = last_frame = time.monotonic()
         file_t0 = 0.0
+        broken = False   # a write failed: no more files on this connection
         for raw in stream.messages():
             if self._stop.is_set():
                 return
             mono = time.monotonic()
-            if mono - last_check >= POLL_S:
+            if raw is not None:
+                last_frame = mono
+            elif mono - last_frame >= SILENT_S:
+                return
+            if raw is None or mono - last_check >= POLL_S:
                 last_check = mono
                 if self.game_running() is False:
                     return
                 settings = self.get_settings() or {}
                 if not settings.get("record") and self._writer is not None:
                     self._close_file()
+            if raw is None:
+                continue
             try:
                 frame = schema.decode(RESP_TYPE, raw)
                 flat = flatten(frame)
@@ -924,12 +964,13 @@ class Recorder:
                 self._st["frames"] += 1
             if self._st["state"] != "live":
                 self._set("live", "")
-            if settings.get("record"):
-                w = self._writer
-                if w is None:
-                    w = self._open_file(label, cdir, schema, settings)
-                    file_t0 = mono
+            if settings.get("record") and not broken:
                 try:
+                    w = self._writer
+                    if w is None:
+                        w = self._open_file(label, cdir, schema, settings)
+                        file_t0 = mono
                     w.add(mono - file_t0, flat, evs)
                 except Exception:
+                    broken = True
                     self._close_file()

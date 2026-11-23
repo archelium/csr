@@ -232,5 +232,116 @@ class RecorderTests(unittest.TestCase):
             self.assertTrue(wait_for(lambda: rec.status()["state"] == "live"))
 
 
+    def test_silent_stream_record_off_applies(self):
+        rig = Rig(self)
+        with StreamServer([{"frames": frames(3), "gap": 0.01, "end": "silent"}]) as srv:
+            rec = rig.make(srv.port)
+            rec.start()
+            self.assertTrue(wait_for(lambda: rec.status()["file"] != ""))
+            time.sleep(0.2)
+            rig.settings["record"] = False
+            self.assertTrue(wait_for(lambda: len(rig.closed) == 1, 1.5))
+            self.assertEqual(rec.status()["state"], "live")
+
+    def test_silent_stream_game_exit_goes_idle(self):
+        rig = Rig(self)
+        with StreamServer([{"frames": frames(3), "gap": 0.01, "end": "silent"}]) as srv:
+            rec = rig.make(srv.port)
+            rec.start()
+            self.assertTrue(wait_for(lambda: rec.status()["file"] != ""))
+            time.sleep(0.2)
+            rig.running = False
+            self.assertTrue(wait_for(lambda: len(rig.closed) == 1, 1.5))
+            self.assertTrue(wait_for(lambda: rec.status()["state"] == "idle", 1.5))
+            self.assertFalse(rec.connected)
+
+    def test_silent_past_limit_reconnects(self):
+        rig = Rig(self)
+        plans = [{"frames": frames(3), "gap": 0.01, "end": "silent"},
+                 {"frames": frames(3, 900), "gap": 0.01, "end": "silent"}]
+        with mock.patch.object(tlm, "SILENT_S", 0.4), StreamServer(plans) as srv:
+            rec = rig.make(srv.port)
+            rec.start()
+            self.assertTrue(wait_for(lambda: len(rig.closed) == 1, 3.0))
+            self.assertTrue(wait_for(lambda: rec.status()["state"] == "waiting", 1.0))
+            self.assertTrue(wait_for(lambda: srv.accepted == 2, 3.0))
+            self.assertTrue(wait_for(lambda: len(rig.closed) == 2, 3.0))
+
+    def test_channel_none_is_waiting(self):
+        rig = Rig(self)
+        rec = tlm.Recorder(rig.root, lambda: dict(rig.settings), lambda: True,
+                           lambda: None, rig.closed.append, port=free_port())
+        rig.rec = rec
+        rec.start()
+        self.assertTrue(wait_for(lambda: rec.status()["state"] == "waiting"))
+        self.assertEqual(rec.status()["reason"], "channel")
+
+    def test_waiting_before_first_connect(self):
+        rig = Rig(self)
+        seen = []
+
+        def slow(*a, **k):
+            seen.append(rec.status()["state"])
+            raise ConnectionRefusedError("x")
+
+        with mock.patch.object(tlm, "GrpcStream", slow):
+            rec = rig.make(free_port())
+            rec.start()
+            self.assertTrue(wait_for(lambda: seen))
+        self.assertEqual(seen[0], "waiting")
+
+    def test_write_failure_stops_recording_this_connection(self):
+        rig = Rig(self)
+        opened = []
+        real = tlm.RecordingWriter
+
+        class Bad(real):
+            def __init__(self, *a, **k):
+                super().__init__(*a, **k)
+                opened.append(1)
+
+            def add(self, *a, **k):
+                raise OSError("disk")
+
+        with mock.patch.object(tlm, "RecordingWriter", Bad), \
+                StreamServer([{"frames": frames(5), "gap": 0.01, "end": "hold"}]) as srv:
+            rec = rig.make(srv.port)
+            rec.start()
+            self.assertTrue(wait_for(lambda: rec.status()["frames"] >= 15))
+        self.assertEqual(len(opened), 1)
+        self.assertEqual(len(rig.closed), 1)
+
+    def test_header_started_matches_filename(self):
+        rig = Rig(self)
+        os.makedirs(os.path.join(rig.root, "LIVE"))
+        with StreamServer([{"frames": frames(3), "gap": 0.01, "end": "hold"}]) as srv:
+            rec = rig.make(srv.port)
+            real_now = tlm.datetime
+            # occupy this second's and the next second's file names
+            stamp = real_now.now()
+            for d in (0, 1, 2):
+                n = (stamp + tlm.timedelta(seconds=d)).strftime("%Y%m%d-%H%M%S")
+                open(os.path.join(rig.root, "LIVE", n + ".jsonl.gz"), "w").close()
+            rec.start()
+            self.assertTrue(wait_for(lambda: rec.status()["file"] != ""))
+            path = rec.status()["file"]
+            rec.stop()
+        header, _ = tlm.read_recording(path)
+        name = os.path.basename(path)[:-len(".jsonl.gz")]
+        self.assertEqual(header["started"].replace("-", "").replace(":", "").replace("T", "-"), name)
+        self.assertNotIn("+", header["started"])
+
+    def test_start_after_stop_runs(self):
+        rig = Rig(self)
+        with StreamServer([{"frames": frames(3), "gap": 0.01, "end": "hold"}]) as srv:
+            rec = rig.make(srv.port)
+            rec.start()
+            self.assertTrue(wait_for(lambda: rec.status()["state"] == "live"))
+            rec.stop()
+            rec.start()
+            self.assertTrue(wait_for(lambda: rec.status()["state"] == "live"))
+            self.assertTrue(rec.connected)
+
+
 if __name__ == "__main__":
     unittest.main()

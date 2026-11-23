@@ -161,5 +161,46 @@ class StreamTests(unittest.TestCase):
         self.assertIn("trailers", str(cm.exception))
 
 
+    def test_stream_ticks_in_silence_and_resumes_split_frame(self):
+        import socket
+        import threading
+        import time
+        msg = enc_field(6, 2, enc_field(2, 2, enc_field(4, 0, 42)))
+        g = b"\x00" + struct.pack(">I", len(msg)) + msg
+        data = tlm._frame(tlm.DATA, 0, 1, g)
+        srv = socket.socket()
+        srv.bind(("127.0.0.1", 0))
+        srv.listen(1)
+
+        def serve():
+            c, _ = srv.accept()
+            c.recv(65536)
+            c.sendall(tlm._frame(tlm.SETTINGS, 0, 0))
+            time.sleep(0.25)               # silence
+            c.sendall(data[:4])            # cut inside the frame header
+            time.sleep(0.25)
+            c.sendall(data[4:12])          # cut inside the payload
+            time.sleep(0.25)
+            c.sendall(data[12:])
+            time.sleep(0.5)
+            c.close()
+
+        t = threading.Thread(target=serve, daemon=True)
+        t.start()
+        call = tlm.GrpcStream(tlm.HOST, srv.getsockname()[1], tlm.STREAM_PATH, read_timeout=0.05)
+        got = []
+        try:
+            for m in call.messages():
+                got.append(m)
+                if m is not None:
+                    break
+        finally:
+            call.close()
+            srv.close()
+        self.assertEqual(got[-1], msg)
+        self.assertGreaterEqual(got.count(None), 3)
+        self.assertEqual([m for m in got if m is not None], [msg])
+
+
 if __name__ == "__main__":
     unittest.main()

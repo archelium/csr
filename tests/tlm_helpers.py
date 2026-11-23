@@ -271,6 +271,8 @@ class StreamServer:
                 c.sendall(tlm._frame(tlm.DATA, 0, 1, g))
                 if gap:
                     time.sleep(gap)
+            if end == "silent":   # stay connected, send nothing more
+                self._stop.wait(30)
             if end == "trailers":
                 c.sendall(tlm._frame(tlm.HEADERS, tlm.F_END_HEADERS | tlm.F_END_STREAM, 1,
                                      b"\x00\x0bgrpc-status\x010"))
