@@ -39,6 +39,16 @@ class PageTests(unittest.TestCase):
                   "Testudo set", "2 medpens", "hull 92%", "48 decoys", "Testudo · medium"):
             self.assertNotIn(s, self.html, s)
 
+    def test_log_pages_and_empty_states(self):
+        for i in ('id="page-msn"', 'id="page-feed"', 'id="page-nav"', 'id="page-ppl"',
+                  "No contracts yet", "No notices yet", "No ships destroyed nearby"):
+            self.assertIn(i, self.html, i)
+
+    def test_no_party_or_demo_stops(self):
+        for s in ('id="pplParty"', 'id="navParty"', "NAMES SEEN", 'Port Tressler<span class="r">', "ARC-L4 · 42 Gm", "42 min ago",
+                  "partyRender()"):
+            self.assertNotIn(s, self.html, s)
+
     def test_deck_is_state_only(self):
         for s in ("SET MODE", "<small>emote</small>", "request pad", "v_toggle_", "v_set_", "act:'"):
             self.assertNotIn(s, self.html, s)

@@ -1206,6 +1206,13 @@ body{background:#07090a!important}
 
 .deck.foot.emotes:empty{display:none}
 
+.needbox[hidden],#needFull[hidden]{display:none!important}
+#app:not(.portrait):not(.phone) #page-feed.on{grid-template-columns:minmax(0,1fr)}
+#app:not(.portrait):not(.phone) #page-feed>.panel{grid-column:1!important;grid-row:1!important}
+#app:not(.portrait):not(.phone) #page-ppl.on{grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(0,1fr) auto}
+#app:not(.portrait):not(.phone) #page-ppl .pplships{grid-column:1;grid-row:1}
+#app:not(.portrait):not(.phone) #page-ppl>.panel:last-child{grid-column:1;grid-row:2}
+
 .waitp{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);z-index:50;display:flex;flex-direction:column;gap:6px;align-items:center;padding:18px 26px;background:rgba(4,14,20,.94);border:1px solid var(--c2);border-radius:4px;color:var(--hi);font-size:13px;text-align:center}.waitp b{font-size:15px;letter-spacing:.12em;color:var(--c)}.waitp span{color:var(--dim);font-size:12px}.waitp[hidden]{display:none}
 """
 
@@ -1282,7 +1289,7 @@ SLATE_BODY = r"""
   <button class="osb cut on" data-p="ship"><svg class="ic"><use href="#t-ship"/></svg>MAIN</button>
   <button class="osb cut" data-p="sys"><svg class="ic"><use href="#i-power"/></svg>SYS</button>
   <button class="osb cut" data-p="msn"><svg class="ic"><use href="#t-msn"/></svg>MSN</button>
-  <button class="osb cut" data-p="feed"><svg class="ic"><use href="#t-feed"/></svg>FEED<span class="bdg" id="bdg">3</span></button>
+  <button class="osb cut" data-p="feed"><svg class="ic"><use href="#t-feed"/></svg>FEED<span class="bdg" id="bdg"></span></button>
   <button class="osb cut" data-p="nav"><svg class="ic"><use href="#t-nav"/></svg>NAV</button>
   <button class="osb cut" data-p="ppl"><svg class="ic"><use href="#t-ppl"/></svg>PPL</button>
   <button class="osb cut" data-p="you"><svg class="ic"><use href="#t-you"/></svg>YOU</button>
@@ -1442,10 +1449,7 @@ SLATE_BODY = r"""
 
   <!-- FEED -->
   <section class="page" id="page-feed">
-   <div class="panel cut">
-    <div class="ph">ANSWER IN GAME<span class="r">closes itself when the log shows the answer</span></div>
-    <div id="needFull"></div>
-   </div>
+   <div id="needFull" hidden></div>
    <div class="panel cut scrolls" style="flex:1;min-height:0;overflow:auto">
     <div class="filters" id="filters">
      <button class="on" data-f="all">ALL</button><button data-f="msn">MISSIONS</button><button data-f="soc">SOCIAL</button><button data-f="zone">ZONES</button><button data-f="cbt">COMBAT</button><button data-f="pay">MONEY</button>
@@ -1468,12 +1472,9 @@ SLATE_BODY = r"""
       <div class="kv" style="margin-top:8px">ZONE <b id="navZone">—</b></div>
       <div class="kv">JURISDICTION <b id="navJur">—</b></div>
      </div>
-     <div class="panel cut list" id="navParty"></div>
-     <div class="panel cut list">
-      <div class="ph">LAST STOPS</div>
-      <div class="row">Port Tressler<span class="r">42 min ago</span></div>
-      <div class="row">New Babbage · hangar 03<span class="r">1 h 10 min ago</span></div>
-      <div class="row">Seraphim Station<span class="r">3 h ago</span></div>
+          <div class="panel cut list">
+      <div class="ph">RECENT PLACES</div>
+      <div id="navStops"><div class="row unit">No places yet</div></div>
      </div>
     </div>
    </div>
@@ -1481,17 +1482,10 @@ SLATE_BODY = r"""
 
   <!-- PEOPLE -->
   <section class="page" id="page-ppl">
-   <div class="two" style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
-    <div class="panel cut list" id="pplParty"></div>
-    <div class="panel cut list">
-     <div class="ph">SHIPS DESTROYED NEARBY</div>
-     <div id="pplKills"><div class="row unit">No ships destroyed nearby</div></div>
-    </div>
-   </div>
    <div class="panel cut list pplships scrolls" id="pplShips"></div>
    <div class="panel cut list">
     <div class="ph">THIS SESSION<span class="r">from Vehicle Destroyed and Actor Death</span></div>
-    <div class="stiles pplsess"><div class="stile g"><span class="sti"><svg class="ic"><use href="#i-kill"/></svg></span><span class="stl">SHIPS YOU DESTROYED</span><b>4</b></div><div class="stile "><span class="sti"><svg class="ic"><use href="#i-skull"/></svg></span><span class="stl">YOUR DEATHS</span><b>0</b></div><div class="stile dim"><span class="sti"><svg class="ic"><use href="#i-cross"/></svg></span><span class="stl">LAST KILLED BY</span><b>nobody</b></div></div>
+    <div class="stiles pplsess"><div class="stile"><span class="sti"><svg class="ic"><use href="#i-kill"/></svg></span><span class="stl">SHIPS DESTROYED</span><b id="pDst">0</b></div><div class="stile"><span class="sti"><svg class="ic"><use href="#i-skull"/></svg></span><span class="stl">DEATHS</span><b id="pDead">0</b></div><div class="stile"><span class="sti"><svg class="ic"><use href="#i-downed"/></svg></span><span class="stl">DOWNED</span><b id="pDown">0</b></div></div>
    </div>
   </section>
 
@@ -1526,7 +1520,7 @@ SLATE_BODY = r"""
  </main>
 
  <aside class="rail" id="rail">
-  <div class="panel cut needbox"><div class="ph">ANSWER IN GAME<span class="r" id="needcount">3</span></div><div id="needRail"></div></div>
+  <div class="panel cut needbox" hidden><div class="ph">ANSWER IN GAME<span class="r" id="needcount"></span></div><div id="needRail"></div></div>
   <div class="panel cut feedbox" style="flex:1;min-height:0;overflow:hidden"><div class="ph">FEED</div><div id="feedRail"></div></div>
  </aside>
 </div>
@@ -2228,8 +2222,7 @@ function threatBell(){const b=document.querySelector('#bellBtn');if(b)b.outerHTM
 function bellRender(){let p=document.querySelector('#bellPanel');if(!bellOpen){if(p)p.remove();return}
  if(!p){p=document.createElement('div');p.id='bellPanel';p.className='cut';app.appendChild(p)}
  const open=needs.filter(n=>!n.done);
- p.innerHTML=`<div class="ph">ANSWER IN GAME<span class="r">${open.length?open.length+' waiting':''}</span></div>${open.map(needHtml).join('')||'<div class="unit">Nothing waiting.</div>'}
-  <div class="ph" style="margin-top:10px">RECENT</div><div class="bellfeed">${foldFeed(feed,'all').slice(0,8).map(feedRow).join('')}</div>
+ p.innerHTML=`<div class="ph">RECENT</div><div class="bellfeed">${foldFeed(feed,'all').slice(0,8).map(feedRow).join('')||'<div class="unit">No notices yet</div>'}</div>
   <button class="mapbtn bellall" id="bellAll">ALL NOTIFICATIONS ON FEED ▸</button>`;
  p.querySelector('#bellAll').onclick=e=>{e.stopPropagation();closeBell();document.querySelector('#bezel .osb[data-p="feed"]').click()};
  p.querySelectorAll('.need').forEach(el=>el.onclick=e=>{e.stopPropagation();const n=needs.find(x=>x.id==el.dataset.n);n.done='dismissed';needs_();bellRender()})}
@@ -2296,9 +2289,9 @@ function trimDist(){mapFit();document.querySelectorAll('.mapwrap .dist').forEach
  for(let i=body.length-1;i>=0&&d.scrollHeight>d.clientHeight+1;i--){const r=body[i];r.style.display='none';const prev=body[i-1];if(prev&&prev.classList.contains('dh')){const next=body.slice(i+1).find(x=>x.style.display!=='none');if(!next||next.classList.contains('dh'))prev.style.display='none'}}})}
 function trimRail(){const fb=document.querySelector('.rail .feedbox');if(!fb)return;const b=fb.getBoundingClientRect().bottom-4;if(!b)return;let cut=false;fb.querySelectorAll('#feedRail .ev').forEach(e=>{e.style.display='';if(cut||e.getBoundingClientRect().bottom>b){e.style.display='none';cut=true}})}
 function feed_(){
- $('#feedRail').innerHTML=foldFeed(feed,'all').slice(0,16).map(feedRow).join('');trimRail();
+ $('#feedRail').innerHTML=foldFeed(feed,'all').slice(0,16).map(feedRow).join('')||'<div class="unit">No notices yet</div>';trimRail();
  const list=feed.filter(e=>filter==='all'||e[2]===filter);
- $('#feedFull').innerHTML=foldFeed(list,filter).map(feedRow).join('')||'<div class="unit">Nothing here yet.</div>';
+ $('#feedFull').innerHTML=foldFeed(list,filter).map(feedRow).join('')||'<div class="unit">No notices yet</div>';
  const cnt=g=>feed.filter(e=>e[2]===g&&!(e[6]==='chan')).length;
  $('#filters').innerHTML=[['all','ALL',feed.filter(e=>e[6]!=='chan').length],...Object.entries(FG).map(([k,v])=>[k,v[0],cnt(k)])].map(([k,l,n])=>`<button class="${filter===k?'on':''}" data-f="${k}" style="${k!=='all'?'--fc:'+FG[k][1]:''}">${l}<i>${n}</i></button>`).join('');
  $$('#filters button').forEach(b=>b.onclick=()=>{filter=b.dataset.f;feed_()});
@@ -2581,31 +2574,25 @@ const partyNear=()=>PARTYNEAR;
 let KILLS=[];
 function silo(k,w,h){const S=SHAPE[k];if(!S)return ic('t-ship','ic');const sc=Math.min((w-6)/S[0],(h-6)/S[1]);
  return `<svg class="silo" viewBox="0 0 ${w} ${h}"><polygon points="${S[2].map(([x,y])=>`${(w/2+y*sc).toFixed(1)},${(h/2+x*sc).toFixed(1)}`).join(' ')}"/></svg>`}
-function pplShips(){const e=$('#pplShips');if(!e)return;const party=new Set(PARTY.map(m=>m.n));
- const who=k=>!k?'crash':k==='you'?'you':party.has(k)?'party':'other',ago=m=>m<60?m+' min':Math.floor(m/60)+' h '+(m%60)+' min';
- const n={you:0,party:0,other:0,crash:0};KILLS.forEach(r=>n[who(r[5])]++);
- const nm=k=>{const c=ALLSHIPS.find(c=>c.class===k);return c?c.short:k.replace(/_/g,' ')};
- e.innerHTML=`<div class="ph">SHIPS DESTROYED NEARBY<span class="r">this session · ${KILLS.length}</span></div>
-  <div class="ktal"><span class="you">BY YOU<b>${n.you}</b></span><span class="party">PARTY<b>${n.party}</b></span><span class="other">OTHERS<b>${n.other}</b></span><span class="crash">CRASHED<b>${n.crash}</b></span></div>
-  <div class="kills">${KILLS.map(([m,k,npc,lv,why,by])=>{const w=who(by),crash=why==='Collision';
-   return `<div class="krow ${lv===2?'dst':'dis'}${m>10?' old':''}"><span class="sil">${silo(k,64,42)}</span>
-    <span class="kn"><b>${esc(nm(k))}</b><small>${npc?'NPC':'player ship'} · ${crash?'collision':'combat'}</small></span>
+function baseCls(c){return String(c||'').replace(/_\d+$/,'').replace(/_(PU_)?AI(_.*)?$/i,'')}
+function pplShips(){const e=$('#pplShips');if(!e)return;const K=((MODEL.log||{}).kills||[]).slice().reverse();
+ const n={dst:0,dis:0,crash:0};K.forEach(r=>{if(r.reason==='Collision')n.crash++;else if(r.level>=2)n.dst++;else n.dis++});
+ const ago=m=>m<60?m+' min':Math.floor(m/60)+' h '+(m%60)+' min';
+ e.innerHTML=`<div class="ph">SHIPS DESTROYED NEARBY<span class="r">this session · ${K.length}</span></div>`+(K.length?
+  `<div class="ktal"><span class="other">DESTROYED<b>${n.dst}</b></span><span class="party">DISABLED<b>${n.dis}</b></span><span class="crash">CRASHED<b>${n.crash}</b></span></div>
+  <div class="kills">${K.map(r=>{const b=baseCls(r.cls);loadShip(b);const npc=/(^|_)AI(_|$)/i.test(r.cls||''),crash=r.reason==='Collision',lv=r.level>=2?2:1,m=Math.max(0,Math.round((Date.now()/1000-r.t)/60));
+   return `<div class="krow ${lv===2?'dst':'dis'}${m>10?' old':''}"><span class="sil">${silo(b,64,42)}</span>
+    <span class="kn"><b>${esc(shipNameOf(b))}</b><small>${npc?'NPC':'player ship'} · ${crash?'collision':'combat'}</small></span>
     <span class="kst">${lv===2?'DESTROYED':'DISABLED'}</span>
-    <span class="kby ${w}">${crash?'crashed':`${ic('i-kill','ic sm')}<b>${esc(by)}</b>`}</span>
-    <span class="kt">${ago(m)}</span></div>`}).join('')}</div>`}
-function partyRender(){pplShips();const pp=$('#pplParty');if(pp)pp.innerHTML=`<div class="ph">PARTY · ${PARTY.length+1}<span class="r" style="color:var(--g)">${PARTYNEAR} near you</span></div>`+
-  PARTY.map(m=>`<div class="row"><span class="dot c"></span>${esc(m.n)}${m.lead?' <span class="tag">leader</span>':''}</div>`).join('')+
-  `<div class="row"><span class="dot c"></span>You</div><div class="row unit">Who is near isn't logged, only how many.</div>`;
- const e=$('#navParty');if(!e)return;
- e.innerHTML=`<div class="ph">PARTY · ${PARTY.length+1}<span class="r" style="color:var(--g)">${PARTYNEAR} near you</span></div>`+
-  PARTY.map(m=>`<div class="row"><span class="dot c"></span>${esc(m.n)}${m.lead?' <span class="tag">leader</span>':''}</div>`).join('')+
-  `<div class="row unit">Positions aren't logged. Who is near isn't either, only how many.</div>`}
+    <span class="kby other">${crash?'crashed':`${ic('i-kill','ic sm')}<b>${esc(/^[A-Z]{3,4}_\w+_\d{6,}$/.test(r.killer||'')?shipNameOf(baseCls(r.killer)):(r.killer||'unknown'))}</b>`}</span>
+    <span class="kt">${ago(m)}</span></div>`}).join('')}</div>`:'<div class="row unit">No ships destroyed nearby</div>');
+ const st=(id,v)=>{const x=$('#'+id);if(x)x.textContent=v};st('pDst',String(n.dst));st('pDead',String(SESS.dead));st('pDown',String(SESS.downed))}
 function drawMap(){
  const sv=$('#mapSys'), lv=$('#mapLoc'); if(!sv)return;
  sv.innerHTML=drawSystem(mapView); lv.innerHTML=drawLocal(mapView); sv.setAttribute('viewBox','80 0 440 420'); lv.setAttribute('viewBox','80 0 440 420');
  sv.style.display=mapMode==='sys'?'':'none'; lv.style.display=mapMode==='loc'?'':'none';
  const ns=$('#navSys'), nl=$('#navLoc'); if(ns){ns.innerHTML=sv.innerHTML;nl.innerHTML=lv.innerHTML;ns.style.display=sv.style.display;nl.style.display=lv.style.display}
- partyRender();
+ pplShips();
  $$('.mapp .sysbtn').forEach(b=>b.classList.toggle('on',b.dataset.sysn===mapView));
  $$('.mapp .mapmodes button').forEach(b=>b.classList.toggle('on',b.dataset.z===mapMode));
  const hereE=ent(HERE.sys,HERE.name), d=$('.dist'); if(!d)return;
@@ -2672,20 +2659,20 @@ function msnRender(){
   const done=m.obj.filter(o=>o[1]===2).length, open=m.obj.filter(o=>o[1]!==2).slice(0,2);
   card.innerHTML=`<div class="ph">PINNED · ${MTYPE[m.type][0]}<span class="r">${done?done+' done · ':''}<button class="mapbtn" id="pinNext">${m.n} of ${MISSIONS.length} ▸</button></span></div>
    <div class="mgrid"><div><div class="title">${esc(m.title)}</div>${open.map(objHtml).join('')}</div>
-   <div class="mside"><div><div class="unit">DISTANCE</div><b>${d!=null?d+' Gm':m.place?SYSN[m.place[0]]:'—'}</b></div><div><div class="unit">PROGRESS</div><b>${met[0]}</b></div><div><div class="unit">PARTY</div><b>${m.party}</b></div><div><div class="unit">TIME ON IT</div><b>${m.time}</b></div></div></div>`;
+   <div class="mside">${m.live?'':`<div><div class="unit">DISTANCE</div><b>${d!=null?d+' Gm':m.place?SYSN[m.place[0]]:'—'}</b></div><div><div class="unit">PROGRESS</div><b>${met[0]}</b></div>`}<div><div class="unit">TIME ON IT</div><b>${m.time}</b></div></div></div>`;
   $('#pinNext').onclick=e=>{e.stopPropagation();pin(pinned%MISSIONS.length+1)};
  }
  const pp=$('#msnPinned'); if(pp)pp.innerHTML=`<div class="ph">PINNED<span class="r">${m.shared?'shared by '+esc(m.shared)+' · ':''}${m.time}</span></div>
    <div style="font-size:20px;color:var(--hi);margin-bottom:4px">${esc(m.title)}</div>
    <div class="mchips">${chips(m)}</div>
-   <div class="unit" style="margin:4px 0 10px">${esc(m.giver)} · ${esc(mWhere(m))}</div>
+   <div class="unit" style="margin:4px 0 10px">${m.live?(m.time==='now'?'accepted just now':'accepted '+m.time+' ago'):esc(m.giver)+' · '+esc(mWhere(m))}</div>
    <div class="mdet"><div>${m.obj.map(objHtml).join('')}</div>${progHtml(m)}</div>
-   <div class="kv" style="margin-top:10px">PAYOUT <b>shown when paid</b></div><div class="kv">PARTY ON IT <b>${m.party}</b></div>`;
+   `;
  const ml=$('#msnList'); if(ml){ml.innerHTML=`<div class="ph">ACTIVE CONTRACTS · ${MISSIONS.length}<span class="r">tap to pin · in-game tracking isn't logged</span></div>`+
    MISSIONS.map(x=>{const mt=mMetric(x);return `<button class="mrow ${x.n===pinned?'on':''}" data-pin="${x.n}"><span class="mnum">${x.n}</span><span class="mtx"><b>${ic(MTYPE[x.type][1],'ic sm')} ${esc(x.title)}</b><span>${esc(curObj(x)[0])}</span></span><span class="mmet">${mt[1]!=null?`<span class="mbar"><i style="width:${Math.round(100*mt[1])}%"></i></span>`:''}${mt[0]}</span><span class="mwh">${esc(mWhere(x))}</span><span class="mpinb">${x.n===pinned?'PINNED':'PIN'}</span></button>`}).join('');}
  }
- const mh=$('#msnHist'); if(mh)mh.innerHTML=`<div class="ph">THIS SESSION<span class="r">payout from the wallet change</span></div>`+
-   MHIST.map(([t,ty,res,pay,rep])=>`<div class="row"><span class="dot ${res==='Complete'?'':res==='Failed'?'r':'m'}"></span>${ic(MTYPE[ty][1],'ic sm')} ${esc(t)}<span class="r">${res==='Complete'?'+'+pay.toLocaleString()+' aUEC':res.toLowerCase()}${rep?` · ${rep>0?'+':''}${rep} rep`:''}</span></div>`).join('');
+ const mh=$('#msnHist'); if(mh)mh.innerHTML=`<div class="ph">THIS SESSION</div>`+
+   MHIST.map(([t,ty,res,pay,rep])=>`<div class="row"><span class="dot ${res==='Complete'?'':res==='Failed'?'r':'m'}"></span>${ic(MTYPE[ty][1],'ic sm')} ${esc(t)}<span class="r">${res==='Complete'?(pay?'+'+pay.toLocaleString()+' aUEC':'complete'):res.toLowerCase()}${rep?` · ${rep>0?'+':''}${rep} rep`:''}</span></div>`).join('');
 }
 document.addEventListener('click',e=>{const p=e.target.closest('[data-pin]');if(p&&!p.closest('.zclone')){e.stopPropagation();pin(+p.dataset.pin)}},true);
 
@@ -2722,9 +2709,10 @@ let render=function(){applyShip();ann();cviewSync();document.body.classList.togg
 let MODEL=slateModel({}), LASTSHIP={t:0}, SHIPREQ='', SHIPFAIL={};
 const KEY=new URLSearchParams(location.search).get('k');
 function api(p){const u=new URL(p,location.href);if(KEY)u.searchParams.set('k',KEY);return u}
-function shipNameOf(c){const x=SHIPS[c]||ALLSHIPS.find(a=>a.class===c);return x&&x.name?x.name:String(c||'').replace(/_\d+$/,'').replace(/^[A-Z]{3,4}_/,'').replace(/_/g,' ')}
+function shipNameOf(c){const x=ALLSHIPS.find(a=>a.class===c)||(SHIPS[c]&&SHIPS[c].caps);return x&&x.name?x.name:String(c||'').replace(/_\d+$/,'').replace(/^[A-Z]{3,4}_/,'').replace(/_/g,' ')}
 function killRows(n){return(((MODEL.log||{}).kills)||[]).slice(-n).reverse()}
 function mtypeOf(n){n=String(n||'');return /bounty/i.test(n)?'bounty':/haul|cargo/i.test(n)?'haul':/deliver/i.test(n)?'delivery':/mining|mine /i.test(n)?'mining':/salvage|recover/i.test(n)?'recover':/eliminate|defend|kill|patrol/i.test(n)?'combat':'contract'}
+let PLACES=[],MAPSET=false;
 const T0=Date.now();let WAL0=null,FLOWN=0,LASTT=0;const SESS={downed:0,dead:0,respawn:0,seat:0},SEEN=new Set();
 /* the recorder keeps the last 50 events: count each one once, by time and type */
 function countEvents(evs){(evs||[]).forEach(e=>{const k=e.t+'|'+e.type;if(SEEN.has(k))return;SEEN.add(k);const t=String(e.type||'');
@@ -2735,9 +2723,13 @@ function agoMin(t){const m=Math.max(0,Math.round((Date.now()/1000-t)/60));return
 function registerShip(p){const c=Object.assign({},p,{pilotGunList:p.pilotGuns||[]});
  SHIPS[p.class]=fromCaps(c);if(p.shape)SHAPE[p.class]=p.shape;if(p.dims)SDIM[p.class]=p.dims;if(p.speeds)SPEEDS[p.class]=p.speeds;
  if(!ALLSHIPS.some(x=>x.class===p.class))ALLSHIPS.push(c)}
-async function loadShip(cls){if(!cls||SHIPS[cls]||SHIPREQ===cls||SHIPFAIL[cls])return;SHIPREQ=cls;
+/* one request per class, kept for the page's life; a class asked under another spelling is aliased */
+const SHIPPEND=new Set();
+async function loadShip(cls){if(!cls||SHIPS[cls]||SHIPPEND.has(cls)||SHIPFAIL[cls])return;SHIPPEND.add(cls);
  try{const r=await fetch(api('/api/telemetry/ship?c='+encodeURIComponent(cls)),{credentials:'same-origin'});
-  if(r.ok){registerShip(await r.json());render()}else SHIPFAIL[cls]=1}catch(e){}finally{SHIPREQ=''}}
+  if(r.ok){const p=await r.json();registerShip(p);
+   if(p.class!==cls){SHIPS[cls]=SHIPS[p.class];if(p.shape)SHAPE[cls]=p.shape;if(p.dims)SDIM[cls]=p.dims;if(p.speeds)SPEEDS[cls]=p.speeds}
+   render()}else SHIPFAIL[cls]=1}catch(e){}finally{SHIPPEND.delete(cls)}}
 const GICON={alert:'i-skull',msn:'i-obj',money:'i-pay',people:'i-party',ship:'i-land',zone:'i-zone',tip:'i-bell'};
 function applyModel(){const M=MODEL,f=M.flight;
  const s=M.seat==='crew'?'gunner':(M.seat||'pilot');
@@ -2757,7 +2749,11 @@ function applyModel(){const M=MODEL,f=M.flight;
  hrNow=Math.round(M.vitals.hr||0);if(M.env.temp!=null)outT=Math.round(M.env.temp);
  const G=M.log||{};
  feed=(G.notices||[]).slice().reverse().map(n=>[new Date(n.t*1000).toTimeString().slice(0,5),GICON[n.group]||'i-bell',n.group,n.text,false,'','']);
- if(G.place)HERE.name=G.place;
+ if(G.place){const sy=Object.keys(STARMAP).find(s=>STARMAP[s].some(r=>r[0]===G.place));
+  if(sy){HERE.sys=sy;if(!MAPSET){mapView=sy;MAPSET=true}}HERE.name=G.place;
+  if(!PLACES.length||PLACES[0].n!==G.place){PLACES.unshift({n:G.place,t:Date.now()});PLACES.length=Math.min(PLACES.length,8)}}
+ const ns=$('#navStops');if(ns)ns.innerHTML=PLACES.length?PLACES.map((p,i)=>`<div class="row">${esc(p.n)}<span class="r">${i?agoMin(p.t/1000)+' ago':'here'}</span></div>`).join(''):'<div class="row unit">No places yet</div>';
+ MHIST=(G.contracts||[]).filter(c=>c.status!=='active').reverse().map(c=>[c.name,mtypeOf(c.name),c.status==='complete'?'Complete':'Failed',0,0]);
  MISSIONS=(G.contracts||[]).filter(c=>c.status==='active').map((c,i)=>({n:i+1,live:true,type:mtypeOf(c.name),title:c.name,
   obj:[[c.objective||'No objective logged',1,'',false]],place:null,placeName:'',giver:'',party:'—',time:agoMin(c.t),kills:0}));
  const sx=(id,v)=>{const e=$('#'+id);if(e)e.textContent=v};
