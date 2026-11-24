@@ -73,6 +73,7 @@ def main():
                     tail.poll()
                 data["log"] = tail.state() if tail else sc_livelog.LogState().state()
                 data["names"] = sc_stats._slate_gun_names(data.get("snapshot"), data["log"]["loadout"].values())
+                data["lastShip"] = sc_stats._slate_last_ship(data.get("snapshot"))
                 self._send(200, json.dumps(sc_stats._json_safe(data), default=str))
             elif p.path == "/api/telemetry/ship":
                 body = sc_stats.tlm_api_get(self.path, None, None, None)
