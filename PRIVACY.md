@@ -19,12 +19,14 @@ While it is **building the dashboard**, CSR contacts:
   **public** RSI Citizen profile & organizations page (the same info anyone can
   see by visiting your public profile).
 - **api.star-citizen.wiki** / **starcitizen.tools** — item names and weapon images.
+- **xparrow-lite.pages.dev** — the list of item icons it hosts. Only on *Update now*,
+  since CSR ships with a copy.
 - **fonts.googleapis.com / fonts.gstatic.com** — the display fonts (fetched once,
   then cached locally; the generated page embeds them and needs no further access).
 
 While you **view the dashboard**, your browser loads ship, gun, item and place pictures
 straight from **media.robertsspaceindustries.com**, **media.starcitizen.tools** and, for
-a few items, **cstone.space**. These are plain image requests. Like any web image, those
+a few items, **cstone.space** and **xparrow-lite.pages.dev**. These are plain image requests. Like any web image, those
 sites see your IP address. Nothing about you or your stats is in them. Offline, the page
 shows icons in place of pictures.
 

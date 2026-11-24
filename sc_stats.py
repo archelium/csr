@@ -596,6 +596,7 @@ def cache_file(name):
 SHIPS = sc_names.ShipIndex()
 ITEMS = sc_names.ItemIndex()
 BPS = sc_names.BlueprintIndex()
+XP = sc_names.XparrowIcons()
 MIS = sc_names.MissionIndex()
 
 # --------------------------------------------------------------------------- #
@@ -2814,7 +2815,7 @@ def _bp_catalog_payload():
             c = (r[2] or "").lower()
             if ITEMS.meta.get(c):
                 meta[r[0]] = ITEMS.meta[c]
-            d = art_src(ITEMS.imgs.get(c))
+            d = art_src(ITEMS.imgs.get(c)) or XP.art(c)
             if d:
                 img[r[0]] = d
     return {"version": BPS.version, "n": len(rows), "rows": rows,
@@ -5720,6 +5721,7 @@ def build_from_sessions(sessions, fresh_profile=False):
         "log_count": total,
         "bp_catalog": _bp_catalog_payload(),
         "missions": _missions_payload(),
+        "xp": XP.payload(),
     }
 
 
@@ -6173,6 +6175,22 @@ def build_showcase(career, patches, order, eras=None):
 _WIKI_LEAD = {}         # starcitizen.tools page title -> lead image url, "" when none
 
 
+_XP_NAMES = {}
+
+
+def _xp_by_name(name):
+    """A fan icon for an item CSR knows by name only: its class from the item catalogue,
+    then xparrow-lite's list."""
+    if not (XP.ok and ITEMS.ok and name):
+        return None
+    if not _XP_NAMES:
+        for cls, n in sorted(ITEMS.idx.items(), key=lambda kv: len(kv[0])):   # base class first
+            if cls in XP.ids:
+                _XP_NAMES.setdefault(n, cls)
+    cls = _XP_NAMES.get(name)
+    return XP.art(cls) if cls else None
+
+
 def art_src(src):
     """Where a picture lives, compact for the page: ["r", small, large] for an RSI ship
     matrix record, ["w", "a/ab/File.png"] for a starcitizen.tools file (the page asks the
@@ -6367,9 +6385,10 @@ def build_list_art(data):
             crate = None
             if not u and n in commodities:
                 crate = next((f for rx, f in _CARGO_CRATE if re.search(rx, n, re.I)), None)
-            picks[(kind, n)] = _wiki_file(crate) if crate else u
+            picks[(kind, n)] = _wiki_file(crate) if crate else (u or _xp_by_name(n))
         elif kind == "bp":
-            picks[(kind, n)] = ITEMS.imgs.get((bp.get(n) or "").lower()) if ITEMS.ok else None
+            c = (bp.get(n) or "").lower()
+            picks[(kind, n)] = (ITEMS.imgs.get(c) if ITEMS.ok else None) or XP.art(c)
         elif kind == "place":
             picks[(kind, n)] = _place_art(n)
 
@@ -8409,6 +8428,8 @@ nav a::after{background:var(--menu-bg);border-color:var(--glass-line);box-shadow
 .bxtot .bxkey span{display:inline-flex;align-items:center;gap:6px}
 .bxtot .bxkey .bsq{width:14px;height:14px;cursor:default;border-radius:3px}
 .bsq[data-bpplan]:hover,.bdot[data-bpplan]:hover{outline:2px solid var(--cyan);outline-offset:1px}
+/* xparrow-lite icons are 128 px on transparent: shown whole, never blown up */
+img[src*="xparrow-lite.pages.dev"]{object-fit:scale-down!important}
 /* the top menu: a page's sections as tabs, icon, name and headline number. Sticks under
    the top bar on wide screens, scrolls sideways when it doesn't fit */
 .snav-at{height:0}
@@ -8817,8 +8838,9 @@ nav a::after{background:var(--menu-bg);border-color:var(--glass-line);box-shadow
          and your public profile are fetched from official sources only while the dashboard is being built.</p>
 
       <div class="ab-sec">Data sources</div>
-      <p>Ships &amp; art — RSI Ship Matrix. Item names — Star Citizen Wiki. Profile &amp; orgs — your public RSI pages.
-         Fonts — Chakra Petch &amp; Share Tech Mono (Google Fonts, OFL).</p>
+      <p>Ships &amp; art — RSI Ship Matrix. Item names &amp; pictures — Star Citizen Wiki. Icons for items the wiki has
+         no picture of — <a class="lk" href="https://xparrow-lite.pages.dev" target="_blank" rel="noopener">xparrow-lite</a>.
+         Profile &amp; orgs — your public RSI pages. Fonts — Chakra Petch &amp; Share Tech Mono (Google Fonts, OFL).</p>
 
       <div class="ab-sec">Found a bug or have feedback?</div>
       <p>Reports genuinely help — the button below opens your email app with a short template (and the version
@@ -8885,6 +8907,8 @@ function artUrls(d, size){
   if(!d) return [];
   if(d[0]==='r'){ const sm=d[1], lg=d[2];
     return [[sm, lg], [lg, sm], [lg.replace('store_large','store_hub_large'), lg]][size]; }
+  if(d[0]==='x'){ const x=DATA.xp; if(!x) return [];       // xparrow-lite fan icon, 128 px
+    return [x.base+(d[2]==='s'?'icons/ship/128/':'icons/128/')+d[1]+'.webp?v='+encodeURIComponent((x.v||{})[d[2]]||'')]; }
   if(d[0]==='w'){ const p=d[1], n=p.split('/').pop(), orig=WIKI_MEDIA+p;
     const t=w=>`${WIKI_MEDIA}thumb/${p}/${w}px-${n}${/\.webp$/i.test(n)?'':'.webp'}`;
     // the wiki resizes to fixed widths only (240, 320, 480, 640, 800, 960, 1200, 1280):
@@ -12474,6 +12498,8 @@ def reload_catalogues():
         sc_names.ITEMS = ITEMS
     cstep("pulling the contract registry")
     MIS.load(force=True)
+    cstep("pulling the xparrow-lite icon lists")
+    XP.load(force=True)
     cstep("pulling the crafting catalogue — one call per blueprint, about two minutes")
     BPS.load(force=True)
     cok(f"catalogues refreshed — {len(SHIPS.by_name):,} hulls · {len(ITEMS.idx):,} items · {len(MIS.rows):,} missions · {len(BPS.rows):,} blueprints")
@@ -12503,6 +12529,9 @@ def load_resolvers():
         cstep(f"contract registry synced — {len(MIS.rows):,} missions · {len(MIS.factions)} factions")
     else:
         cwarn("contract registry offline — blueprint planner unavailable")
+    XP.cache_path = cache_file("sc_xparrow.json")
+    if XP.load():
+        cstep(f"fan icons on file — {len(XP.ids):,} classes from xparrow-lite")
     BPS.cache_path = cache_file("sc_blueprints.json")
     if BPS.load():
         cstep(f"crafting catalogue synced — {len(BPS.rows):,} blueprints ({BPS.version or 'unknown build'})")
@@ -13269,13 +13298,14 @@ def main():
                     help="re-read only new/changed logs (default is a full re-scan)")
     ap.add_argument("--no-browser", action="store_true",
                     help="serve without opening a browser tab (used when restarting)")
+    ap.add_argument("--allow-second", action="store_true", help=argparse.SUPPRESS)   # dev: run beside an installed CSR
     ap.add_argument("--console", action="store_true",
                     help="show a console window with CSR's output (it lives in the tray otherwise)")
     args = ap.parse_args()
     serving = args.serve or (is_frozen() and not args.open and not args.out)
     # one CSR at a time: a second start opens the running one's dashboard and leaves,
     # before it touches the log the running one is writing
-    if serving and not claim_instance():
+    if serving and not args.allow_second and not claim_instance():
         other = running_csr(args.port)
         if other and not args.no_browser:
             webbrowser.open(other)

@@ -148,7 +148,7 @@ python sc_stats.py --open       # writes + opens CSR.html, then exits
 python sc_stats.py --live "D:\...\StarCitizen\LIVE"   # point at a specific LIVE folder
 ```
 Produces a **single `CSR.html`** you can open any time or
-share. Ship and item pictures load from RSI and starcitizen.tools when you view it. (No server, so no in-page Refresh button — re-run to update.)
+share. Ship and item pictures load from RSI, starcitizen.tools and xparrow-lite when you view it. (No server, so no in-page Refresh button — re-run to update.)
 
 ---
 
@@ -246,8 +246,10 @@ Everything is real, from your logs. Backend class IDs become in-fiction names
 (`RSI_Zeus_ES` → **Zeus Mk II ES**, `klwe_rifle_energy_01` → **Klaus & Werner
 Gallant**); ship names/art come from the official **RSI Ship Matrix**, item names
 from the **SC-Wiki** item data. Fonts and maker logos are embedded. Ship, gun, item
-and place pictures load from RSI and starcitizen.tools as you scroll. Offline, each
-picture slot shows its icon and everything else works.
+and place pictures load from RSI and starcitizen.tools as you scroll. Items the wiki has no
+picture of use an icon from [xparrow-lite](https://xparrow-lite.pages.dev), a Star Citizen
+fan site, loaded the same way and never stored. Offline, each picture slot shows its icon
+and everything else works.
 
 **What CSR can't show** — on-foot kills, K/D, accuracy, damage, and your aUEC *balance /
 earnings*: Star Citizen stopped writing those to the client log in the 2026 builds

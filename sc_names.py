@@ -310,6 +310,63 @@ class ItemIndex:
         return None
 
 
+class XparrowIcons:
+    """Which game classes have an icon on xparrow-lite.pages.dev (a Star Citizen fan
+    site): ship components and ship guns, FPS weapons and attachments. CSR keeps the
+    two class lists only. The page loads an icon from their site, at 128 px, for an
+    item CSR has no picture of. No pictures are stored."""
+
+    BASE = "https://xparrow-lite.pages.dev/"
+    LISTS = {"s": "icons/ship/index.json", "f": "icons/index.json"}
+
+    def __init__(self, cache=None):
+        self.cache_path = cache or os.path.join(SCRIPT_DIR, "sc_xparrow.json")
+        self.ver = {}                 # "s"/"f" -> their cache-busting version
+        self.ids = {}                 # lowercased class -> (kind, id as they spell it)
+        self.ok = False
+        self.fetched = None
+
+    def _apply(self, d):
+        self.ver = {k: str(d.get(k + "_v") or "") for k in self.LISTS}
+        self.ids = {}
+        for k in ("f", "s"):          # ship wins where a class is in both
+            for i in d.get(k) or []:
+                self.ids[str(i).lower()] = (k, str(i))
+        self.fetched = d.get("fetched")
+        self.ok = bool(self.ids)
+
+    def load(self, force=False):
+        if not force and os.path.isfile(self.cache_path):
+            try:
+                self._apply(json.load(open(self.cache_path, encoding="utf-8")))
+                if self.ok:
+                    return True
+            except Exception:
+                pass
+        try:
+            d = {"fetched": datetime.date.today().isoformat()}
+            for k, path in self.LISTS.items():
+                req = urllib.request.Request(self.BASE + path, headers=_UA)
+                j = json.loads(urllib.request.urlopen(req, timeout=20, context=_SSL).read())
+                ids = j.get("ids") or []
+                d[k] = sorted(ids.keys() if isinstance(ids, dict) else ids)
+                d[k + "_v"] = j.get("v") or ""
+            if d["s"] or d["f"]:
+                json.dump(d, open(self.cache_path, "w", encoding="utf-8"))
+                self._apply(d)
+        except Exception:
+            pass
+        return self.ok
+
+    def art(self, cls):
+        """["x", id, kind] for the page, None when they have no icon for this class."""
+        hit = self.ids.get((cls or "").lower())
+        return ["x", hit[1], hit[0]] if hit else None
+
+    def payload(self):
+        return {"base": self.BASE, "v": self.ver} if self.ok else None
+
+
 class BlueprintIndex:
     """Every crafting blueprint in the game, from the SC-Wiki API's extraction of the
     game data (/api/v2/blueprints — 1,606 rows in 4.10). Kept by the OUTPUT item's class

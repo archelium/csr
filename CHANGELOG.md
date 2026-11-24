@@ -14,6 +14,9 @@ uses [Semantic Versioning](https://semver.org/) (MAJOR.MINOR.PATCH).
 - **Start with Windows**, from the tray menu or the status light. CSR starts in the tray
   at sign-in without opening a browser tab.
 - Starting CSR while it's already running opens the running one's dashboard.
+- **Pictures for 96 more blueprints**, mostly ship components and guns. Where the wiki
+  has no picture, CSR loads a small icon from [xparrow-lite](https://xparrow-lite.pages.dev),
+  a Star Citizen fan site, while you view the page. Nothing of theirs is stored.
 
 ### Changed
 - CSR's output goes to `CSR-data\csr.log`, the run before kept as `csr.log.1`. Open it
