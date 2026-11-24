@@ -309,7 +309,7 @@ class RouteTests(unittest.TestCase):
         with mock.patch.object(sc_stats.sc_livelog, "get_state", lambda *a, **k: {"place": None}):
             body = sc_stats.tlm_api_get("/api/telemetry/live", lambda: {"state": "live", "x": float("nan")},
                                         lambda: {"status": 1}, seen)
-        self.assertEqual(json.loads(body), {"state": "live", "x": None, "log": {"place": None}})
+        self.assertEqual(json.loads(body), {"state": "live", "x": None, "names": {}, "log": {"place": None}})
         self.assertGreater(state["seen"], time.time() - 5)
         state["seen"] = 0.0
         body = sc_stats.tlm_api_get("/api/telemetry/status", lambda: {}, lambda: {"status": 1}, seen)

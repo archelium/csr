@@ -39,6 +39,14 @@ class ApiTests(unittest.TestCase):
         self.assertIsNone(body["log"])
         self.assertEqual(body["state"], "live")
 
+    def test_live_names_weapon_classes(self):
+        snap = {"weapons": {"weapons": [{"name": "KLWE_LaserRepeater_S3_951758134358"}]}}
+        body = json.loads(api("/api/telemetry/live", live=lambda: dict(LIVE, snapshot=snap)))
+        self.assertEqual(body["names"], {"klwe_laserrepeater_s3": "CF-337 Panther Repeater"})
+
+    def test_live_names_empty_off_seat(self):
+        self.assertEqual(json.loads(api("/api/telemetry/live"))["names"], {})
+
     def test_status_has_no_log(self):
         self.assertNotIn("log", json.loads(api("/api/telemetry/status")))
 
