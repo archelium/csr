@@ -241,8 +241,9 @@ Flight & Travel, Combat and Activity, and a **Live view** page in the sidebar.
   hull (SC 5.0). On foot and EVA: vitals, injuries, suit, loadout, last ship. Contracts,
   HUD notices, where you are and ships destroyed nearby come from Game.log. Keys show
   state only. Nothing on the page sends input to the game.
-- **Phone access** is off by default. When on, the card shows a QR code and a private
-  link on port 7890-7899. It shows the live view only and works on your LAN only.
+- **Tablet & phone access** is off by default. Click **Kestrel K-7** at the top of the
+  sidebar to turn it on and get a QR code and a private link on port 7890-7899. It serves
+  Kestrel only and works on your LAN only.
 - **CSR must be open while you play.** Nothing is recorded while it's closed.
 
 ### Playing on more than one PC

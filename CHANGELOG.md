@@ -22,9 +22,9 @@ uses [Semantic Versioning](https://semver.org/) (MAJOR.MINOR.PATCH).
   a tablet or phone on the same Wi-Fi. Open on this PC is still there. The slate: flight, weapons, warnings, shields and
   hull when seated, vitals, injuries and loadout on foot. Contracts, notices, place and
   ships destroyed nearby from Game.log. Tablet first, works on a phone.
-- **Phone access.** Turn it on from the Kestrel K-7 drawer or the Telemetry card for a
-  private link on port 7890-7899. Kestrel only, LAN only. Windows asks to allow CSR on the network the
-  first time.
+- **Tablet & phone access.** Turn it on from the Kestrel K-7 drawer or the Telemetry card
+  for a QR code and a private link on port 7890-7899. Kestrel only, LAN only. Windows asks
+  to allow CSR on the network the first time.
 - **Career stats from telemetry.** Wallet on Economy. Flight records, How you fly and
   Weapons on Flight & Travel. Warnings & countermeasures on Combat. On foot & in seat and
   Survival on Activity. Cards show "From N of M sessions with telemetry".
@@ -39,6 +39,9 @@ uses [Semantic Versioning](https://semver.org/) (MAJOR.MINOR.PATCH).
   a Star Citizen fan site, while you view the page. Nothing of theirs is stored.
 
 ### Changed
+- **Top bar menus.** Backup & Transfer, Refresh Data, Alerts and the status menu have
+  a cleaner layout, larger text and shorter wording. Alerts and status open as a sheet on
+  narrow windows.
 - **Config saves are atomic.** CSR never overwrites a csr_config.json it can't read.
 - **CSR refuses requests from other websites.** Origin and Host are checked.
 - CSR's output goes to `CSR-data\csr.log`, the run before kept as `csr.log.1`. Open it
@@ -48,6 +51,7 @@ uses [Semantic Versioning](https://semver.org/) (MAJOR.MINOR.PATCH).
   (right-click → Properties → Details). Antivirus tools trust an exe with details more.
 
 ### Fixed
+- Refresh Data cards were titled Export backup and Import / merge.
 - The alert bell's link to a crash opens Stability's Crashes page again.
 - Tech Preview places showed their raw code, like "cluster ht a agriculture l 002 (Green
   Dale)". They now read Green Dale.

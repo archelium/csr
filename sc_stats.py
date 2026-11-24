@@ -849,12 +849,12 @@ def phone_sync_error(port_range=PHONE_PORTS, **kw):
         port = sync_phone_server(port_range=port_range, **kw)
     except Exception as e:
         _PHONE["why"] = "error"
-        return f"phone view error: {e}"
+        return f"tablet & phone access error: {e}"
     if port is not None or not tlm_settings().get("phone"):
         return None
     if _PHONE.get("why") == "config":
-        return "phone view: couldn't save the link key to csr_config.json."
-    return f"phone view: no free port in {port_range.start}-{port_range.stop - 1}."
+        return "tablet & phone access: cannot save the link key to csr_config.json."
+    return f"tablet & phone access: no free port in {port_range.start}-{port_range.stop - 1}."
 
 
 def phone_status():
@@ -8841,6 +8841,82 @@ nav a::after{background:var(--menu-bg);border-color:var(--glass-line);box-shadow
 .sm-acts .mbtn{font-size:13px;min-height:34px}
 .statusbtn::after,nav a::after{font-size:11px}
 
+/* ---- top-right menus: layout pass ---- */
+.modal{position:relative}
+.mx{position:absolute;top:12px;right:14px;background:none;border:0;color:var(--muted);font-size:24px;line-height:1;
+  cursor:pointer;padding:4px 8px;border-radius:8px}
+.mx:hover{color:var(--txt);background:var(--hover-tint)}
+.modal .mb{font-size:14px;margin-bottom:18px}
+.modal.rfm{max-width:560px}
+.modal.rfm .mactions{margin-top:16px}
+.dsec{font-family:var(--font-mono);font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--dim);
+  text-align:left;margin:22px 0 8px}
+.datarow{gap:12px;margin-bottom:0}
+.dcard{padding:16px;border-radius:12px}
+.dct{display:flex;align-items:center;gap:8px;font-size:14.5px;margin-bottom:8px}
+.dct .csr-ic{margin:0;width:18px;height:18px;color:var(--cyan);flex:none}
+.dcd{font-size:13px;line-height:1.55;margin-bottom:16px}
+.dcard .mbtn{font-size:13px;min-height:40px}
+.dfoot{display:block;margin-top:10px;min-height:20px;font-size:12px;color:var(--dim);line-height:1.45}
+.dfoot.tlmchk{display:flex;align-items:center;gap:7px;color:var(--muted);cursor:pointer}
+.dfoot.tlmchk input{margin:0}
+.linky{font-size:12px}
+.pastehint{font-size:12px}
+.onlinebar{margin-top:0;padding:14px 16px;border-radius:12px;gap:18px}
+.onlinebar .ol-s{font-size:13px;margin-top:0;color:var(--muted)}
+#olWhen{display:block;margin-top:6px;font-size:11.5px;line-height:1.5}
+#olWhen .olstale{display:block;color:var(--amber);font-family:inherit;font-size:12.5px;font-weight:600;margin-top:4px}
+.tlmcard{margin-top:0;padding:4px 16px 14px;border-radius:12px;background:var(--panel2)}
+.tlmrow{font-size:13.5px;margin:0;padding:9px 0;border-bottom:1px solid var(--line);min-height:36px;box-sizing:border-box}
+.tlmrow>label,.tlmrow>.tlml{min-width:170px}
+.tlmrow.tlmhint{padding:0 0 10px 182px;margin-top:-4px;font-size:12px;color:var(--dim);min-height:0}
+.tlmrow:has(+ .tlmhint){border-bottom:0}
+.tlmrow select{font-size:13px;min-height:32px}
+.tlmgroups{flex:1;min-width:0;gap:8px 16px}
+.tlmcard .tlmbtn{font-size:12.5px;min-height:32px;padding:6px 14px}
+.tlmcard .mbtn.danger{background:rgba(235,110,110,.06)}
+.tlmcard .mbtn.danger:hover{background:rgba(235,110,110,.16);color:#ffd9d9}
+#tlmDisk{min-width:170px;color:var(--txt)}
+.tlmcard>.dmnote{margin-top:10px;font-size:12px}
+.tlmerr:empty{display:none}
+.dmnote{font-size:12px}
+@media(max-width:640px){
+  .tlmrow>label,.tlmrow>.tlml,#tlmDisk{min-width:0;flex:1 1 100%}
+  .tlmrow.tlmhint{padding-left:0}
+  .onlinebar{flex-direction:column;align-items:stretch}
+  .modal{padding:22px 18px 18px}
+}
+/* alerts + status menus */
+.bellmenu{width:360px}
+.bm-head{padding:12px 14px}
+.bm-clear{padding:4px 6px;margin:-4px -6px;border-radius:6px}
+.bm-clear:hover{background:var(--hover-tint)}
+.bm-ev{padding:12px 14px;gap:11px}
+.bm-ev.new:not(.bad){background:rgba(244,169,42,.06)}
+.bm-ev .bw{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:6px}
+.bm-ev .bw a{margin-left:auto;font-family:inherit;letter-spacing:0;font-size:12px}
+.statusmenu{width:300px;padding:16px}
+.sm-head{font-size:14.5px;margin-bottom:6px}
+.sm-acts{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:14px}
+.sm-acts .mbtn{width:100%;padding:8px 10px;min-height:36px}
+.sm-acts #smAuto,.sm-acts .dmnote{grid-column:1/-1}
+.sm-acts .mbtn:not(.danger){background:transparent;color:var(--txt);border-color:var(--line)}
+.sm-acts .mbtn:not(.danger):hover{border-color:var(--hover-line);background:var(--hover-tint)}
+.sm-acts .mbtn.on{border-color:rgba(74,222,128,.5);color:#4ade80}
+@media(max-width:760px){
+  .bellmenu,.statusmenu{position:fixed;top:auto;left:12px;right:12px;width:auto;max-height:75vh;overflow:auto}
+}
+/* Kestrel drawer actions */
+.kacts{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:14px}
+.kacts .kbtn{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:40px;padding:8px 12px;
+  font-size:13px;text-decoration:none;color:var(--txt);box-sizing:border-box}
+.kacts .kbtn i{display:inline-grid;width:17px;height:17px;color:var(--amber)}
+.kacts .kbtn i svg{width:17px;height:17px}
+.kacts .kbtn:hover{border-color:rgba(244,169,42,.55)}
+.kon{width:100%;min-height:42px}
+.kstat{display:flex;gap:10px;align-items:center;margin-top:14px;padding-top:12px;border-top:1px solid var(--line);font-size:12.5px;color:var(--txt)}
+.kstat span{font-family:var(--font-mono);font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--dim)}
+
 /* ---- modals + limited-data banner ---- */
 .modal-back{background:rgba(4,8,13,.6);backdrop-filter:blur(6px)}
 :root[data-theme="light"] .modal-back{background:rgba(23,35,47,.25)}
@@ -9298,8 +9374,6 @@ nav a::after{background:var(--menu-bg);border-color:var(--glass-line);box-shadow
 .kurl code{font-family:var(--font-mono);font-size:12px;color:var(--cyan);word-break:break-all;flex:1 1 100%}
 .kstat{margin-top:12px;font-family:var(--font-mono);font-size:12px;color:var(--muted)}
 .kerr{color:var(--red);font-size:13px;min-height:4px;margin-top:6px}
-.kacts{display:flex;align-items:center;gap:14px;margin-top:8px;font-size:12.5px}
-.kacts .foot-link:first-child{margin-right:auto}
 /* xparrow-lite icons are 128 px on transparent: shown whole, never blown up */
 img[src*="xparrow-lite.pages.dev"]{object-fit:scale-down!important}
 /* their pictures are see-through: hide the placeholder icon behind them */
@@ -9607,18 +9681,18 @@ img[src*="xparrow-lite.pages.dev"]{object-fit:scale-down!important}
 </div>
 
 <div class="modal-back" id="refreshModal">
-  <div class="modal">
+  <div class="modal rfm">
     <div class="mh">Refresh Data</div>
-    <div class="mb">Pull in your latest sessions. Old log backups never change once Star Citizen has rotated them, so a quick refresh only needs to read what's new.</div>
+    <div class="mb">Scan your Star Citizen logs for new sessions.</div>
     <div class="datarow">
       <div class="dcard">
-        <div class="dct">Quick refresh</div>
-        <div class="dcd">Reads only new or changed logs — usually a few seconds. This is what you want almost every time.</div>
+        <div class="dct" data-ic="refresh">Quick refresh</div>
+        <div class="dcd">Reads new and changed logs only. Takes a few seconds.</div>
         <button class="mbtn go" id="rfGo">Quick refresh</button>
       </div>
       <div class="dcard">
-        <div class="dct">Full re-scan</div>
-        <div class="dcd">Re-reads every log from scratch. Slower, but use it after a CSR update so improved parsing is applied to your whole history.</div>
+        <div class="dct" data-ic="reload">Full re-scan</div>
+        <div class="dcd">Re-reads every log. Run it after a CSR update to apply parser fixes to older sessions.</div>
         <button class="mbtn ghost" id="rfFull">Full re-scan</button>
       </div>
     </div>
@@ -9627,64 +9701,63 @@ img[src*="xparrow-lite.pages.dev"]{object-fit:scale-down!important}
 </div>
 <div class="modal-back" id="offlineModal">
   <div class="modal">
-    <div class="mh">CSR Isn&rsquo;t Running</div>
-    <div class="mb">This page is still showing your last saved dashboard, but the CSR app that scans your logs has been closed — so it can&rsquo;t refresh right now.<br><br>
-      Start <b>CSR</b> again, then use Refresh. Everything already on this page stays readable in the meantime.</div>
-    <div class="mactions"><button class="mbtn go" id="offClose">Back to dashboard</button></div>
+    <div class="mh">CSR Is Not Running</div>
+    <div class="mb">This is the last saved copy of your dashboard. Start <b>CSR</b> to refresh or import.</div>
+    <div class="mactions"><button class="mbtn go" id="offClose">Close</button></div>
   </div>
 </div>
 <div class="modal-back" id="refreshBusy">
   <div class="modal"><div class="mspin"></div>
-    <div class="mh" id="rfBusyTx">Scanning your logs…</div>
-    <div class="mb">Reading your Game.logs — hang tight, the page will reload automatically.</div></div>
+    <div class="mh" id="rfBusyTx">Scanning logs…</div>
+    <div class="mb">The page reloads when the scan finishes.</div></div>
 </div>
 <div class="modal-back" id="dataModal">
   <div class="modal data">
+    <button class="mx" id="dmX" type="button" title="Close" aria-label="Close">×</button>
     <div class="mh">Backup &amp; Transfer</div>
-    <div class="mb">CSR keeps a running <b>archive</b> of every session it has scanned (<span id="dmCount">—</span> on file), so your career survives even if Star Citizen deletes old logs.</div>
+    <div class="mb"><span id="dmCount">—</span> in the archive. Sessions stay here after Star Citizen deletes old logs.</div>
+    <div class="dsec">Transfer</div>
     <div class="datarow three">
       <div class="dcard">
         <div class="dct" data-ic="export">Export backup</div>
-        <div class="dcd">Save your whole career as a single file — keep it safe, or move it to another PC.</div>
-        <label class="tlmchk" style="display:block;margin:0 0 8px;font-size:12px"><input type="checkbox" id="dmExportTlm"> <span id="dmExportTlmLbl">Include telemetry recordings</span></label>
+        <div class="dcd">Your full career in one file. Use it as a backup or to move CSR to another PC.</div>
         <button class="mbtn go" id="dmExport">Download archive</button>
+        <label class="dfoot tlmchk"><input type="checkbox" id="dmExportTlm"> <span id="dmExportTlmLbl">Include telemetry</span></label>
       </div>
       <div class="dcard">
         <div class="dct" data-ic="transfer">Import logs</div>
-        <div class="dcd">Copied your <b>Game.log</b> folder from another PC? Point CSR at it — no need to install CSR over there first.</div>
+        <div class="dcd">Load a <b>Game.log</b> folder copied from another PC. CSR does not need to be installed there.</div>
         <button class="mbtn go" id="dmLogsBtn">Choose log folder…</button>
-        <div class="pastefall">
-          <div class="pastehint" id="dmHint">Windows opens that dialog <b>behind</b> this
-            window — look in your taskbar. Or just paste the path below.</div>
-          <button class="linky" id="dmPasteToggle">or paste the folder path</button>
+        <div class="dfoot pastefall">
+          <div class="pastehint" id="dmHint">The folder picker can open behind this window. Check the taskbar, or paste the path below.</div>
+          <button class="linky" id="dmPasteToggle">Paste a folder path</button>
           <div class="pasterow" id="dmPasteRow">
             <input type="text" id="dmPastePath" spellcheck="false"
-                   placeholder="D:\path\to\the\copied\logbackups">
+                   placeholder="D:\path\to\logbackups">
             <button class="mbtn go" id="dmPasteGo">Use this folder</button>
           </div>
         </div>
       </div>
       <div class="dcard">
         <div class="dct" data-ic="import">Import backup</div>
-        <div class="dcd">Load <b>.json</b> or <b>.zip</b> backups exported from CSR. Pick one or several.</div>
-        <button class="mbtn ghost" id="dmImportBtn">Choose backup file(s)…</button>
+        <div class="dcd">Load one or more <b>.json</b> or <b>.zip</b> backups exported from CSR.</div>
+        <button class="mbtn ghost" id="dmImportBtn">Choose backup files…</button>
+        <div class="dfoot">Merged by session, no duplicates.</div>
         <input type="file" id="dmFile" accept=".json,.zip,.csr,application/json,application/zip" multiple style="display:none">
       </div>
     </div>
-    <div class="mb dmnote">Everything merges and de-duplicates by session, so importing twice never double-counts.</div>
+    <div class="dsec">Online Data</div>
     <div class="onlinebar">
       <div>
-        <div class="ol-t">Online data</div>
-        <div class="ol-s">Ship &amp; weapon art, manufacturer logos, your RSI dossier and orgs — and the
-          catalogues CSR names things from: the RSI ship matrix, the SC-Wiki item catalogue,
-          mission index and crafting catalogue. Nothing here updates on its own; press the button after a patch, if you&rsquo;ve
-          joined an org, or if artwork failed to load. <b>Takes about two minutes</b> — the catalogue
-          is one call per blueprint. <span id="olWhen"></span></div>
+        <div class="ol-s">Ship and weapon art, manufacturer logos, your RSI profile and orgs, plus the ship,
+          item, mission and blueprint catalogues. Update after a patch or when art is missing.
+          Takes about 2 minutes.</div>
+        <div id="olWhen"></div>
       </div>
       <button class="mbtn ghost" id="olBtn">Update now</button>
     </div>
+    <div class="dsec">Telemetry</div>
     <div class="tlmcard" id="tlmCard">
-      <div class="ol-t">Telemetry</div>
       <div id="tlmChannels"></div>
       <div class="tlmrow"><span class="tlml">Recorder</span><span id="tlmRec">—</span></div>
       <div class="tlmrow"><label for="tlmRecord">Record telemetry</label>
@@ -9714,20 +9787,20 @@ img[src*="xparrow-lite.pages.dev"]{object-fit:scale-down!important}
       <div class="tlmrow tlmhint">Oldest recordings go first. Career stats from them stay.</div>
       <div class="tlmrow"><span class="tlml">Groups</span><div class="tlmgroups" id="tlmGroups"></div></div>
       <div class="tlmrow"><span id="tlmDisk">—</span>
-        <button class="mbtn ghost tlmbtn" id="tlmDeleteAll">Delete all recordings</button></div>
+        <button class="mbtn ghost tlmbtn danger" id="tlmDeleteAll">Delete all recordings</button></div>
       <div class="tlmrow" id="tlmUnmatched" style="display:none"></div>
-      <div class="tlmrow"><label for="tlmPhone">Phone access</label>
+      <div class="tlmrow"><label for="tlmPhone">Tablet &amp; phone access</label>
         <input type="checkbox" id="tlmPhone"></div>
       <div class="tlmrow" id="tlmPhoneBox" style="display:none">
         <div class="tlmqr"><div id="tlmQr"></div>
           <div><div class="tlmurl" id="tlmUrl"></div>
             <button class="mbtn ghost tlmbtn" id="tlmNewLink" style="margin-top:8px">New link</button>
-            <div class="dmnote">Windows will ask to allow CSR on your network. Allow it on private networks.</div></div></div>
+            <div class="dmnote">Windows asks to allow CSR on the network once. Allow private networks.</div></div></div>
       </div>
       <div class="tlmerr" id="tlmErr"></div>
-      <div class="dmnote">Changes apply to the next recording.</div>
+      <div class="dmnote">Detail and group changes apply to the next recording.</div>
     </div>
-    <div class="mb" id="dmMsg" style="min-height:18px;margin-top:4px"></div>
+    <div class="mb" id="dmMsg" style="min-height:18px;margin:8px 0 4px"></div>
     <div class="mactions"><button class="mbtn ghost" id="dmClose">Close</button></div>
   </div>
 </div>
@@ -9740,8 +9813,8 @@ img[src*="xparrow-lite.pages.dev"]{object-fit:scale-down!important}
   <div id="kBody"><div class="dmnote">Loading…</div></div>
   <div class="kerr" id="kErr"></div>
   <div class="kacts">
-    <a class="foot-link" id="kSettings" href="#">Telemetry settings</a>
-    <a class="foot-link" id="kPc" href="/live" target="_blank" rel="noopener">Open on this PC</a></div>
+    <button class="mbtn ghost kbtn" id="kSettings" type="button"><i data-ic="tools"></i>Telemetry settings</button>
+    <a class="mbtn ghost kbtn" id="kPc" href="/live" target="_blank" rel="noopener"><i data-ic="display"></i>Open on this PC</a></div>
 </div>
 
 <div class="modal-back" id="aboutModal">
@@ -12936,9 +13009,6 @@ document.querySelectorAll('#nav a').forEach(a=>{
     if(el) el.innerHTML=icon(name)+(after||'');};
   set('#dataBtn','backup'); set('#refreshBtn','refresh');
   set('#bugBtn','bug',' Report a bug');
-  const dct=document.querySelectorAll('.dcard .dct');
-  if(dct[0]) dct[0].innerHTML=icon('export')+' Export backup';
-  if(dct[1]) dct[1].innerHTML=icon('import')+' Import / merge';
 })();
 // jump to a section from an in-content link (e.g. Combat → Legacy Combat)
 // Smooth scrolling is unreliable — it is a no-op under reduced-motion settings and in
@@ -13121,6 +13191,7 @@ function kestrelOpen(){
   if(pop.classList.contains('on')){ $('#kClose').click(); return; }
   modal('kModal', true); kestrelPlace();
   const ic=$('#kIc'); if(ic) ic.innerHTML=ICON.tablet;
+  document.querySelectorAll('#kModal i[data-ic]').forEach(i=>{ if(!i.firstChild) i.innerHTML=ICON[i.dataset.ic]||''; });
   $('#kErr').textContent='';
   kestrelLoad();
 }
@@ -13130,11 +13201,11 @@ function kestrelLoad(){
 }
 function kestrelRender(st){
   const s=(st&&st.settings)||{}, ph=(st&&st.phone)||{}, body=$('#kBody');
-  const rec=st&&st.recorder ? `<div class="kstat">${esc(tlmRecText(st.recorder))}</div>` : '';
+  const rec=st&&st.recorder ? `<div class="kstat"><span>Recorder</span>${esc(tlmRecText(st.recorder))}</div>` : '';
   if(!s.phone){
-    body.innerHTML=`<div class="kstep"><b>Phone access is off.</b> Turning it on gives Kestrel a private link on your home
-      network, on port 7890-7899. Only Kestrel is reachable through it. Nothing leaves your network.</div>
-      <button class="mbtn go" id="kOn">Turn on and show the code</button>${rec}`;
+    body.innerHTML=`<div class="kstep"><b>Tablet &amp; phone access is off.</b> Turn it on to serve Kestrel on your
+      local network (ports 7890-7899). Only Kestrel is exposed. Nothing leaves your network.</div>
+      <button class="mbtn go kon" id="kOn">Turn on tablet &amp; phone access</button>${rec}`;
     $('#kOn').onclick=()=>{ $('#kOn').disabled=true;
       tlmPost('/api/telemetry/settings',{phone:true}).then(res=>{
         if(!res.ok) $('#kErr').textContent=res.error||'Could not turn it on.';
@@ -13142,9 +13213,9 @@ function kestrelRender(st){
     return;
   }
   if(!ph.url){
-    body.innerHTML=`<div class="kstep">${ph.why==='ports'?'Phone access didn’t start. Ports 7890-7899 are in use.'
-      :ph.why==='config'?'Phone access didn’t start. CSR can’t save the link key to csr_config.json.'
-      :'Phone access didn’t start.'}</div>${rec}`;
+    body.innerHTML=`<div class="kstep">${ph.why==='ports'?'Tablet &amp; phone access did not start. Ports 7890-7899 are in use.'
+      :ph.why==='config'?'Tablet &amp; phone access did not start. Cannot save the link key to csr_config.json.'
+      :'Tablet &amp; phone access did not start.'}</div>${rec}`;
     return;
   }
   body.innerHTML=`<div class="kqr"><div class="kcode">${ph.qr_svg||''}</div>
@@ -13153,7 +13224,7 @@ function kestrelRender(st){
         <li>Add it to the home screen for a full-screen slate.</li></ol></div>
     <div class="kurl"><code id="kUrl">${esc(ph.url)}</code><button class="mbtn ghost tlmbtn" id="kCopy">Copy link</button>
       <button class="mbtn ghost tlmbtn" id="kNew" title="Old links and devices stop working">New link</button></div>
-    <div class="dmnote">The first time, Windows asks to allow CSR on your network. Allow it on private networks.</div>${rec}`;
+    <div class="dmnote">Windows asks to allow CSR on the network once. Allow private networks.</div>${rec}`;
   $('#kCopy').onclick=()=>copyText(ph.url, ok=>{ $('#kCopy').textContent=ok?'Copied':'Copy failed';
     setTimeout(()=>{ const b=$('#kCopy'); if(b) b.textContent='Copy link'; },1600); });
   $('#kNew').onclick=()=>confirmBtn($('#kNew'),'Confirm. Old links stop working.',()=>{
@@ -13165,8 +13236,8 @@ document.addEventListener('mousedown', e=>{ const pop=$('#kModal');
   if(pop.classList.contains('on') && !pop.contains(e.target) && !e.target.closest('#navKestrel')) $('#kClose').click(); });
 addEventListener('resize', kestrelPlace);
 document.addEventListener('keydown', e=>{ if(e.key==='Escape' && $('#kModal').classList.contains('on')) $('#kClose').click(); });
-$('#kSettings').onclick=e=>{ e.preventDefault(); modal('kModal', false); $('#dataBtn').click();
-  setTimeout(()=>{ const c=$('#tlmCard'); if(c) c.scrollIntoView({block:'start'}); }, 150); };
+$('#kSettings').onclick=e=>{ e.preventDefault(); $('#kClose').click(); $('#dataBtn').click();
+  setTimeout(()=>{ const c=$('#tlmCard'); if(c) c.scrollIntoView({block:'center'}); }, 150); };
 let SERVED=false;
 // probe the local server; if absent (opened as a plain file), the buttons stay hidden
 fetch('/api/status').then(r=>r.ok?r.json():Promise.reject()).then(s=>{
@@ -13197,7 +13268,7 @@ function runRefresh(full){
     fetch('/api/refresh'+(full?'?full=1':''),{method:'POST'}).then(r=>r.json()).then(res=>{
       if(res.ok){ CSRTerm.finish(()=>location.reload()); }
       else{ CSRTerm.fail('refresh failed — check the CSR window'); }
-    }).catch(()=>{ CSRTerm.fail('lost contact with the CSR app — it may have been closed'); });
+    }).catch(()=>{ CSRTerm.fail('Lost contact with CSR.'); });
   }).catch(()=>modal('offlineModal',true));
 }
 $('#rfGo').onclick=()=>runRefresh(false);
@@ -13220,14 +13291,14 @@ function setStatus(st, note){
   $('#statusTx').textContent = st==='online'?'CSR ON':st==='busy'?'WORKING':'OFFLINE';
   // the label is hidden now, so the same words go to the hover tooltip and to the
   // accessible name — a bare coloured dot has neither on its own
-  const tip={online:'CSR is running — click for options',
-             busy:'CSR is working — scanning your logs',
-             offline:'CSR isn’t running — this is a saved copy'}[st] || 'CSR status';
+  const tip={online:'CSR running',
+             busy:'CSR scanning logs',
+             offline:'CSR not running. Saved copy.'}[st] || 'CSR status';
   const stBtn=$('#statusBtn');
   stBtn.dataset.tip=tip; stBtn.setAttribute('aria-label', tip); stBtn.title='';
-  const m={online:['CSR is running','Serving this page. Refresh, import and backup all work.'],
-           busy:['Working…','CSR is scanning your logs. This page updates when it finishes.'],
-           offline:['CSR isn’t running','You’re viewing a saved copy of your dashboard. It stays fully readable, but Refresh and Import need the app.']}[st];
+  const m={online:['CSR is running','Refresh, import and backup are available.'],
+           busy:['Scanning…','Reading your logs. The page updates when done.'],
+           offline:['CSR is not running','Saved copy. Start CSR to refresh or import.']}[st];
   $('#smState').textContent=m[0];
   $('#smBody').innerHTML=(note||m[1]);
   const conBtn = (CSR_CONSOLE.supported
@@ -13235,7 +13306,7 @@ function setStatus(st, note){
     (CSR_CONSOLE.log ? `<button class="mbtn" id="smLog">Open log</button>` : '')+
     (CSR_CONSOLE.autostart!=null ? `<button class="mbtn${CSR_CONSOLE.autostart?' on':''}" id="smAuto" aria-pressed="${!!CSR_CONSOLE.autostart}">Start with Windows: ${CSR_CONSOLE.autostart?'on':'off'}</button>` : '');
   $('#smActs').innerHTML = st==='offline'
-    ? `<span class="dmnote">Start <b>CSR.exe</b> again, then reload this page.</span>`
+    ? `<span class="dmnote">Start <b>CSR.exe</b>, then reload this page.</span>`
     : conBtn+`<button class="mbtn" id="smRestart">Restart</button>`+
       `<button class="mbtn danger" id="smStop">Shut down</button>`;
   const rb=$('#smRestart'), sb=$('#smStop'), cb=$('#smConsole'), lb=$('#smLog'), ab=$('#smAuto');
@@ -13297,7 +13368,7 @@ function renderBell(){
     `<div class="bw">${esc(notifTime(e.ts))}${e.test?' · simulated':''}`+
     (e.kind==='crash'&&!e.test?`<a onclick="gotoCrashes()">See crash history →</a>`:'')+
     `</div></div></div>`).join('')
-    : `<div class="bm-empty">Nothing raised while this page has been open.</div>`;
+    : `<div class="bm-empty">No alerts since this page opened.</div>`;
 }
 function notifAdd(e){
   if(NOTIF.some(x=>x.id===e.id)) return false;
@@ -13421,10 +13492,10 @@ function olWhen(){
   const el=$('#olWhen'); if(!el) return;
   const ts=ONLINE.profile||ONLINE.forced, c=ONLINE.catalogues||{};
   const ago=d=>{ const n=Math.floor((Date.now()-new Date(d))/86400000); return n<1?'today':n===1?'yesterday':n+' days ago'; };
-  let s = ts ? 'Last updated '+ago(ts)+'. ' : '';
+  let s = ts ? 'Updated '+ago(ts) : 'Never updated';
   const cat=['ships','items','missions','blueprints'].filter(k=>c[k]).map(k=>`${k} ${ago(c[k])}`).join(', ');
-  if(cat) s += `Catalogues pulled: ${cat}.`;
-  if(c.stale) s += ` <b style="color:var(--amber)">A catalogue is more than ${c.max_days} days old — new ships, items, missions or blueprints may be missing until you update.</b>`;
+  if(cat) s += ` · Catalogues: ${cat}`;
+  if(c.stale) s += `<b class="olstale">A catalogue is over ${c.max_days} days old. Update to get new ships, items, missions and blueprints.</b>`;
   el.innerHTML=s;
 }
 $('#olBtn').onclick=()=>{
@@ -13435,10 +13506,11 @@ $('#olBtn').onclick=()=>{
     if(res.ok){ CSRTerm.finish(()=>location.reload()); }
     else{ b.disabled=false; b.textContent=was; CSRTerm.fail(res.error||'update failed'); }
   }).catch(()=>{ b.disabled=false; b.textContent=was;
-    CSRTerm.fail('lost contact with the CSR app — it may have been closed'); });
+    CSRTerm.fail('Lost contact with CSR.'); });
 };
 
 // ---- data / backup modal: export + import the session archive ----
+$('#dmX').onclick=()=>modal('dataModal',false);
 $('#dataBtn').onclick=()=>{ $('#dmMsg').textContent=''; olWhen(); modal('dataModal',true); tlmOpen(true); };
 $('#dmClose').onclick=()=>{ modal('dataModal',false); tlmOpen(false); };
 // ---- telemetry card (in the Backup & transfer modal) ----
@@ -13474,14 +13546,14 @@ function tlmRenderChannels(chs){
   box.textContent='';
   Object.keys(chs||{}).forEach(lab=>{
     const c=chs[lab]||{};
-    const t=c.line&&c.applied?'On in the game':(c.line?'Line added. Takes effect next launch.':'Off in the game');
+    const t=c.line&&c.applied?'Enabled in user.cfg':(c.line?'Enabled. Applies on next game launch.':'Disabled in user.cfg');
     const row=document.createElement('div'); row.className='tlmrow';
     const n=document.createElement('span'); n.className='tlml'; n.textContent=lab;
     const m=document.createElement('span'); m.textContent=t;
     row.append(n,m);
     if(!c.line){
       const b=document.createElement('button');
-      b.className='mbtn ghost tlmbtn'; b.id='tlmEnable-'+lab; b.textContent='Turn on';
+      b.className='mbtn ghost tlmbtn'; b.id='tlmEnable-'+lab; b.textContent='Enable';
       b.onclick=()=>confirmBtn(b,'Confirm',()=>{
         tlmErr('');
         tlmPost('/api/telemetry/enable',{channel:lab}).then(res=>{
@@ -13515,9 +13587,9 @@ function tlmRender(st){
   $('#tlmPhoneBox').style.display=(s.phone&&ph.url)?'':'none';
   $('#tlmQr').innerHTML=ph.qr_svg||'';
   $('#tlmUrl').textContent=ph.url||'';
-  if(s.phone&&!ph.url) tlmErr(ph.why==='ports'?"Phone view didn't start. Ports 7890-7899 are in use."
-    :ph.why==='config'?"Phone view didn't start. Can't save the link key to csr_config.json."
-    :"Phone view didn't start.");
+  if(s.phone&&!ph.url) tlmErr(ph.why==='ports'?"Tablet & phone access did not start. Ports 7890-7899 are in use."
+    :ph.why==='config'?"Tablet & phone access did not start. Cannot save the link key to csr_config.json."
+    :"Tablet & phone access did not start.");
   tlmLive(st);
 }
 // the parts that change while the game runs
@@ -13525,7 +13597,7 @@ function tlmLive(st){
   $('#tlmRec').textContent=tlmRecText(st.recorder);
   const cap=st.settings&&st.settings.max_mb;
   $('#tlmDisk').textContent='Recordings use '+tlmMB(st.disk||0)+(cap?' of '+(cap>=1000?cap/1000+' GB':cap+' MB'):'')+'.';
-  $('#dmExportTlmLbl').textContent='Include telemetry recordings ('+tlmMB(st.disk||0)+')';
+  $('#dmExportTlmLbl').textContent='Include telemetry ('+tlmMB(st.disk||0)+')';
   const u=st.unmatched||[], box=$('#tlmUnmatched');
   if(u.length){
     const names=u.map(e=>typeof e==='string'?e:(e&&(e.file||e.name))||'').filter(Boolean);
@@ -13571,7 +13643,7 @@ function tlmOpen(on){
 $('#dmExport').onclick=()=>{
   const z=$('#dmExportTlm').checked;
   window.location='/api/export'+(z?'?tlm=1':'');
-  $('#dmMsg').innerHTML='<span style="color:var(--cyan)">'+(z?'Preparing your backup…':'Downloading your archive…')+'</span>';
+  $('#dmMsg').innerHTML='<span style="color:var(--cyan)">'+(z?'Preparing backup…':'Downloading archive…')+'</span>';
 };
 // The three card titles carried emoji: ⬇ and ⬆ rendered as plain glyphs in the text
 // colour, but 📁 came out as a full-colour emoji — one yellow icon in a row of white
@@ -13625,7 +13697,7 @@ function runImportFolder(path){
       if(r2.ok){ CSRTerm.finish(()=>location.reload()); }
       else{ CSRTerm.fail(r2.error||'could not read that folder'); }
     })
-    .catch(()=>CSRTerm.fail('lost contact with the CSR app — it may have been closed'));
+    .catch(()=>CSRTerm.fail('Lost contact with CSR.'));
 }
 // Import a copied Game.log FOLDER. The folder is picked natively and read by the
 // app off disk — a log folder is hundreds of MB, far too much to upload through
@@ -13653,7 +13725,7 @@ $('#dmLogsBtn').onclick=()=>{
   }).catch(()=>{
     btn.disabled=false; btn.textContent=was; $('#dmHint').classList.remove('on');
     modal('dataModal',false);
-    CSRTerm.fail('lost contact with the CSR app — it may have been closed');
+    CSRTerm.fail('Lost contact with CSR.');
   });
 };
 
