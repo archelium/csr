@@ -8430,6 +8430,8 @@ nav a::after{background:var(--menu-bg);border-color:var(--glass-line);box-shadow
 .bsq[data-bpplan]:hover,.bdot[data-bpplan]:hover{outline:2px solid var(--cyan);outline-offset:1px}
 /* xparrow-lite icons are 128 px on transparent: shown whole, never blown up */
 img[src*="xparrow-lite.pages.dev"]{object-fit:scale-down!important}
+/* their pictures are see-through: hide the placeholder icon behind them */
+*:has(> img[src*="xparrow-lite.pages.dev"]) > svg{visibility:hidden}
 /* the top menu: a page's sections as tabs, icon, name and headline number. Sticks under
    the top bar on wide screens, scrolls sideways when it doesn't fit */
 .snav-at{height:0}
@@ -8908,6 +8910,7 @@ function artUrls(d, size){
   if(d[0]==='r'){ const sm=d[1], lg=d[2];
     return [[sm, lg], [lg, sm], [lg.replace('store_large','store_hub_large'), lg]][size]; }
   if(d[0]==='x'){ const x=DATA.xp; if(!x) return [];       // xparrow-lite fan icon, 128 px
+    if(d[2]==='t') return [x.base+'thumbs/sc/'+d[1]+'.webp'];   // armour and clothing, 256 px
     return [x.base+(d[2]==='s'?'icons/ship/128/':'icons/128/')+d[1]+'.webp?v='+encodeURIComponent((x.v||{})[d[2]]||'')]; }
   if(d[0]==='w'){ const p=d[1], n=p.split('/').pop(), orig=WIKI_MEDIA+p;
     const t=w=>`${WIKI_MEDIA}thumb/${p}/${w}px-${n}${/\.webp$/i.test(n)?'':'.webp'}`;
@@ -12502,6 +12505,13 @@ def reload_catalogues():
     XP.load(force=True)
     cstep("pulling the crafting catalogue — one call per blueprint, about two minutes")
     BPS.load(force=True)
+    # armour and clothing CSR has no picture of: ask xparrow-lite for each thumbnail
+    cat = _bp_catalog_payload()
+    if cat:
+        todo = [r[2] for r in cat["rows"] if r[0] not in cat["img"] and r[3] in ("Armor", "Flight suits", "Clothing")]
+        if todo:
+            cstep(f"looking for {len(todo)} armour pictures on xparrow-lite")
+            XP.probe_thumbs(todo)
     cok(f"catalogues refreshed — {len(SHIPS.by_name):,} hulls · {len(ITEMS.idx):,} items · {len(MIS.rows):,} missions · {len(BPS.rows):,} blueprints")
     _bp_rev, _bp_cat_idx, _mis_by_dbg = None, None, None
     _bp_cache.clear(); _fam_cache.clear()
