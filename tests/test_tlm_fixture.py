@@ -4,6 +4,8 @@ Fixtures (balance set to 1,000,000 by tools/make_tlm_fixture.py):
 - live-4.10-takeoff.bin: Drake Marauder, landed, take-off, gear up, boost, NAV.
 - live-4.10-landing.bin: SCM flight, touchdown with a one-frame 56.5 G contact spike,
   power-down, leave seat, on foot.
+Both captures start already seated, so there is no ACTOR_ENTER_SEAT and n_seat isn't checked.
+The replay is deterministic: exact values are checked, the reason for each is in a comment.
 """
 import json
 import os
@@ -108,23 +110,34 @@ class FixtureReplayTests(unittest.TestCase):
         takeoff, landing = (e["sum"] for e in self.entries)
         self.assertEqual((takeoff["takeoffs"], takeoff["landings"]), (1, 0))
         self.assertEqual((landing["takeoffs"], landing["landings"]), (0, 1))
-        self.assertGreater(takeoff["t_nav"], 30)
-        self.assertGreater(landing["t_on_foot"], 5)
+        # NAV from 131.3 s to the window end at 185 s
+        self.assertAlmostEqual(takeoff["t_nav"], 53.68, delta=0.05)
+        # ON_FOOT from 78.8 s to the window end at 90 s
+        self.assertAlmostEqual(landing["t_on_foot"], 11.15, delta=0.05)
 
     def test_takeoff_and_one_landing(self):
-        self.assertGreaterEqual(self.sum["takeoffs"], 1)
-        self.assertEqual(self.sum["landings"], 1)
+        # one take-off, one touchdown with no is_landed bounce
+        self.assertEqual((self.sum["takeoffs"], self.sum["landings"]), (1, 1))
 
-    def test_speed_and_nav(self):
-        self.assertGreater(self.sum["top_speed"], 100)
-        self.assertGreater(self.sum["t_nav"], 0)
+    def test_top_speed(self):
+        # NAV acceleration in the take-off window, the landing capture tops out at 465.9
+        takeoff, landing = (e["sum"] for e in self.entries)
+        self.assertAlmostEqual(takeoff["top_speed"], 957.25, delta=0.01)
+        self.assertAlmostEqual(landing["top_speed"], 465.901, delta=0.01)
+        self.assertAlmostEqual(self.sum["top_speed"], 957.25, delta=0.01)
 
     def test_max_g_leaves_out_contact_spike(self):
-        self.assertGreater(self.sum["max_g"], 5)
+        # real pulls sit at the Marauder's limit of 19.068, the 56.5 touchdown spike is out
+        for e in self.entries:
+            self.assertAlmostEqual(e["sum"]["max_g"], 19.068, delta=0.001, msg=e["file"])
         self.assertLessEqual(self.sum["max_g"], 1.25 * G_LIMIT)
 
     def test_fuel_power_down_not_used(self):
-        self.assertLess(self.sum["h2_used"], 0.05)
+        # small burns only, hydrogen_fuel vanishing at power-down (0.98 left) counts nothing
+        takeoff, landing = (e["sum"] for e in self.entries)
+        self.assertAlmostEqual(takeoff["h2_used"], 0.0045, delta=1e-6)
+        self.assertAlmostEqual(landing["h2_used"], 0.0038, delta=1e-6)
+        self.assertAlmostEqual(self.sum["h2_used"], 0.0083, delta=1e-6)
 
     def test_wallet_is_the_fixture_value(self):
         self.assertEqual((self.sum["uec_start"], self.sum["uec_end"]), (UEC, UEC))
