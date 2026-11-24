@@ -68,8 +68,9 @@ first.
 Pick whichever fits you:
 
 ### 1. The app (recommended — no Python needed)
-**Extract the zip**, then double-click **`CSR.exe`**. A console window opens and
-your browser loads the dashboard at `http://127.0.0.1:7878`.
+**Extract the zip**, then double-click **`CSR.exe`**. Your browser loads the dashboard at
+`http://127.0.0.1:7878`, and CSR's icon appears in the notification area by the clock
+(behind the ^ arrow if Windows hides it).
 
 - **First run:** CSR tries to auto-detect your install. If it can't, it pops up a
   folder picker — choose your **`StarCitizen`** folder (the one that *contains*
@@ -79,11 +80,12 @@ your browser loads the dashboard at `http://127.0.0.1:7878`.
 - **Refresh:** the **⟳** button (top-right of the page) re-scans your logs. It only
   re-reads files that changed, so it takes about a second; **Full re-scan** is there
   for after a CSR update.
-- **Everything is driven from the page.** The console window hides itself once CSR is
-  ready — the **status light** at the top-right shows whether CSR is running, and lets
-  you shut it down, restart it, or bring the console back. (Start it with `--console`
-  if you'd rather keep the window.) A page can't *start* CSR, so if the light is grey,
-  run `CSR.exe` again.
+- **CSR lives in the tray.** No console window. Click the icon to open the dashboard.
+  Right-click it for Refresh logs, **Start with Windows**, Open log, Open data folder and
+  Quit. Crashes and disconnects pop up as Windows notifications while you play. The
+  **status light** at the top-right of the page restarts or shuts CSR down too. Starting
+  `CSR.exe` again while it runs just opens the dashboard. Its output goes to
+  `CSR-data\csr.log`. Start it with `--console` to see it in a window instead.
 - **Self-contained / portable:** CSR keeps its config, generated page and cached
   art in a **`CSR-data` folder right next to the exe** — delete that folder to wipe
   everything, or run the whole thing from a USB stick with no trace left on your
@@ -101,7 +103,7 @@ your browser loads the dashboard at `http://127.0.0.1:7878`.
 
 CSR is portable, so updating is just **replace the exe**:
 
-1. Close CSR — use **Shut down** in the status light, or Ctrl+C in its console.
+1. Close CSR — **Quit CSR** from the tray icon, or **Shut down** in the status light.
 2. Extract the new `CSR.exe` **over the old one**, in the same folder.
 3. Start it. That's it — your settings, cached artwork and career history live in
    the `CSR-data` folder beside the exe and are picked up automatically.
@@ -290,6 +292,7 @@ drop a `csr.ico` next to `csr.spec` and rebuild.
 |------|---------|
 | `sc_stats.py` | ⭐ The whole app — log scan → aggregate → HTML/CSS/JS dashboard + `--serve` local app. |
 | `sc_names.py` | Name resolution & web fetch: ship matrix, item names, RSI profile/orgs, artwork + fonts → data URIs. |
+| `csr_tray.py` | The tray icon, its menu, Windows notifications and Start with Windows (plain Windows API, no extra packages). |
 | `csr.spec`, `build_exe.bat` | PyInstaller build for `dist/CSR.exe`. |
 | `Start CSR.bat` | Double-click launcher for the source app. |
 | `sc_*.json`, `sc_fonts_embed.css` | Cached game data / fonts (delete to refetch). |

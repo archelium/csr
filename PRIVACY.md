@@ -35,8 +35,11 @@ Your logs, your handle, and your stats never leave your machine. The generated
 ## What CSR stores
 Locally only, in `%LOCALAPPDATA%\CSR` (or next to the program in the Portable
 edition): the generated `CSR.html`, cached game-data files, `csr_config.json`, and
-`csr_prefs.json` (your pinned blueprints and main accounts). Delete that folder to
-remove everything.
+`csr_prefs.json` (your pinned blueprints and main accounts), and `csr.log` (what CSR
+did on its last two runs). Delete that folder to remove everything. If you turn on
+**Start with Windows**, CSR adds a `CSR` entry under
+`HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Run`. Turning it off
+removes it.
 
 ## A note on your public RSI profile
 CSR shows the same public profile and organization data that **anyone** can see on

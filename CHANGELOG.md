@@ -7,9 +7,23 @@ uses [Semantic Versioning](https://semver.org/) (MAJOR.MINOR.PATCH).
 
 ## [Unreleased]
 
+### Added
+- **CSR lives in the tray.** No console window. Its icon sits by the clock: click it for
+  the dashboard, right-click for Refresh logs, Start with Windows, Open log, Open data
+  folder and Quit. Crashes and disconnects show as Windows notifications.
+- **Start with Windows**, from the tray menu or the status light. CSR starts in the tray
+  at sign-in without opening a browser tab.
+- Starting CSR while it's already running opens the running one's dashboard.
+
 ### Changed
+- CSR's output goes to `CSR-data\csr.log`, the run before kept as `csr.log.1`. Open it
+  from the tray or the status light. `--console` shows it in a window instead.
+- CSR keeps running with no dashboard open. It used to quit after 15 minutes.
 - `CSR.exe` carries its name, version and publisher in Windows file details
   (right-click → Properties → Details). Antivirus tools trust an exe with details more.
+
+### Fixed
+- The alert bell's link to a crash opens Stability's Crashes page again.
 
 ## [1.11.0] — 2026-11-24
 

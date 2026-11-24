@@ -358,6 +358,37 @@ _PROGRESS = {"frac": 0.0, "phase": "idle", "done": 0, "total": 0}
 #  back on demand; everything it printed is still there when you show it again.
 # --------------------------------------------------------------------------- #
 _CONSOLE_HIDDEN = False
+# Where output goes when CSR has no console (the tray build): CSR-data\csr.log.
+_LOG = {"path": None}
+
+
+def route_output(want_console=False):
+    """The exe lives in the tray and has no console. Its output goes to csr.log in the
+    data folder, the last run's kept as csr.log.1. --console opens a console window
+    for it instead. Run from a terminal, nothing changes."""
+    if sys.stdout is not None and sys.stderr is not None:
+        return
+    if want_console and os.name == "nt":
+        try:
+            import ctypes
+            if ctypes.windll.kernel32.AllocConsole():
+                con = open("CONOUT$", "w", encoding="utf-8", errors="replace", buffering=1)
+                sys.stdout = sys.stderr = con
+                return
+        except Exception:
+            pass
+    try:
+        path = os.path.join(app_dir(), "csr.log")
+        if os.path.isfile(path):
+            try:
+                os.replace(path, path + ".1")
+            except OSError:
+                pass
+        f = open(path, "w", encoding="utf-8", errors="replace", buffering=1)
+        sys.stdout = sys.stderr = f
+        _LOG["path"] = path
+    except Exception:
+        sys.stdout = sys.stderr = open(os.devnull, "w")
 
 
 def _console_hwnd():
@@ -963,9 +994,24 @@ def _sc_process_running():
 MAX_EVENTS = 40
 
 
+# called with each new event (the tray shows it as a Windows notification)
+_EVENT_HOOKS = []
+
+
 def _push_event(kind, severity, title, detail, extra=None):
     """Record an event for the dashboard. Deduped on (kind,title) within 60s so a
     crash seen by BOTH the log tail and the Crashes folder is reported once."""
+    ev = _record_event(kind, severity, title, detail, extra)
+    if ev:
+        for hook in list(_EVENT_HOOKS):
+            try:
+                hook(dict(ev))
+            except Exception:
+                pass
+    return ev
+
+
+def _record_event(kind, severity, title, detail, extra=None):
     now = time.time()
     with _WATCH["lock"]:
         for e in reversed(_WATCH["events"]):
@@ -11908,7 +11954,7 @@ fetch('/api/status').then(r=>r.ok?r.json():Promise.reject()).then(s=>{
   renderBell();
   if(s&&s.sessions!=null) $('#dmCount').textContent=fmt(s.sessions)+' sessions';
   if(s&&s.online){ ONLINE=s.online; olWhen(); }
-  if(s){ CSR_CONSOLE={hidden:!!s.console_hidden,supported:!!s.console_supported}; }
+  if(s){ CSR_CONSOLE={hidden:!!s.console_hidden,supported:!!s.console_supported,log:!!s.log_file,autostart:s.autostart}; }
   setStatus(s&&s.busy?'busy':'online');
   // the System tab hides its apply buttons until it knows CSR is app-hosted
   if(section==='system'||section==='stability') render();
@@ -11941,7 +11987,7 @@ $('#offClose').onclick=()=>modal('offlineModal',false);
 // It cannot START CSR — a web page has no way to launch a program on your PC — so
 // when it's offline the menu explains what to run instead.
 let CSR_STATE='checking';
-let CSR_CONSOLE={hidden:false,supported:false};
+let CSR_CONSOLE={hidden:false,supported:false,log:false,autostart:null};
 function setStatus(st, note){
   CSR_STATE=st;
   const w=$('#statusBtn').parentElement;
@@ -11960,13 +12006,22 @@ function setStatus(st, note){
            offline:['CSR isn’t running','You’re viewing a saved copy of your dashboard. It stays fully readable, but Refresh and Import need the app.']}[st];
   $('#smState').textContent=m[0];
   $('#smBody').innerHTML=(note||m[1]);
-  const conBtn = CSR_CONSOLE.supported
-    ? `<button class="mbtn" id="smConsole">${CSR_CONSOLE.hidden?'Show':'Hide'} console</button>` : '';
+  const conBtn = (CSR_CONSOLE.supported
+    ? `<button class="mbtn" id="smConsole">${CSR_CONSOLE.hidden?'Show':'Hide'} console</button>` : '')+
+    (CSR_CONSOLE.log ? `<button class="mbtn" id="smLog">Open log</button>` : '')+
+    (CSR_CONSOLE.autostart!=null ? `<button class="mbtn${CSR_CONSOLE.autostart?' on':''}" id="smAuto" aria-pressed="${!!CSR_CONSOLE.autostart}">Start with Windows: ${CSR_CONSOLE.autostart?'on':'off'}</button>` : '');
   $('#smActs').innerHTML = st==='offline'
     ? `<span class="dmnote">Start <b>CSR.exe</b> again, then reload this page.</span>`
     : conBtn+`<button class="mbtn" id="smRestart">Restart</button>`+
       `<button class="mbtn danger" id="smStop">Shut down</button>`;
-  const rb=$('#smRestart'), sb=$('#smStop'), cb=$('#smConsole');
+  const rb=$('#smRestart'), sb=$('#smStop'), cb=$('#smConsole'), lb=$('#smLog'), ab=$('#smAuto');
+  if(lb) lb.onclick=()=>{ fetch('/api/open-log',{method:'POST'}).catch(()=>{}); };
+  if(ab) ab.onclick=()=>{
+    fetch('/api/autostart',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({on:!CSR_CONSOLE.autostart})}).then(r=>r.json()).then(r=>{
+        CSR_CONSOLE.autostart=r.autostart; setStatus(CSR_STATE);
+      }).catch(()=>{});
+  };
   if(rb) rb.onclick=csrRestart;
   if(sb) sb.onclick=csrShutdown;
   if(cb) cb.onclick=()=>{
@@ -11983,17 +12038,9 @@ function setStatus(st, note){
 // already on that tab, which is where most of the links into this live.
 function gotoCrashes(){
   bellMenu(false);
-  const go=()=>{
-    const g=[...document.querySelectorAll('.gsec')]
-      .find(s=>s.querySelector('.gt') && s.querySelector('.gt').textContent==='Crashes');
-    if(!g) return;
-    // Land the heading just below the sticky topbar rather than under it.
-    const tb=document.querySelector('.topbar');
-    const off=(tb?tb.getBoundingClientRect().height:0)+16;
-    scrollToY(g.getBoundingClientRect().top+window.pageYOffset-off);
-  };
-  if(section!=='stability'){ gotoSec('stability'); setTimeout(go, 220); }
-  else go();
+  SV.page='crashes'; svSave();
+  if(section!=='stability') gotoSec('stability'); else render();
+  setTimeout(snavSettle, 60);
 }
 function alertHost(){
   let el=$('#alerts');
@@ -12080,7 +12127,7 @@ function setPollRate(ms){
 function pollStatus(){
   return fetch('/api/status',{cache:'no-store'}).then(r=>r.ok?r.json():Promise.reject())
     .then(s=>{ if(s&&s.online){ONLINE=s.online; olWhen();}
-               if(s){CSR_CONSOLE={hidden:!!s.console_hidden,supported:!!s.console_supported};}
+               if(s){CSR_CONSOLE={hidden:!!s.console_hidden,supported:!!s.console_supported,log:!!s.log_file,autostart:s.autostart};}
                if(s&&s.events) s.events.forEach(showAlert);
                if(s&&s.watch) renderWatch(s.watch);
                // check in more often while Star Citizen is actually writing its log,
@@ -12654,6 +12701,95 @@ if ($result -eq [System.Windows.Forms.DialogResult]::OK) {
                 pass
 
 
+# ---- the tray icon -------------------------------------------------------------- #
+TRAY = {"t": None}
+
+
+def STOP_HINT():
+    if _LOG["path"]:
+        return "quit from the tray icon or the status light in the page"
+    return "press Ctrl+C to power down · or use the status light in the page"
+
+
+def _tray_mod():
+    try:
+        import csr_tray
+        return csr_tray
+    except Exception:
+        return None
+
+
+def autostart_state():
+    """True/False for Start with Windows, None where it can't be set."""
+    m = _tray_mod()
+    return m.autostart_enabled() if m else None
+
+
+def set_autostart(on):
+    m = _tray_mod()
+    return bool(m and m.set_autostart(on))
+
+
+def tray_tip(text=None):
+    if TRAY["t"]:
+        TRAY["t"].set_tip(text or "CSR \u00b7 watching your logs")
+
+
+def start_tray(url, refresh, quit_):
+    """CSR's icon in the notification area: click for the dashboard, right-click for
+    the menu. Crashes and disconnects pop up as Windows notifications."""
+    m = _tray_mod()
+    if not m:
+        return None
+
+    def open_dash():
+        webbrowser.open(url)
+
+    def open_log():
+        if _LOG["path"] and os.path.isfile(_LOG["path"]):
+            os.startfile(_LOG["path"])
+        else:
+            os.startfile(app_dir())
+
+    def toggle_autostart():
+        m.set_autostart(not m.autostart_enabled())
+
+    items = [("!Open dashboard", open_dash),
+             ("Refresh logs", refresh),
+             None,
+             ("Start with Windows", (toggle_autostart, m.autostart_enabled)),
+             ("Open log", open_log),
+             ("Open data folder", lambda: os.startfile(app_dir())),
+             None,
+             ("Quit CSR", quit_)]
+    ico = os.path.join(SCRIPT_DIR, "csr.ico")
+    t = m.Tray("CSR \u00b7 watching your logs", items, ico_path=ico)
+    if not t.start():
+        return None
+    TRAY["t"] = t
+
+    def on_event(ev):
+        if ev.get("severity") in ("bad", "warn"):
+            t.notify(ev.get("title") or "CSR", ev.get("detail") or "",
+                     "error" if ev.get("severity") == "bad" else "warn")
+    _EVENT_HOOKS.append(on_event)
+    return t
+
+
+def running_csr(port):
+    """The address of a CSR already serving on this PC, else None."""
+    import urllib.request
+    for p in range(port, port + 12):
+        try:
+            with urllib.request.urlopen(f"http://127.0.0.1:{p}/api/status", timeout=0.6) as r:
+                d = json.loads(r.read().decode("utf-8", "replace"))
+            if isinstance(d, dict) and "watch" in d and "configured" in d:
+                return f"http://127.0.0.1:{p}/"
+        except Exception:
+            continue
+    return None
+
+
 def serve(out_path, port=7878, explicit_logs=None, open_browser=True,
           hide_console=True):
     import http.server
@@ -12669,9 +12805,11 @@ def serve(out_path, port=7878, explicit_logs=None, open_browser=True,
     pick_req, pick_res = queue.Queue(), queue.Queue()
 
     def _power_down(restart):
-        """Stop CSR from the page. On restart, relaunch with --no-browser so the tab
-        you're already looking at is reused instead of a duplicate opening."""
+        """Stop CSR from the page or the tray. On restart, relaunch with --no-browser so
+        the tab you're already looking at is reused instead of a duplicate opening."""
         time.sleep(0.35)                      # let the HTTP reply flush
+        if TRAY["t"]:
+            TRAY["t"].stop()                  # no dead icon left behind
         try:
             srv.shutdown()
             srv.server_close()                # release the port before the new process
@@ -12703,7 +12841,7 @@ def serve(out_path, port=7878, explicit_logs=None, open_browser=True,
         output pushes it off screen — leaving no visible hint of how to quit."""
         print()
         cok(f"ready — {_paint(url, _CY)}")
-        csub("press Ctrl+C to power down · or use the status light in the page")
+        csub(STOP_HINT())
         print()
 
     def watchdog():
@@ -12714,7 +12852,7 @@ def serve(out_path, port=7878, explicit_logs=None, open_browser=True,
         GRACE = 900                          # 15 min — long enough for a background tab
         while True:
             time.sleep(30)
-            if not _CONSOLE_HIDDEN:
+            if TRAY["t"] or not _CONSOLE_HIDDEN:  # the tray icon is the way back in
                 continue
             if time.time() - state.get("seen", 0) > GRACE:
                 show_console(True)
@@ -12725,6 +12863,7 @@ def serve(out_path, port=7878, explicit_logs=None, open_browser=True,
     def do_generate(quick=False):
         with gen_lock:
             state["busy"] = True
+            tray_tip("CSR \u00b7 scanning your logs")
             try:
                 data = generate(out_path, state["explicit"], state["live_path"],
                                 quick=quick)
@@ -12733,6 +12872,7 @@ def serve(out_path, port=7878, explicit_logs=None, open_browser=True,
                 data = None
             finally:
                 state["busy"] = False
+                tray_tip()
             if not data:
                 state["configured"] = False
                 return False
@@ -12783,6 +12923,8 @@ def serve(out_path, port=7878, explicit_logs=None, open_browser=True,
                     "sessions": state["sessions"], "busy": state["busy"],
                     "online": {**online_meta(), "catalogues": catalogue_ages()},
                     "console_hidden": _CONSOLE_HIDDEN,
+                    "log_file": bool(_LOG["path"]),
+                    "autostart": autostart_state(),
                     "console_supported": _console_hwnd() is not None,
                     "progress": _PROGRESS,
                     # live crash/disconnect watcher: unseen events + whether a game
@@ -12857,6 +12999,21 @@ def serve(out_path, port=7878, explicit_logs=None, open_browser=True,
                 except Exception:
                     path = ""
                 self._accept_folder(path)
+            elif p == "/api/open-log":             # the tray build's log, in Notepad
+                ok = bool(_LOG["path"] and os.path.isfile(_LOG["path"]))
+                if ok:
+                    try:
+                        os.startfile(_LOG["path"])
+                    except Exception:
+                        ok = False
+                self._send(200, json.dumps({"ok": ok}))
+            elif p == "/api/autostart":            # Start with Windows on/off
+                try:
+                    on = bool(json.loads(self._body() or "{}").get("on"))
+                except Exception:
+                    on = False
+                ok = set_autostart(on)
+                self._send(200, json.dumps({"ok": ok, "autostart": autostart_state()}))
             elif p == "/api/prefs":                # pins / main account from the page
                 try:
                     inc = json.loads(self._body() or "{}")
@@ -13018,9 +13175,11 @@ def serve(out_path, port=7878, explicit_logs=None, open_browser=True,
     url = f"http://127.0.0.1:{port}/"
     print()
     cok(f"terminal online — {_paint(url, _CY)}")
-    csub("press Ctrl+C to power down · or use the status light in the page")
+    csub(STOP_HINT())
     print()
     threading.Thread(target=srv.serve_forever, daemon=True).start()
+    start_tray(url, lambda: threading.Thread(target=do_generate, kwargs={"quick": True}, daemon=True).start(),
+               lambda: _power_down(False))
     threading.Thread(target=watchdog, daemon=True).start()
     start_watcher()      # tail Game.log for crashes / disconnects while you play
     # Hide the console straight away rather than after the scan: the browser's
@@ -13078,13 +13237,23 @@ def main():
     ap.add_argument("--no-browser", action="store_true",
                     help="serve without opening a browser tab (used when restarting)")
     ap.add_argument("--console", action="store_true",
-                    help="keep the console window open (it is hidden once CSR is ready)")
+                    help="show a console window with CSR's output (it lives in the tray otherwise)")
     args = ap.parse_args()
+    serving = args.serve or (is_frozen() and not args.open and not args.out)
+    # one CSR at a time: a second start opens the running one's dashboard and leaves,
+    # before it touches the log the running one is writing
+    if serving:
+        other = running_csr(args.port)
+        if other:
+            if not args.no_browser:
+                webbrowser.open(other)
+            return
+    route_output(want_console=args.console)
 
     out_path = args.out or os.path.join(app_dir(), "CSR.html")
 
     # The packaged exe launches the app experience by default.
-    if args.serve or (is_frozen() and not args.open and not args.out):
+    if serving:
         serve(out_path, args.port, explicit_logs=args.logs,
               open_browser=not args.no_browser, hide_console=not args.console)
         return
