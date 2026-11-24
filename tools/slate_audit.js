@@ -159,6 +159,7 @@
         }
       }
     } finally { noAnim.remove(); if (typeof CV !== 'undefined') { CV.on = false; CV.manual = false } document.querySelector('#bezel .osb').click() }
+    for (const e of (window.SLATE_ERRORS || [])) raw.push({ type: 'js error', where: 'poll', txt: e.slice(0, 120), key: 'page' });
     const g = {};
     for (const i of raw) { if (o.skip && o.skip.includes(i.type)) continue; const t = g[i.type] = g[i.type] || {}; const kk = i.where + ' :: ' + i.txt; const e = t[kk] = t[kk] || { n: 0, ex: [] }; e.n++; if (e.ex.length < 2) e.ex.push(i.key) }
     const rep = {};

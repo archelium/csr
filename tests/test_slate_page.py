@@ -48,10 +48,14 @@ class PageTests(unittest.TestCase):
                   "No contracts yet", "No notices yet", "No ships destroyed nearby"):
             self.assertIn(i, self.html, i)
 
-    def test_no_party_or_demo_stops(self):
-        for s in ('id="pplParty"', 'id="navParty"', "NAMES SEEN", 'Port Tressler<span class="r">', "ARC-L4 · 42 Gm", "42 min ago",
-                  "partyRender()"):
+    def test_no_demo_stops_or_party(self):
+        for s in ('Port Tressler<span class="r">', "ARC-L4 · 42 Gm", "42 min ago", "PARTY · 3", "1 near you</span>"):
             self.assertNotIn(s, self.html, s)
+
+    def test_party_and_answers_from_the_log(self):
+        for s in ('id="pplParty"', 'id="navParty"', 'id="pplNames"', 'id="navQt"', "ANSWER IN GAME", "G.asks", "G.party",
+                  "Not in a party"):
+            self.assertIn(s, self.html, s)
 
     def test_no_mock_starting_values(self):
         for v in ('id="spd">370<', 'id="bst">8%<', 'id="o2v">63%<', 'id="o2t">14 min<', "In space · no air",

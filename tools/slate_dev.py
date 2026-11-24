@@ -1,11 +1,14 @@
 """Dev preview for the Kestrel slate: the page plus a telemetry capture replayed in a loop.
 
   py -3 tools/slate_dev.py --fixture takeoff [--port 7895] [--log path/to/Game.log] [--state waiting] [--range -170:]
+  py -3 tools/slate_dev.py --recording %LOCALAPPDATA%/CSR/telemetry/LIVE/<file>.jsonl.gz [--start 1500] [--speed 4]
 
 Serves /live, /api/telemetry/live and /api/telemetry/ship like CSR does, with no key,
 plus /slate_audit.js (load it in the page, then auditLive({touch: true})).
 For layout work and the browser audit only. Nothing here ships in the exe."""
 import argparse
+import re
+import zlib
 import http.server
 import json
 import os
@@ -33,6 +36,47 @@ def frames(name):
     return out
 
 
+IDX_RE = re.compile(r"^(.*)\[(\d+)\]$")
+
+
+def unflatten(flat):
+    """A recording row's dotted keys ("weapons.weapons[3].name") back into the stream's nested frame."""
+    out = {}
+    for key, val in flat.items():
+        cur, parts = out, key.split(".")
+        for i, part in enumerate(parts):
+            m = IDX_RE.match(part)
+            name, idx = (m.group(1), int(m.group(2))) if m else (part, None)
+            last = i == len(parts) - 1
+            if idx is None:
+                if last:
+                    cur[name] = val
+                else:
+                    cur = cur.setdefault(name, {})
+            else:
+                lst = cur.setdefault(name, [])
+                while len(lst) <= idx:
+                    lst.append({})
+                if last:
+                    lst[idx] = val
+                else:
+                    cur = lst[idx]
+    return out
+
+
+def recording(path):
+    """[(t, flat-delta row)] from a CSR recording (.jsonl.gz, still open is fine)."""
+    raw = open(path, "rb").read()
+    txt = zlib.decompressobj(31).decompress(raw).decode("utf-8", "replace")
+    rows = []
+    for ln in txt.splitlines()[1:]:
+        try:
+            rows.append(json.loads(ln))
+        except ValueError:
+            pass
+    return rows
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--fixture", default="takeoff", choices=("takeoff", "landing"))
@@ -40,15 +84,42 @@ def main():
     ap.add_argument("--log", default=None, help="a Game.log to tail for the log state")
     ap.add_argument("--state", default="live", choices=("live", "waiting"))
     ap.add_argument("--range", default=":", help="frames to loop, python slice a:b (landing -170: is on foot)")
+    ap.add_argument("--recording", default=None, help="a CSR recording (.jsonl.gz) to replay instead of a fixture")
+    ap.add_argument("--start", type=float, default=0.0, help="recording: start at this many seconds in")
+    ap.add_argument("--speed", type=float, default=1.0, help="recording: playback speed")
     a = ap.parse_args()
     lo, hi = (int(x) if x else None for x in a.range.split(":"))
-    fr = frames(a.fixture)[lo:hi]
+    fr = frames(a.fixture)[lo:hi] if not a.recording else None
+    rec = recording(a.recording) if a.recording else None
+    play = {"i": 0, "flat": {}, "ev": []}
     t0 = time.time()
+
+    def rec_frame():
+        """Apply recording rows up to the play clock; loops at the end."""
+        end = rec[-1]["t"] if rec else 0
+        clock = a.start + (time.time() - t0) * a.speed
+        if end:
+            clock = a.start + (clock - a.start) % max(1.0, end - a.start)
+        if play["i"] and rec[play["i"] - 1]["t"] > clock:
+            play.update(i=0, flat={})
+        while play["i"] < len(rec) and rec[play["i"]]["t"] <= clock:
+            r = rec[play["i"]]
+            for k in r.get("-") or []:
+                play["flat"].pop(k, None)
+            play["flat"].update({k: v for k, v in r.items() if k not in ("t", "-", "ev")})
+            for e in r.get("ev") or []:
+                play["ev"].append({"t": time.time() - (clock - r["t"]) / a.speed, "type": e})
+            play["i"] += 1
+        play["ev"] = play["ev"][-50:]
+        return unflatten(play["flat"]), list(play["ev"])
     tail = sc_livelog.LiveTail(lambda: a.log, lambda c: sc_stats.place_name(c)[0]) if a.log else None
 
     def live():
         if a.state != "live":
             return {"state": a.state, "reason": "", "snapshot": {}, "events": []}
+        if rec is not None:
+            snap, evs = rec_frame()
+            return {"state": "live", "reason": "", "snapshot": snap, "events": evs}
         i = int((time.time() - t0) * 14) % len(fr)
         snap, evs = fr[i]
         return {"state": "live", "reason": "", "snapshot": snap, "events": [{"t": time.time(), "type": e} for e in evs]}
@@ -88,7 +159,7 @@ def main():
             pass
 
     srv = http.server.ThreadingHTTPServer(("127.0.0.1", a.port), H)
-    print(f"slate dev: http://127.0.0.1:{a.port}/live  ({a.fixture}, {len(fr)} frames)")
+    print(f"slate dev: http://127.0.0.1:{a.port}/live  ({a.recording or a.fixture}, {len(rec or fr)} rows)")
     srv.serve_forever()
 
 
