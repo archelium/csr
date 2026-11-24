@@ -5,6 +5,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and CSR
 uses [Semantic Versioning](https://semver.org/) (MAJOR.MINOR.PATCH).
 
 
+## [Unreleased]
+
+### Changed
+- `CSR.exe` carries its name, version and publisher in Windows file details
+  (right-click → Properties → Details). Antivirus tools trust an exe with details more.
+
 ## [1.11.0] — 2026-11-24
 
 ### Added

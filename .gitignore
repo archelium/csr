@@ -17,6 +17,7 @@ __pycache__/
 CSR.html
 sc_stats.html
 CSR-v*.zip
+CSR-v*.sha256.txt
 csr_icon.png
 
 # Per-user runtime data & caches
