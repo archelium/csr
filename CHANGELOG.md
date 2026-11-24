@@ -10,10 +10,10 @@ uses [Semantic Versioning](https://semver.org/) (MAJOR.MINOR.PATCH).
 ### Added
 - **Telemetry recording.** CSR records the game's own telemetry stream while you play:
   wallet, flight, weapons, warnings, on-foot and seat state, survival. The game's
-  telemetry setting starts off. **Turn on** in the Telemetry card of Backup & transfer (💾)
-  adds `grpc.client.server.enabled = true` to your channel's user.cfg, with a `.csr-bak`
-  backup. It takes effect on the next game launch. CSR must be open while you play. One
-  CSR window records at a time.
+  telemetry setting starts off. Press Turn on in the Telemetry card (Backup & transfer,
+  💾). It adds `grpc.client.server.enabled = true` to your channel's user.cfg, with a
+  `.csr-bak` backup. It takes effect on the next game launch. CSR must be open while you
+  play. One CSR window records at a time.
 - **Detail and retention.** Full, Normal or Light (about 1.7, 0.4 and 0.1 MB per hour).
   Keep recordings forever, 1 year, 3 months or 1 month. Pick which groups to record.
 - **Live view** (sidebar). The current stream, updated as it arrives.

@@ -226,6 +226,8 @@ CSR can record the telemetry stream the game serves on your own PC: wallet, flig
 weapons, warnings, on-foot and seat state, survival. It adds stat cards to Economy,
 Flight & Travel, Combat and Activity, and a **Live view** page in the sidebar.
 
+- **CSR records by default.** The game's own telemetry setting starts off.
+  The card's Turn on button adds it.
 - **Turn it on** in the Telemetry card of **💾 Backup & transfer**. It adds
   `grpc.client.server.enabled = true` to your channel's user.cfg and keeps a `.csr-bak`
   backup. It takes effect on the next game launch.
