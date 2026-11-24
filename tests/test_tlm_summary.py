@@ -16,6 +16,7 @@ LANDED = "vehicle.state.flight.state.is_landed"
 GEAR = "vehicle.state.flight.state.gear"
 SPEED = "vehicle.state.flight.instruments.speed"
 GMETER = "vehicle.state.flight.instruments.g_meter.current"
+GMAX = "vehicle.state.flight.instruments.g_meter.max"
 BOOST = "vehicle.state.flight.instruments.boost.engaged"
 BOOST_CRIT = "vehicle.state.flight.instruments.boost.critical"
 H2 = "vehicle.state.flight.instruments.hydrogen_fuel"
@@ -159,7 +160,7 @@ class SummaryTests(SummaryBase):
 
     def test_peaks_count_for_records(self):
         w = tlm.RecordingWriter(self.path, HEADER, "normal", tlm.DEFAULT_GROUPS)
-        base = {LOCO: "SEATED", CLASS: "X"}
+        base = {LOCO: "SEATED", CLASS: "X", GMAX: 10.0}
         for i in range(20):
             g = 9.8 if i == 3 else 1.0
             w.add(i * 0.1, dict(base, **{GMETER: g, SPEED: 100.0 + (50.0 if i == 4 else 0)}), [])
@@ -167,6 +168,38 @@ class SummaryTests(SummaryBase):
         s = st.summarize(self.path)["sum"]
         self.assertEqual(s["max_g"], 9.8)
         self.assertEqual(s["top_speed"], 150.0)
+
+    def g_run(self, readings, limit, detail="full"):
+        """max_g from a recording of G readings, 0.1 s apart."""
+        w = tlm.RecordingWriter(self.path, HEADER, detail, tlm.DEFAULT_GROUPS)
+        base = {LOCO: "SEATED", CLASS: "X", LANDED: False}
+        if limit is not None:
+            base[GMAX] = limit
+        for i, g in enumerate(readings):
+            w.add(i * 0.1, dict(base, **{GMETER: g}), [])
+        w.close()
+        return st.summarize(self.path)["sum"]["max_g"]
+
+    def test_g_nav_exit_spike_ignored(self):
+        # NAV to SCM drop: the meter reads 76 while the ship's limit is 19.07
+        self.assertEqual(self.g_run([3.0, 12.0, 76.0, 30.0, 4.0, 2.0], 19.07), 12.0)
+
+    def test_g_touchdown_spike_ignored(self):
+        # one-frame contact spike at touchdown, neighbours 2.5 and 0.8
+        self.assertEqual(self.g_run([1.0, 2.5, 56.5, 0.8, 0.5], 19.0), 2.5)
+
+    def test_g_sustained_pull_at_limit_counts(self):
+        self.assertEqual(self.g_run([5.0, 15.0, 19.07, 19.07, 19.07, 18.0, 6.0], 19.07), 19.07)
+
+    def test_g_just_over_limit_counts(self):
+        self.assertEqual(self.g_run([2.0, 23.8, 2.0], 19.07), 23.8)
+
+    def test_g_spike_peak_ignored(self):
+        # normal detail: the spike only reaches the file as a `^` peak
+        self.assertEqual(self.g_run([1.0] * 3 + [76.0] + [1.0] * 10, 19.07, "normal"), 1.0)
+
+    def test_g_without_limit_ignored(self):
+        self.assertEqual(self.g_run([2.0, 9.0, 3.0], None), 0)
 
     def test_low_peaks_count_for_min_temp(self):
         w = tlm.RecordingWriter(self.path, HEADER, "normal", tlm.DEFAULT_GROUPS)
@@ -284,6 +317,23 @@ class SummaryTests(SummaryBase):
         self.assertEqual(s["n_boost_critical"], 2)
         self.assertAlmostEqual(s["h2_used"], 0.1 + 0.15, places=6)
         self.assertAlmostEqual(s["qt_used"], 0.3, places=6)
+
+    def test_fuel_missing_at_power_down_is_not_used(self):
+        # hydrogen_fuel vanishes at power-down while the vehicle frame stays
+        base = {LOCO: "SEATED", CLASS: "X", LANDED: True}
+        steps = [(0.0, dict(base, **{H2: 0.9861, QT: 0.75})),
+                 (1.0, dict(base, **{H2: 0.9839, QT: 0.75})),
+                 (2.0, dict(base)),
+                 (3.0, dict(base))]
+        s = self.sum(steps)
+        self.assertAlmostEqual(s["h2_used"], 0.0022, places=6)
+        self.assertEqual(s["qt_used"], 0)
+
+    def test_fuel_gap_then_present_counts_the_drop(self):
+        base = {LOCO: "SEATED", CLASS: "X"}
+        steps = [(0.0, dict(base, **{H2: 0.9})), (1.0, dict(base)), (2.0, dict(base, **{H2: 0.8}))]
+        s = self.sum(steps)
+        self.assertAlmostEqual(s["h2_used"], 0.1, places=6)
 
     def test_shields_off_flying_and_ifcs(self):
         base = {LOCO: "SEATED", CLASS: "X", LANDED: False, POWER_X: True}

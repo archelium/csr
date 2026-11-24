@@ -10,6 +10,10 @@ Rules that hold throughout:
 - Durations use the real time to the next row. A recording is one continuous stream and its
   last row carries the end time, so unchanged stretches count in full.
 - Records (max/min) include the `^` / `_` peaks. Totals are exact, only the series is thinned.
+- A G reading counts for max_g only next to the ship's G limit (g_meter.max) and up to
+  G_LIMIT_FACTOR times it. The meter also shows mode-switch and contact spikes.
+- Fuel used counts only drops between two present fuel values. The fuel field vanishes at
+  power-down while the vehicle frame stays.
 """
 import glob
 import json
@@ -21,7 +25,7 @@ from datetime import datetime, timedelta
 
 import sc_telemetry as tlm
 
-SUMMARY_VERSION = 1
+SUMMARY_VERSION = 2
 SERIES_MAX = 200
 SERIES_MAX_COMBINED = 400
 
@@ -39,6 +43,8 @@ GEAR = "vehicle.state.flight.state.gear"
 INSTR = "vehicle.state.flight.instruments."
 SPEED = INSTR + "speed"
 GMETER = INSTR + "g_meter.current"
+GMAX = INSTR + "g_meter.max"
+G_LIMIT_FACTOR = 1.25
 BOOST = INSTR + "boost.engaged"
 BOOST_CRIT = INSTR + "boost.critical"
 H2 = INSTR + "hydrogen_fuel"
@@ -330,11 +336,16 @@ class _Acc:
             self.prev_landed = self.prev_gear = self.prev_crit = None
             self.prev_h2 = self.prev_qt = None
             return
-        for path, key in ((SPEED, "top_speed"), (GMETER, "max_g")):
-            _, hi = peaks.get(path, (None, None))
-            for x in (state.get(path), hi):
-                if _num(x):
-                    o[key] = max(o[key], x)
+        _, hi = peaks.get(SPEED, (None, None))
+        for x in (state.get(SPEED), hi):
+            if _num(x):
+                o["top_speed"] = max(o["top_speed"], x)
+        limit = state.get(GMAX)
+        if _num(limit) and limit > 0:
+            _, hi = peaks.get(GMETER, (None, None))
+            for x in (state.get(GMETER), hi):
+                if _num(x) and x <= G_LIMIT_FACTOR * limit:
+                    o["max_g"] = max(o["max_g"], x)
         landed = bool(state.get(LANDED))
         if self.prev_landed is not None:
             if self.prev_landed and not landed:
@@ -351,9 +362,9 @@ class _Acc:
             o["n_boost_critical"] += 1
         self.prev_crit = crit
         for path, attr, key in ((H2, "prev_h2", "h2_used"), (QT, "prev_qt", "qt_used")):
-            v = state.get(path, 0.0)
+            v = state.get(path)
             if not _num(v):
-                continue
+                continue        # missing fuel is unknown, the last present value stays
             prev = getattr(self, attr)
             if prev is not None and v < prev:
                 o[key] += prev - v

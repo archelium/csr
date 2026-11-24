@@ -49,14 +49,15 @@ class IndexTests(IndexBase):
         idx = st.refresh_index(self.root)
         self.assertEqual(len(idx), 2)
         self.assertEqual(len(st.load_index(self.root)), 2)
-        with mock.patch.object(st, "SUMMARY_VERSION", 2):
+        v = st.SUMMARY_VERSION
+        with mock.patch.object(st, "SUMMARY_VERSION", v + 1):
             idx = st.refresh_index(self.root)
-        self.assertEqual({e["v"] for e in idx.values()}, {2})
+        self.assertEqual({e["v"] for e in idx.values()}, {v + 1})
         os.remove(a)
-        with mock.patch.object(st, "SUMMARY_VERSION", 3):
+        with mock.patch.object(st, "SUMMARY_VERSION", v + 2):
             idx = st.refresh_index(self.root)
-        self.assertEqual(idx[os.path.basename(a)]["v"], 2)
-        self.assertEqual(idx["20261124-200000.jsonl.gz"]["v"], 3)
+        self.assertEqual(idx[os.path.basename(a)]["v"], v + 1)
+        self.assertEqual(idx["20261124-200000.jsonl.gz"]["v"], v + 2)
 
     def test_refresh_skips_recording_file(self):
         p = self.rec(datetime(2026, 11, 24, 19, 0, 0), W2)
@@ -264,12 +265,14 @@ class CareerTests(unittest.TestCase):
         for p in st.recording_files(tmp.name):
             os.remove(p)
         # A: recorded after a version bump, flight and wallet
-        base.rec(t_a, [(0, {SPEED: 50, WALLET: 5, "vehicle.state.flight.instruments.g_meter.current": 4.0}),
-                       (5, {SPEED: 50, WALLET: 5, "vehicle.state.flight.instruments.g_meter.current": 4.0})],
+        g = {"vehicle.state.flight.instruments.g_meter.current": 4.0,
+             "vehicle.state.flight.instruments.g_meter.max": 10.0}
+        base.rec(t_a, [(0, dict(g, **{SPEED: 50, WALLET: 5})), (5, dict(g, **{SPEED: 50, WALLET: 5}))],
                  groups=["flight", "wallet"])
-        with mock.patch.object(st, "SUMMARY_VERSION", 2):
+        v = st.SUMMARY_VERSION
+        with mock.patch.object(st, "SUMMARY_VERSION", v + 1):
             idx = st.refresh_index(tmp.name)
-        self.assertEqual(sorted(e["v"] for e in idx.values()), [1, 2])
+        self.assertEqual(sorted(e["v"] for e in idx.values()), [v, v + 1])
         sessions = [{"start": t_a, "dur": 600.0}, {"start": t_b, "dur": 600.0}]
         att, un = st.attach(sessions, idx, datetime(2026, 12, 1))
         self.assertEqual(un, [])
