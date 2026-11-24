@@ -1426,7 +1426,14 @@ SLATE_BODY = r"""
     </div>
    </div>
    <div class="deck seat" id="deck"></div>
-   <div class="deck foot emotes"></div>
+   <div class="deck foot emotes" id="emoteDeck">
+    <button class="btn cut nw" data-id="emote" title="Not wired yet. Nothing is sent to the game."><svg class="ic"><use href="#i-party"/></svg>WAVE<small>not wired</small></button>
+    <button class="btn cut nw" data-id="emote" title="Not wired yet. Nothing is sent to the game."><svg class="ic"><use href="#i-ready"/></svg>SALUTE<small>not wired</small></button>
+    <button class="btn cut nw" data-id="emote" title="Not wired yet. Nothing is sent to the game."><svg class="ic"><use href="#i-obj"/></svg>POINT<small>not wired</small></button>
+    <button class="btn cut nw" data-id="emote" title="Not wired yet. Nothing is sent to the game."><svg class="ic"><use href="#i-friend"/></svg>AGREE<small>not wired</small></button>
+    <button class="btn cut nw" data-id="emote" title="Not wired yet. Nothing is sent to the game."><svg class="ic"><use href="#i-zone"/></svg>SIT<small>not wired</small></button>
+    <button class="btn cut nw" data-id="emote" title="Not wired yet. Nothing is sent to the game."><svg class="ic"><use href="#i-ping"/></svg>WHISTLE<small>not wired</small></button>
+   </div>
   </section>
 
   <!-- MISSIONS -->
@@ -1498,7 +1505,7 @@ SLATE_BODY = r"""
    <div class="panel cut list pplships scrolls" id="pplShips"></div>
    <div class="panel cut list">
     <div class="ph">THIS SESSION<span class="r">from Vehicle Destroyed and Actor Death</span></div>
-    <div class="stiles pplsess"><div class="stile"><span class="sti"><svg class="ic"><use href="#i-kill"/></svg></span><span class="stl">SHIPS DESTROYED</span><b id="pDst">—</b></div><div class="stile"><span class="sti"><svg class="ic"><use href="#i-skull"/></svg></span><span class="stl">DEATHS</span><b id="pDead">—</b></div><div class="stile"><span class="sti"><svg class="ic"><use href="#i-downed"/></svg></span><span class="stl">DOWNED</span><b id="pDown">—</b></div></div>
+    <div class="stiles pplsess"><div class="stile"><span class="sti"><svg class="ic"><use href="#i-kill"/></svg></span><span class="stl">SHIPS DESTROYED</span><b id="pDst">—</b></div><div class="stile"><span class="sti"><svg class="ic"><use href="#i-skull"/></svg></span><span class="stl">DEATHS</span><b id="pDead">—</b></div><div class="stile"><span class="sti"><svg class="ic"><use href="#i-downed"/></svg></span><span class="stl">INCAPACITATED</span><b id="pDown">—</b></div></div>
    </div>
   </section>
 
@@ -1526,7 +1533,7 @@ SLATE_BODY = r"""
    <div class="panel cut">
     <div class="ph">THIS SESSION<span class="r" id="sessT"></span></div>
     <div class="stiles sessgrid">
-     <div class="stile g"><span class="sti"><svg class="ic"><use href="#i-pay"/></svg></span><span class="stl">WALLET</span><b id="sWal">—</b></div><div class="stile "><span class="sti"><svg class="ic"><use href="#i-bank"/></svg></span><span class="stl">BALANCE</span><b id="sBal">—</b></div><div class="stile "><span class="sti"><svg class="ic"><use href="#i-route"/></svg></span><span class="stl">FLOWN</span><b id="sFlown">—</b></div><div class="stile "><span class="sti"><svg class="ic"><use href="#i-bp"/></svg></span><span class="stl">BLUEPRINTS</span><b id="sBp">—</b></div><div class="stile "><span class="sti"><svg class="ic"><use href="#i-downed"/></svg></span><span class="stl">DOWNED</span><b id="sDown">—</b></div><div class="stile "><span class="sti"><svg class="ic"><use href="#i-skull"/></svg></span><span class="stl">DEATHS</span><b id="sDead">—</b></div><div class="stile "><span class="sti"><svg class="ic"><use href="#i-respawn"/></svg></span><span class="stl">RESPAWNS</span><b id="sResp">—</b></div><div class="stile "><span class="sti"><svg class="ic"><use href="#i-seat"/></svg></span><span class="stl">SEAT CHANGES</span><b id="sSeat">—</b></div>
+     <div class="stile g"><span class="sti"><svg class="ic"><use href="#i-pay"/></svg></span><span class="stl">WALLET</span><b id="sWal">—</b></div><div class="stile "><span class="sti"><svg class="ic"><use href="#i-bank"/></svg></span><span class="stl">BALANCE</span><b id="sBal">—</b></div><div class="stile "><span class="sti"><svg class="ic"><use href="#i-route"/></svg></span><span class="stl">FLOWN</span><b id="sFlown">—</b></div><div class="stile "><span class="sti"><svg class="ic"><use href="#i-bp"/></svg></span><span class="stl">BLUEPRINTS</span><b id="sBp">—</b></div><div class="stile "><span class="sti"><svg class="ic"><use href="#i-downed"/></svg></span><span class="stl">INCAPACITATED</span><b id="sDown">—</b></div><div class="stile "><span class="sti"><svg class="ic"><use href="#i-skull"/></svg></span><span class="stl">DEATHS</span><b id="sDead">—</b></div><div class="stile "><span class="sti"><svg class="ic"><use href="#i-respawn"/></svg></span><span class="stl">RESPAWNS</span><b id="sResp" title="Not sent on 4.10">—</b></div><div class="stile "><span class="sti"><svg class="ic"><use href="#i-seat"/></svg></span><span class="stl">SEAT CHANGES</span><b id="sSeat">—</b></div>
     </div>
    </div>
   </section>
@@ -2210,6 +2217,7 @@ function deckHtml(cells){const D=buildDeck(cells);let h='';
 function bindDeck(root){root.querySelectorAll('.nw,[data-op]').forEach(el=>el.onclick=e=>{e.stopPropagation();press(el.dataset.id||el.dataset.op)})}
 function deckRender(){const d=$('#deck');if(!d)return;d.innerHTML=deckHtml(12);d.classList.toggle('gdeck',seat==='gunner');d.style.gridTemplateColumns=seat==='gunner'?`repeat(${Math.max(1,d.querySelectorAll('[data-id]').length)},1fr)`:'';bindDeck(d)}
 let PRESSED=0;
+{const ed=document.getElementById('emoteDeck');if(ed)bindDeck(ed)}
 function press(id){if(Date.now()-PRESSED<3000)return;PRESSED=Date.now();toast('i-bell','tip',NOTWIRED)}
 
 /* ---- needs + feed ---- */
@@ -2490,13 +2498,13 @@ function phoneRender(){applyShip();
   deckIds=[];
  }
  const pdeck=(seat==='pilot'||seat==='gunner')?deckHtml(8):''; const pcols=seat==='gunner'?(pdeck.match(/data-id=/g)||[]).length:4;
- const emotes='';
+ const emotes=(seat==='foot'||seat==='eva')?`<div class="phdeck">${['WAVE','SALUTE','POINT','AGREE'].map(e=>`<button class="btn cut nw" data-id="emote" title="${NOTWIRED}">${ic('i-party')}${e}<small>not wired</small></button>`).join('')}</div>`:'';
  el.classList.toggle('mapbig',phMapBig&&!pfight);
  const tight=short&&pfight; el.classList.toggle('tight',tight);
  el.innerHTML=glance+mapstrip+loc+env+(tight?'':msn)+wait+(pdeck?`<div class="phdeck" style="grid-template-columns:repeat(${pcols},1fr)">${pdeck}</div>`:'')+emotes;
  const pp=el.querySelector('#phMapPin'); if(pp)pp.onclick=()=>{pinMap=true;render()}; const pb2=el.querySelector('#phDmgBack'); if(pb2)pb2.onclick=()=>{pinMap=false;render()};
  el.querySelectorAll('[data-go]').forEach(x=>x.onclick=()=>document.querySelector(`#bezel .osb[data-p="${x.dataset.go}"]`).click());
- const pd=el.querySelector('.phdeck'); if(pd&&pdeck)bindDeck(pd);
+ el.querySelectorAll('.phdeck').forEach(bindDeck);
  fig();
 }
 $('#moreBtn').onclick=()=>{let sh=$('#moreSheet');if(sh){sh.remove();return}sh=document.createElement('div');sh.id='moreSheet';sh.className='panel cut';
@@ -2821,7 +2829,7 @@ function applyModel(){const M=MODEL,f=M.flight;
  sx('sessT','since '+new Date(T0).toTimeString().slice(0,5));
  sx('sWal',dW==null?'—':(dW>0?'+':dW<0?'−':'')+Math.abs(dW).toLocaleString('en-US'));sx('sBal',M.wallet==null?'—':big(Math.round(M.wallet)));
  sx('sFlown',FLOWN>=1000?(FLOWN/1000).toFixed(1)+' km':Math.round(FLOWN)+' m');sx('sBp',G.blueprints==null?'—':String(G.blueprints));
- sx('sDown',String(SESS.downed));sx('sDead',String(SESS.dead));sx('sResp',String(SESS.respawn));sx('sSeat',String(SESS.seat));
+ sx('sDown',String(SESS.downed));sx('sDead',String(SESS.dead));sx('sResp',SESS.respawn?String(SESS.respawn):'—');sx('sSeat',String(SESS.seat));
  const nr=$('#mainNear');if(nr){const k=killRows(2);nr.innerHTML=k.length?k.map(x=>`<div class="line unit">${esc(x.killer||'Unknown')} destroyed a ${esc(shipNameOf(x.cls))} · ${agoMin(x.t)}</div>`).join(''):'<div class="line unit">No ships destroyed nearby</div>'}
 }
 const GUNHOLD={};

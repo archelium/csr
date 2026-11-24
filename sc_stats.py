@@ -928,7 +928,20 @@ def live_payload(live):
         data["log"] = None
     data["names"] = _slate_gun_names(data.get("snapshot"), ((data["log"] or {}).get("loadout") or {}).values())
     data["lastShip"] = _slate_last_ship(data.get("snapshot"))
+    for c in ((data["log"] or {}).get("contracts") or []):
+        c["info"] = _slate_mission_info(c.get("name"))
     return data
+
+
+def _slate_mission_info(title):
+    """Type (CSR's mission rules), giver, standing, rep gain and blueprint flag for a contract title,
+    from the mission index. Unknown titles get the type from the title alone."""
+    t = str(title or "").strip().lower()
+    row = next((r for r in (MIS.rows if MIS.ok else []) if str(r[1] or "").strip().lower() == t), None) if t else None
+    if not row:
+        return {"type": mission_type(t), "giver": None, "standing": None, "rep": None, "bp": False}
+    return {"type": mission_type(row[0] or t), "giver": row[2] or None, "standing": row[4] or None,
+            "rep": row[6] or None, "bp": bool(row[8])}
 
 
 # the last vehicle block the stream sent, kept across page reloads and CSR restarts:

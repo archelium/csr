@@ -45,6 +45,17 @@ class ApiTests(unittest.TestCase):
         body = json.loads(api("/api/telemetry/live"))
         self.assertEqual(body["lastShip"]["vehicle"]["state"]["class_name"], "DRAK_Marauder")
 
+    def test_contracts_get_mission_info(self):
+        row = ["PU_Bounty_Test", "Bounty: Test Target", "Northrock Service Group", 2, "Applicant", 500, 1500,
+               [["Northrock Service Group", 1500]], True, ["Stanton"], "https://example.invalid"]
+        log = dict(LOG, contracts=[{"name": "Bounty: Test Target", "status": "active", "objective": None, "t": 1},
+                                   {"name": "Unknown Job", "status": "active", "objective": None, "t": 2}])
+        with mock.patch.object(sc_livelog, "get_state", lambda *a, **k: log),                 mock.patch.object(sc_stats.MIS, "rows", [row]), mock.patch.object(sc_stats.MIS, "ok", True):
+            cs = json.loads(api("/api/telemetry/live"))["log"]["contracts"]
+        self.assertEqual(cs[0]["info"], {"type": "Bounty", "giver": "Northrock Service Group", "standing": "Applicant",
+                                         "rep": 1500, "bp": True})
+        self.assertEqual(cs[1]["info"], {"type": "Other", "giver": None, "standing": None, "rep": None, "bp": False})
+
     def test_no_last_ship_yet(self):
         self.assertIsNone(json.loads(api("/api/telemetry/live"))["lastShip"])
 
