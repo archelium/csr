@@ -12776,6 +12776,38 @@ def start_tray(url, refresh, quit_):
     return t
 
 
+# One CSR per Windows user: a named lock held for the life of the process. Checking it
+# is instant, where probing ports costs ~0.6 s per closed port on Windows.
+_INSTANCE = {"h": None}
+
+
+def claim_instance():
+    """True when no other CSR is running for this user. Keeps the lock."""
+    if os.name != "nt":
+        return True
+    try:
+        import ctypes
+        k = ctypes.WinDLL("kernel32", use_last_error=True)
+        k.CreateMutexW.restype = ctypes.c_void_p
+        h = k.CreateMutexW(None, False, "Local\\CSR-Citizen-Service-Record")
+        already = ctypes.get_last_error() == 183          # ERROR_ALREADY_EXISTS
+        _INSTANCE["h"] = h
+        return not already
+    except Exception:
+        return True
+
+
+def release_instance():
+    """Let go of the lock, so a restarted CSR can take it."""
+    h, _INSTANCE["h"] = _INSTANCE["h"], None
+    if h and os.name == "nt":
+        try:
+            import ctypes
+            ctypes.windll.kernel32.CloseHandle(ctypes.c_void_p(h))
+        except Exception:
+            pass
+
+
 def running_csr(port):
     """The address of a CSR already serving on this PC, else None."""
     import urllib.request
@@ -12820,6 +12852,7 @@ def serve(out_path, port=7878, explicit_logs=None, open_browser=True,
             # Popen, NOT os.execv: on Windows execv doesn't quote its arguments, so an
             # install path containing spaces ("G:\\My Drive\\…") is split and the
             # relaunch dies with "can't open file". Popen quotes properly.
+            release_instance()                # the new process takes the lock
             args = [a for a in sys.argv[1:] if a != "--no-browser"] + ["--no-browser"]
             cmd = [sys.executable] + ([] if is_frozen() else [os.path.abspath(sys.argv[0])]) + args
             try:
@@ -13242,12 +13275,11 @@ def main():
     serving = args.serve or (is_frozen() and not args.open and not args.out)
     # one CSR at a time: a second start opens the running one's dashboard and leaves,
     # before it touches the log the running one is writing
-    if serving:
+    if serving and not claim_instance():
         other = running_csr(args.port)
-        if other:
-            if not args.no_browser:
-                webbrowser.open(other)
-            return
+        if other and not args.no_browser:
+            webbrowser.open(other)
+        return
     route_output(want_console=args.console)
 
     out_path = args.out or os.path.join(app_dir(), "CSR.html")
