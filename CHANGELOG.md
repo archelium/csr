@@ -5,14 +5,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and CSR
 uses [Semantic Versioning](https://semver.org/) (MAJOR.MINOR.PATCH).
 
 
-## [Unreleased]
-
-### Fixed
-- **Kestrel's screen kept turning off** on tablets and phones. The keep-awake video was
-  too small for Chrome to count. It now covers the slate behind the panels and starts on
-  its own. The SCREEN key's first tap goes fullscreen, the next one lets the screen sleep.
-- The SCREEN key and bell sat away from the right end of Kestrel's top strip.
-
 ## [2.0.0-beta] — 2026-11-25
 
 Telemetry and the Kestrel K-7 Flight Slate. Beta: telemetry is new and tested on
@@ -23,7 +15,8 @@ LIVE 4.10 only.
   Seated: speed, fuel, G, IFCS and power, weapons, countermeasures, warnings, shields and
   hull. On foot and EVA: vitals, injuries, suit and loadout. Contracts, HUD notices, your
   location and ships destroyed nearby from Game.log. Click **Kestrel K-7** at the top of
-  the sidebar for a QR code. **Open on this PC** shows it in a browser tab.
+  the sidebar for a QR code. **Open on this PC** shows it in a browser tab. The screen
+  stays on while Kestrel is open. The SCREEN key goes fullscreen.
 - **Tablet & phone access.** Off by default. Turn it on from the Kestrel K-7 drawer or the
   Telemetry settings for a QR code and a private link on port 7890-7899. Serves Kestrel
   only, on your LAN only. Windows asks to allow CSR on the network the first time.
