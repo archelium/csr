@@ -5,21 +5,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and CSR
 uses [Semantic Versioning](https://semver.org/) (MAJOR.MINOR.PATCH).
 
 
-## [Unreleased]
-
-### Fixed
-- **Kestrel on 4.10:** SCM and NAV show again. 4.10 sends no master mode, so Kestrel reads
-  it from the shield and quantum drive lights.
-- The engine area no longer flashes red during quantum travel.
-- Altitude reads in metres with thousand separators.
-- A gun that runs dry shows as charging for at least 1.5 s. The game clears it in a
-  fraction of a second.
-- DEFENSE counts hits taken. Hull and shield numbers aren't in 4.10 telemetry, and
-  Kestrel now says so.
-- The QT tank reads "no data" on 4.10 instead of looking empty.
-- In a seat, the environment section is labelled Cabin. The game reports the cabin
-  there. Outside air density comes from the ship.
-
 ## [2.0.0-beta] — 2026-11-25
 
 Telemetry and the Kestrel K-7 Flight Slate. Beta: telemetry is new and tested on
@@ -32,6 +17,20 @@ LIVE 4.10 only.
   location and ships destroyed nearby from Game.log. Click **Kestrel K-7** at the top of
   the sidebar for a QR code. **Open on this PC** shows it in a browser tab. The screen
   stays on while Kestrel is open. The SCREEN key goes fullscreen.
+  - **Your ship's own keys:** quantum, gear, wings, VTOL, doors, locks, lights, ATC, hail,
+    eject per seat and self-destruct with the ship's timer. Keys show state only. Nothing
+    is sent to the game yet.
+  - **Missions:** objectives with their state, giver, standing, rep and blueprint chips,
+    and the objective's place pinned on the map. Abandoned, failed and completed
+    contracts leave the active list.
+  - **What you hold:** the item in each hand from Game.log, weapon draws included.
+  - **Last ship** survives page reloads and CSR restarts.
+  - **Notices** show once, then stay in the bell and on FEED. Party invites, friend
+    requests and shared contracts wait as cards until you answer in game.
+  - **On 4.10:** SCM and NAV come from the shield and quantum drive lights. Altitude
+    reads in metres. A gun that runs dry shows as charging. DEFENSE counts hits. Hull,
+    shields and QT fuel read "not sent" since 4.10 doesn't send them. In a seat, the
+    game reports the cabin, so that section says Cabin.
 - **Tablet & phone access.** Off by default. Turn it on from the Kestrel K-7 drawer or the
   Telemetry settings for a QR code and a private link on port 7890-7899. Serves Kestrel
   only, on your LAN only. Windows asks to allow CSR on the network the first time.
