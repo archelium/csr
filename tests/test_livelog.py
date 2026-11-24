@@ -24,7 +24,8 @@ def kill(cls="AEGS_Gladius_123456", owner="0", level_to="2", reason="Combat", ki
 class PatternTests(unittest.TestCase):
     def test_patterns_match_sc_stats(self):
         for name in ("NOTIF_RE", "CONTRACT_NOTIF_RE", "JURIS_RE", "INJURY_RE", "VKILL_RE",
-                     "BLUEPRINT_RE", "PLACE_RE", "HAUL_RE", "ATTACH_RE", "ATTACH_PORT_RE"):
+                     "BLUEPRINT_RE", "PLACE_RE", "HAUL_RE", "ATTACH_RE", "ATTACH_PORT_RE", "MISSION_RE",
+                     "NOTIF_MISSION_RE"):
             self.assertEqual(getattr(sc_livelog, name).pattern, getattr(sc_stats, name).pattern, name)
 
 
@@ -42,12 +43,44 @@ class StateTests(unittest.TestCase):
     def test_contract_lifecycle(self):
         self.s.feed(notif("Contract Accepted: Bounty: Test Target"), 1)
         self.s.feed(notif("New Objective: Neutralize Target"), 2)
-        self.assertEqual(self.s.state()["contracts"][0],
+        c = self.s.state()["contracts"][0]
+        self.assertEqual({k: c[k] for k in ("name", "status", "objective", "t")},
                          {"name": "Bounty: Test Target", "status": "active", "objective": "Neutralize Target", "t": 1})
         self.s.feed(notif("Contract Complete: Bounty: Test Target"), 3)
         self.assertEqual(self.s.state()["contracts"][0]["status"], "complete")
         self.s.feed(notif("Contract Failed: Other Job"), 4)
         self.assertEqual(self.s.state()["contracts"][1]["status"], "failed")
+
+    def _mission_notif(self, text, mid, n=1, obj=""):
+        return (TS + f'[Notice] <SHUDEvent_OnNotification> Added notification "{text}: " [{n}] to queue. '
+                f'New queue size: 1, MissionId: [{mid}], ObjectiveId: [{obj}] [Team_CoreGameplayFeatures]')
+
+    def _end(self, mid, kind):
+        return (TS + f"[Notice] <EndMission> Ending mission for player. MissionId[{mid}] Player[p] PlayerId[1] "
+                f"CompletionType[{kind}] Reason[Player left] [Team_MissionFeatures][Missions]")
+
+    def test_abandoned_contract_closes_by_mission_id(self):
+        a, b = "289f342b-73d1-4dcf-b515-d1b2e28a65d0", "0af0e08c-8a4e-4151-b154-9a745093a687"
+        self.s.feed(self._mission_notif("Contract Accepted:  Combat Gauntlet - Scenario #6", b), 1)
+        self.s.feed(self._mission_notif("Contract Accepted:  Combat Gauntlet - Scenario #4", a), 2)
+        self.s.feed(self._mission_notif("New Objective: Go to a Hurston Weapons Testing Site above Aberdeen", b,
+                                        obj="a9fc"), 3)
+        self.s.feed(self._end(b, "Complete"), 4)
+        self.s.feed(self._end(a, "Abandon"), 5)
+        cs = {c["name"]: c for c in self.s.state()["contracts"]}
+        self.assertEqual(cs["Combat Gauntlet - Scenario #6"]["status"], "complete")
+        self.assertEqual(cs["Combat Gauntlet - Scenario #6"]["objective"],
+                         "Go to a Hurston Weapons Testing Site above Aberdeen")
+        self.assertEqual(cs["Combat Gauntlet - Scenario #4"]["status"], "abandoned")
+        self.assertIsNone(cs["Combat Gauntlet - Scenario #4"]["objective"])
+
+    def test_end_mission_kinds(self):
+        for i, (kind, want) in enumerate((("Fail", "failed"), ("Failed", "failed"), ("Abandon", "abandoned"),
+                                          ("Expired", "ended"))):
+            mid = f"00000000-0000-0000-0000-00000000000{i}"
+            self.s.feed(self._mission_notif(f"Contract Accepted: Job {i}", mid), 1)
+            self.s.feed(self._end(mid, kind), 2)
+            self.assertEqual(self.s.state()["contracts"][-1]["status"], want, kind)
 
     def test_markup_cleaned(self):
         self.s.feed(notif("Contract Accepted: <EM4>Help Protect Site [500 Rep] [BP]*</EM4>: "), 1)
@@ -88,6 +121,35 @@ class StateTests(unittest.TestCase):
         self.s.feed(TS + "<AttachmentReceived> Player[pilot] Attachment[a, qrt_combat_medium_core_01, 123] "
                     "Status[persistent] Port[Armor_Torso]", 1)
         self.assertEqual(self.s.state()["loadout"], {"Armor_Torso": "qrt_combat_medium_core_01"})
+
+    def _att(self, cls, iid, port):
+        self.s.feed(TS + f"<AttachmentReceived> Player[pilot] Attachment[{cls}_{iid}, {cls}, {iid}] "
+                    f"Status[persistent] Port[{port}] Elapsed[0.1]", 1)
+
+    def test_item_moves_between_ports(self):
+        self._att("none_rifle_multi_01", "939", "wep_stocked_3")
+        self._att("none_rifle_multi_01", "939", "weapon_attach_hand_right")
+        lo = self.s.state()["loadout"]
+        self.assertEqual(lo.get("weapon_attach_hand_right"), "none_rifle_multi_01")
+        self.assertNotIn("wep_stocked_3", lo)
+        self._att("none_rifle_multi_01", "939", "wep_stocked_3")
+        lo = self.s.state()["loadout"]
+        self.assertEqual(lo.get("wep_stocked_3"), "none_rifle_multi_01")
+        self.assertNotIn("weapon_attach_hand_right", lo)
+
+    def test_helmet_from_hand_to_hook(self):
+        self._att("vgl_flightsuit_helmet_01", "371", "weapon_attach_hand_left")
+        self._att("vgl_flightsuit_helmet_01", "371", "helmethook_attach")
+        lo = self.s.state()["loadout"]
+        self.assertNotIn("weapon_attach_hand_left", lo)
+        self.assertEqual(lo.get("helmethook_attach"), "vgl_flightsuit_helmet_01")
+
+    def test_new_item_in_hand_replaces_old(self):
+        self._att("Drink_bottle_cruz_01", "947", "weapon_attach_hand_right")
+        self._att("none_rifle_multi_01", "939", "weapon_attach_hand_right")
+        self.assertEqual(self.s.state()["loadout"]["weapon_attach_hand_right"], "none_rifle_multi_01")
+        self._att("none_rifle_multi_01", "939", "wep_stocked_3")
+        self.assertNotIn("weapon_attach_hand_right", self.s.state()["loadout"])
 
     def test_blueprint(self):
         self.s.feed(TS + 'Added notification "Received Blueprint: P4-AR Rifle: " [7]', 1)

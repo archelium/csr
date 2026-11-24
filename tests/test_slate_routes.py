@@ -22,9 +22,31 @@ def api(path, live=lambda: LIVE):
 
 class ApiTests(unittest.TestCase):
     def setUp(self):
-        p = mock.patch.object(sc_livelog, "get_state", lambda *a, **k: dict(LOG))
-        p.start()
-        self.addCleanup(p.stop)
+        self._td = tempfile.TemporaryDirectory()
+        self.addCleanup(self._td.cleanup)
+        for target, attr, val in ((sc_livelog, "get_state", lambda *a, **k: dict(LOG)),
+                                  (sc_stats, "_APP_DIR", self._td.name),
+                                  (sc_stats, "_SLATE_LAST", {"loaded": False, "data": None, "saved": 0})):
+            p = mock.patch.object(target, attr, val)
+            p.start()
+            self.addCleanup(p.stop)
+
+    def test_last_ship_kept_after_leaving_the_seat(self):
+        veh = {"state": {"class_name": "DRAK_Marauder", "flight": {"instruments": {"hydrogen_fuel": 0.8}}}}
+        api("/api/telemetry/live", live=lambda: dict(LIVE, snapshot={"vehicle": veh}))
+        body = json.loads(api("/api/telemetry/live", live=lambda: dict(LIVE, snapshot={"actor": {}})))
+        self.assertEqual(body["lastShip"]["vehicle"]["state"]["class_name"], "DRAK_Marauder")
+        self.assertIn("t", body["lastShip"])
+
+    def test_last_ship_survives_a_restart(self):
+        veh = {"state": {"class_name": "DRAK_Marauder"}}
+        api("/api/telemetry/live", live=lambda: dict(LIVE, snapshot={"vehicle": veh}))
+        sc_stats._SLATE_LAST.update(loaded=False, data=None, saved=0)
+        body = json.loads(api("/api/telemetry/live"))
+        self.assertEqual(body["lastShip"]["vehicle"]["state"]["class_name"], "DRAK_Marauder")
+
+    def test_no_last_ship_yet(self):
+        self.assertIsNone(json.loads(api("/api/telemetry/live"))["lastShip"])
 
     def test_live_has_log(self):
         body = json.loads(api("/api/telemetry/live"))

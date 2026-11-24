@@ -25,6 +25,12 @@ PLACE_RE = re.compile(r"<RequestLocationInventory> Player\[([^\]]+)\] requested 
 HAUL_RE = re.compile(r"^New Objective: Deliver (\d+)/(\d+) SCU of (.+?) to (.+?):?\s*$")
 ATTACH_RE = re.compile(r"AttachmentReceived> Player\[[^\]]+\] Attachment\[[^,]+,\s*([^,]+),")
 ATTACH_PORT_RE = re.compile(r"Port\[([a-zA-Z0-9_]+)\]")
+# mission ends (abandon raises no HUD notice) and the mission id a notice carries, as in sc_stats
+MISSION_RE = re.compile(r"MissionId\[([^\]]+)\].*?CompletionType\[([^\]]+)\]")
+NOTIF_MISSION_RE = re.compile(r"MissionId: \[([0-9a-f-]+)\], ObjectiveId: \[([^\]]*)\]")
+END_KIND = {"complete": "complete", "abandon": "abandoned", "fail": "failed", "failed": "failed"}
+# the item's id, third field of Attachment[...]: the same id on a new port means the item moved
+ATTACH_ID_RE = re.compile(r"Attachment\[[^,\]]+,\s*[^,\]]+,\s*(\d+)\]")
 LINE_TS_RE = re.compile(r"^<(\d{4})-(\d\d)-(\d\d)T(\d\d):(\d\d):(\d\d)(?:\.\d+)?Z>")
 
 MAX_NOTICES = 40
@@ -75,7 +81,9 @@ class LogState:
     def reset(self):
         self._st = {"place": None, "jurisdiction": None, "armistice": None, "notices": [], "contracts": [],
                     "kills": [], "injuries": {}, "loadout": {}, "blueprints": 0, "seq": 0}
-        self._bp_seen = set()     # one blueprint receipt is 2-4 lines sharing its notification id
+        self._bp_seen = set()
+        self._item_port = {}      # item id -> port it was last received on
+        self._port_item = {}      # port -> item id on it     # one blueprint receipt is 2-4 lines sharing its notification id
 
     def state(self):
         s = self._st
@@ -103,7 +111,14 @@ class LogState:
         if "AttachmentReceived>" in line:
             m, p = ATTACH_RE.search(line), ATTACH_PORT_RE.search(line)
             if m and p:
-                s["loadout"][p.group(1)] = m.group(1).strip()
+                self._attach(p.group(1), m.group(1).strip(), ATTACH_ID_RE.search(line))
+            return
+        if "<EndMission>" in line:
+            m = MISSION_RE.search(line)
+            if m:
+                hit = next((c for c in reversed(s["contracts"]) if c.get("mid") == m.group(1)), None)
+                if hit and hit["status"] == "active":
+                    hit["status"] = END_KIND.get(m.group(2).strip().lower(), "ended")
             return
         m = BLUEPRINT_RE.search(line)
         if m and (m.group(2), m.group(1)) not in self._bp_seen:
@@ -111,9 +126,27 @@ class LogState:
             s["blueprints"] += 1
         m = NOTIF_RE.search(line)
         if m:
-            self._notice(clean(m.group(1)), t)
+            mm = NOTIF_MISSION_RE.search(line)
+            self._notice(clean(m.group(1)), t, mm.group(1) if mm else None)
 
-    def _notice(self, txt, t):
+    def _attach(self, port, cls, idm):
+        """An item lands on a port. It leaves the port it was on before (a drawn rifle leaves wep_stocked_3,
+        a helmet hung on the hook leaves the hand), and whatever held this port before is gone from it."""
+        lo = self._st["loadout"]
+        iid = idm.group(1) if idm else None
+        old = self._port_item.pop(port, None)
+        if old is not None and old != iid:
+            self._item_port.pop(old, None)
+        if iid is not None:
+            prev = self._item_port.get(iid)
+            if prev is not None and prev != port and self._port_item.get(prev) == iid:
+                lo.pop(prev, None)
+                del self._port_item[prev]
+            self._item_port[iid] = port
+            self._port_item[port] = iid
+        lo[port] = cls
+
+    def _notice(self, txt, t, mid=None):
         if not txt:
             return
         s = self._st
@@ -139,11 +172,13 @@ class LogState:
             if hit and status != "active":
                 hit["status"] = status
             elif status == "active" or not hit:
-                s["contracts"].append({"name": name, "status": status, "objective": None, "t": t})
+                s["contracts"].append({"name": name, "status": status, "objective": None, "t": t, "mid": mid})
                 del s["contracts"][:-MAX_CONTRACTS]
             return
         if txt.startswith("New Objective: "):
-            active = next((c for c in reversed(s["contracts"]) if c["status"] == "active"), None)
+            # the notice names its mission; without an id, the newest active contract
+            active = (next((c for c in reversed(s["contracts"]) if mid and c.get("mid") == mid), None)
+                      or next((c for c in reversed(s["contracts"]) if c["status"] == "active"), None))
             if active:
                 active["objective"] = txt[len("New Objective: "):].strip()
             return
