@@ -5,6 +5,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and CSR
 uses [Semantic Versioning](https://semver.org/) (MAJOR.MINOR.PATCH).
 
 
+## [Unreleased]
+
+### Fixed
+- **Kestrel on 4.10:** SCM and NAV show again. 4.10 sends no master mode, so Kestrel reads
+  it from the shield and quantum drive lights.
+- The engine area no longer flashes red during quantum travel.
+- Altitude reads in metres with thousand separators.
+- A gun that runs dry shows as charging for at least 1.5 s. The game clears it in a
+  fraction of a second.
+- DEFENSE counts hits taken. Hull and shield numbers aren't in 4.10 telemetry, and
+  Kestrel now says so.
+- The QT tank reads "no data" on 4.10 instead of looking empty.
+- In a seat, the environment section is labelled Cabin. The game reports the cabin
+  there. Outside air density comes from the ship.
+
 ## [2.0.0-beta] — 2026-11-25
 
 Telemetry and the Kestrel K-7 Flight Slate. Beta: telemetry is new and tested on
