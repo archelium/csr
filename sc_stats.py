@@ -927,7 +927,59 @@ def live_payload(live):
     except Exception:
         data["log"] = None
     data["names"] = _slate_gun_names(data.get("snapshot"), ((data["log"] or {}).get("loadout") or {}).values())
+    data["lastShip"] = _slate_last_ship(data.get("snapshot"))
+    for c in ((data["log"] or {}).get("contracts") or []):
+        c["info"] = _slate_mission_info(c.get("name"))
     return data
+
+
+def _slate_mission_info(title):
+    """Type (CSR's mission rules), giver, standing, rep gain and blueprint flag for a contract title,
+    from the mission index. Unknown titles get the type from the title alone."""
+    t = str(title or "").strip().lower()
+    row = next((r for r in (MIS.rows if MIS.ok else []) if str(r[1] or "").strip().lower() == t), None) if t else None
+    if not row:
+        return {"type": mission_type(t), "giver": None, "standing": None, "rep": None, "bp": False}
+    return {"type": mission_type(row[0] or t), "giver": row[2] or None, "standing": row[4] or None,
+            "rep": row[6] or None, "bp": bool(row[8])}
+
+
+# the last vehicle block the stream sent, kept across page reloads and CSR restarts:
+# the slate's LAST SHIP card shows it once you leave the seat
+_SLATE_LAST = {"loaded": False, "data": None, "saved": 0}
+SLATE_LAST_FILE = "slate_last_ship.json"
+SLATE_LAST_SAVE_S = 30
+
+
+def _slate_last_ship(snapshot):
+    """{"t": epoch, "vehicle": the stream's vehicle block} of the last ship you sat in, or None."""
+    st = _SLATE_LAST
+    path = os.path.join(_APP_DIR, SLATE_LAST_FILE) if _APP_DIR else None
+    if not st["loaded"] and path:
+        st["loaded"] = True
+        try:
+            with open(path, encoding="utf-8") as fh:
+                d = json.load(fh)
+            if isinstance(d, dict) and isinstance(d.get("vehicle"), dict):
+                st["data"] = d
+        except (OSError, ValueError):
+            pass
+    veh = (snapshot or {}).get("vehicle")
+    cls = ((veh or {}).get("state") or {}).get("class_name") if isinstance(veh, dict) else None
+    if cls:
+        prev = ((st["data"] or {}).get("vehicle") or {}).get("state") or {}
+        now = time.time()
+        st["data"] = {"t": now, "vehicle": veh}
+        if path and (prev.get("class_name") != cls or now - st["saved"] >= SLATE_LAST_SAVE_S):
+            st["saved"] = now
+            try:
+                tmp = path + ".tmp"
+                with open(tmp, "w", encoding="utf-8") as fh:
+                    json.dump(_json_safe(st["data"]), fh, default=str)
+                os.replace(tmp, path)
+            except OSError:
+                pass
+    return st["data"]
 
 
 def tlm_api_get(path, live, status, on_seen):
