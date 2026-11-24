@@ -141,6 +141,34 @@ def make_descriptor():
     return [("sc/game/telemetry/v1/types.proto", types), ("sc/game/telemetry/v1/api.proto", api)]
 
 
+def read_desc(path):
+    """Descriptor blobs from a `.desc` file: repeated (u32 len, name, u32 len, blob)."""
+    with open(path, "rb") as fh:
+        b = fh.read()
+    out, i = [], 0
+    while i < len(b):
+        n = struct.unpack_from("<I", b, i)[0]
+        name = b[i + 4:i + 4 + n].decode()
+        i += 4 + n
+        m = struct.unpack_from("<I", b, i)[0]
+        out.append((name, b[i + 4:i + 4 + m]))
+        i += 4 + m
+    return out
+
+
+def read_raw(path):
+    """[(time, message bytes)] from a raw capture: repeated "<dI" (time, length) + message."""
+    with open(path, "rb") as fh:
+        raw = fh.read()
+    out, i = [], 0
+    while i < len(raw):
+        ts, n = struct.unpack_from("<dI", raw, i)
+        i += 12
+        out.append((ts, raw[i:i + n]))
+        i += n
+    return out
+
+
 def exe_bytes(blobs):
     """A fake exe image: junk, then each blob followed by zero padding."""
     out = b"MZ\x90\x00junk\x01\x02" + b"\x00" * 64
