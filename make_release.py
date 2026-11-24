@@ -15,7 +15,7 @@ import shutil
 import tempfile
 import zipfile
 
-VERSION = "1.11.0"
+VERSION = "2.0.0-beta"
 EXES = ["dist/CSR.exe"]
 DOCS = {"README.md": "README.txt", "PRIVACY.md": "PRIVACY.txt",
         "DISCLAIMER.md": "DISCLAIMER.txt", "LICENSE": "LICENSE.txt",

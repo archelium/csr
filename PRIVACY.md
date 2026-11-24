@@ -11,6 +11,10 @@ has no account, login, server, database, analytics, or telemetry.
   from the `StarCitizen\LIVE` folder you select.
 - The folder path you choose is saved locally in `csr_config.json` so you don't
   have to pick it again.
+- The game's **telemetry stream** on your own PC (`127.0.0.1:2942`), while you play.
+  Recording it needs one line in your channel's `user.cfg`
+  (`grpc.client.server.enabled = true`). CSR adds it only when you click **Enable**,
+  and keeps a `.csr-bak` copy of the file first.
 
 ## What CSR sends over the internet
 Only to fetch **public game data and artwork** so names and images look right.
@@ -31,6 +35,7 @@ sites see your IP address. Nothing about you or your stats is in them. Offline, 
 shows icons in place of pictures.
 
 CSR sends **no personal data, no telemetry, and no usage information** to anyone.
+Game telemetry recordings stay on your PC.
 Your logs, your handle, and your stats never leave your machine. The generated
 `CSR.html` is a normal file on your disk — share it only if you choose to.
 
@@ -43,6 +48,17 @@ did on its last two runs). Delete that folder to remove everything. If you turn 
 `HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Run`. Turning it off
 removes it.
 
+Telemetry recordings go to a `telemetry` folder there, one compressed file per session. The
+**Space limit** and **Keep recordings** settings delete old ones. **Delete all
+recordings** removes them.
+
+## Tablet & phone access
+Off by default. When you turn it on, CSR listens on your local network on one port
+between 7890 and 7899 and serves the Kestrel K-7 slate only. Every request needs the
+private key in the link or QR code. **New link** replaces the key and old links stop
+working. Nothing is reachable from outside your network unless you forward that port
+on your router.
+
 ## A note on your public RSI profile
 CSR shows the same public profile and organization data that **anyone** can see on
 your RSI page — including affiliate orgs. If you don't want that visible, set those
@@ -51,4 +67,4 @@ to private on the RSI website; CSR only reflects what RSI already makes public.
 ## Contact
 Questions: **support@archelium.com**
 
-_Last updated: 2026-11-24 · CSR v1.11.0_
+_Last updated: 2026-11-25 · CSR v2.0.0-beta_

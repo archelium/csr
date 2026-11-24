@@ -17,7 +17,7 @@ from PyInstaller.utils.win32.versioninfo import (FixedFileInfo, StringFileInfo, 
 # version reads as anonymous to antivirus heuristics. The version comes from
 # sc_stats.py so the two can't drift.
 VERSION = re.search(r'^CSR_VERSION = "([^"]+)"', open("sc_stats.py", encoding="utf-8").read(), re.M).group(1)
-_nums = tuple(int(x) for x in (VERSION.split(".") + ["0", "0", "0"])[:4])
+_nums = tuple(int(x) for x in (VERSION.split("-")[0].split(".") + ["0", "0", "0"])[:4])
 version_info = VSVersionInfo(
     ffi=FixedFileInfo(filevers=_nums, prodvers=_nums, mask=0x3F, flags=0x0, OS=0x40004,
                       fileType=0x1, subtype=0x0, date=(0, 0)),

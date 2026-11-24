@@ -7,6 +7,12 @@ broken down by patch and by account.
 
 Pure Python **standard library** (no pip installs to run from source).
 
+**New in 2.0 (beta): the Kestrel K-7 Flight Slate.** CSR records the game's own
+telemetry and shows it live on a tablet or phone beside your keyboard: speed, fuel,
+weapons, shields and hull in your seat, vitals and loadout on foot, contracts and
+notices from the log. Click **Kestrel K-7** at the top of the sidebar and scan the QR
+code. See [Telemetry](#telemetry).
+
 **Patch coverage — tested on 4.1 → 4.10.3** (November 2026). CSR reads the version out of each
 log rather than working from a fixed list, so **older patches will often work too**, and
 newer ones should. Neither is tested: Star Citizen changes its log format between
@@ -113,14 +119,14 @@ CSR is portable, so updating is just **replace the exe**:
 keeps sessions Star Citizen has since deleted from your log folder. If you want a
 belt-and-braces backup first, open CSR and use **💾 Backup & transfer → Export**.
 
-What happens on your first run of v1.11.0, depending on where you're coming from:
+What happens on your first run of v2.0.0-beta, depending on where you're coming from:
 
 | Coming from | What to expect |
 |---|---|
 | **v1.0.0** | v1.0.0 kept no archive, so your history is rebuilt from whatever logs you still have. If your saved folder was `…\StarCitizen\LIVE`, CSR now finds `PTU` and `TECH-PREVIEW` beside it on its own — **no need to re-pick a folder** — and a **Channel** dropdown appears if it finds any. |
-| **v1.1.0 – v1.10.0** | Your archive carries over untouched. |
+| **v1.1.0 – v1.11.0** | Your archive carries over untouched. |
 | **v1.0.0 – v1.9.1** | The first scan re-reads **every** log (a minute or so). This is deliberate: each release fixes parsing bugs or extracts new data, so nothing older is trusted. It happens once — after that CSR starts, and refreshes, in about a second. |
-| **v1.9.2 – v1.10.0** | No re-read. CSR opens on your stats since the 4.8 wipe, with Career one click away. |
+| **v1.9.2 – v1.11.0** | No re-read. Telemetry recording starts once you enable it for your channel (see [Telemetry](#telemetry)). |
 
 Coming from **v1.2.0** specifically, the first run also *moves* some existing numbers,
 because v1.3.0 converts session times from the log's UTC stamps to your own clock: the
@@ -227,16 +233,19 @@ misleading `0` — see the CHANGELOG for which, and why.
 
 CSR can record the telemetry stream the game serves on your own PC: wallet, flight,
 weapons, warnings, on-foot and seat state, survival. It adds stat cards to Economy,
-Flight & Travel, Combat and Activity, and a **Live view** page in the sidebar.
+Flight & Travel, Combat and Activity, and the **Kestrel K-7 Flight Slate**.
 
 - **CSR records by default.** The game's own telemetry setting starts off.
   The card's Turn on button adds it.
-- **Turn it on** in the Telemetry card of **💾 Backup & transfer**. It adds
+- **Turn it on** in the Telemetry section of **💾 Backup & Transfer** (or **Telemetry
+  settings** in the Kestrel K-7 drawer). **Enable** adds
   `grpc.client.server.enabled = true` to your channel's user.cfg and keeps a `.csr-bak`
   backup. It takes effect on the next game launch.
 - **Disk use** per hour of play: Full 1.7 MB, Normal 0.4 MB, Light 0.1 MB. Keep
-  recordings forever, 1 year, 3 months or 1 month.
-- **Live view** is the Kestrel K-7 slate, sized for a tablet and fine on a phone.
+  recordings forever, 1 year, 3 months or 1 month. **Space limit** caps the total at
+  1 GB by default, oldest deleted first. Career stats from deleted recordings stay.
+- **Kestrel K-7** is sized for a tablet and fine on a phone. **Open on this PC** in its
+  drawer shows it in a browser tab instead.
   Seated: speed, fuel, G, IFCS and power, guns, countermeasures, warnings, shields and
   hull (SC 5.0). On foot and EVA: vitals, injuries, suit, loadout, last ship. Contracts,
   HUD notices, where you are and ships destroyed nearby come from Game.log. Keys show

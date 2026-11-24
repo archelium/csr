@@ -5,29 +5,33 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and CSR
 uses [Semantic Versioning](https://semver.org/) (MAJOR.MINOR.PATCH).
 
 
-## [Unreleased]
+## [2.0.0-beta] — 2026-11-25
+
+Telemetry and the Kestrel K-7 Flight Slate. Beta: telemetry is new and tested on
+LIVE 4.10 only.
 
 ### Added
+- **Kestrel K-7 Flight Slate.** A live screen for a tablet or phone beside your keyboard.
+  Seated: speed, fuel, G, IFCS and power, weapons, countermeasures, warnings, shields and
+  hull. On foot and EVA: vitals, injuries, suit and loadout. Contracts, HUD notices, your
+  location and ships destroyed nearby from Game.log. Click **Kestrel K-7** at the top of
+  the sidebar for a QR code. **Open on this PC** shows it in a browser tab.
+- **Tablet & phone access.** Off by default. Turn it on from the Kestrel K-7 drawer or the
+  Telemetry settings for a QR code and a private link on port 7890-7899. Serves Kestrel
+  only, on your LAN only. Windows asks to allow CSR on the network the first time.
 - **Telemetry recording.** CSR records the game's own telemetry stream while you play:
   wallet, flight, weapons, warnings, on-foot and seat state, survival. The game's
-  telemetry setting starts off. Press Turn on in the Telemetry card (Backup & transfer,
-  💾). It adds `grpc.client.server.enabled = true` to your channel's user.cfg, with a
-  `.csr-bak` backup. It takes effect on the next game launch. CSR must be open while you
-  play. One CSR window records at a time.
+  telemetry setting starts off. Click **Enable** in Backup & Transfer → Telemetry. It
+  adds `grpc.client.server.enabled = true` to your channel's user.cfg, with a `.csr-bak`
+  backup, and takes effect on the next game launch. CSR must be open while you play. One
+  CSR window records at a time.
+- **Career stats from telemetry.** Wallet on Economy. Flight records, How you fly and
+  Weapons on Flight & Travel. Warnings & countermeasures on Combat. On foot & in seat and
+  Survival on Activity. Cards show "From N of M sessions with telemetry".
 - **Detail and retention.** Full, Normal or Light (about 1.7, 0.4 and 0.1 MB per hour).
   Keep recordings forever, 1 year, 3 months or 1 month. Pick which groups to record.
 - **Space limit.** Recordings stay under 1 GB by default (250 MB to 5 GB, or no limit).
   Oldest go first. Career stats from them stay.
-- **Kestrel K-7 Flight Slate** (top of the sidebar). Click it for a QR code, scan it with
-  a tablet or phone on the same Wi-Fi. Open on this PC is still there. The slate: flight, weapons, warnings, shields and
-  hull when seated, vitals, injuries and loadout on foot. Contracts, notices, place and
-  ships destroyed nearby from Game.log. Tablet first, works on a phone.
-- **Tablet & phone access.** Turn it on from the Kestrel K-7 drawer or the Telemetry card
-  for a QR code and a private link on port 7890-7899. Kestrel only, LAN only. Windows asks
-  to allow CSR on the network the first time.
-- **Career stats from telemetry.** Wallet on Economy. Flight records, How you fly and
-  Weapons on Flight & Travel. Warnings & countermeasures on Combat. On foot & in seat and
-  Survival on Activity. Cards show "From N of M sessions with telemetry".
 - **CSR lives in the tray.** No console window. Its icon sits by the clock: click it for
   the dashboard, right-click for Refresh logs, Start with Windows, Open log, Open data
   folder and Quit. Crashes and disconnects show as Windows notifications.
