@@ -1204,6 +1204,8 @@ body{background:#07090a!important}
 .btn .seg{border-radius:3px}
 .bell{border-radius:3px;background:linear-gradient(#2a3439,#161c20);box-shadow:0 2px 0 #050708,inset 0 1px 0 rgba(255,255,255,.08)}
 
+.deck.foot.emotes:empty{display:none}
+
 .waitp{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);z-index:50;display:flex;flex-direction:column;gap:6px;align-items:center;padding:18px 26px;background:rgba(4,14,20,.94);border:1px solid var(--c2);border-radius:4px;color:var(--hi);font-size:13px;text-align:center}.waitp b{font-size:15px;letter-spacing:.12em;color:var(--c)}.waitp span{color:var(--dim);font-size:12px}.waitp[hidden]{display:none}
 """
 
@@ -1346,15 +1348,15 @@ SLATE_BODY = r"""
     </div>
     <div class="sidecol foot">
      <div class="panel cut lastship">
-      <div class="ph">LAST SHIP<span class="r">as of 12:16 · you left the pilot seat</span></div>
+      <div class="ph">LAST SHIP<span class="r"></span></div>
       <div class="ls">
        <span class="lssil" id="lsSil"></span>
        <div class="lsname"><div class="title" id="lsTitle">—</div><div class="unit lsl2"><span id="lsFull"></span><span id="lsSep"> · </span><span id="lsWhere"></span></div></div>
        <div class="lsstats">
-        <div class="lsv"><span class="unit">HULL</span><b>92%</b></div>
-        <div class="lsv"><span class="unit">SHIELDS</span><b>61%</b></div>
-        <div class="lsv"><span class="unit">H₂</span><b>94%</b></div>
-        <div class="lsv"><span class="unit">QT</span><b>100%</b></div>
+        <div class="lsv"><span class="unit">HULL</span><b id="lsHull">—</b></div>
+        <div class="lsv"><span class="unit">SHIELDS</span><b id="lsSh">—</b></div>
+        <div class="lsv"><span class="unit">H₂</span><b id="lsH2">—</b></div>
+        <div class="lsv"><span class="unit">QT</span><b id="lsQt">—</b></div>
        </div>
       </div>
      </div>
@@ -1389,14 +1391,14 @@ SLATE_BODY = r"""
      <div id="mainNear"><div class="line unit">No ships destroyed nearby</div></div>
     </div>
     <div class="panel cut seat envcard" data-go="you" style="cursor:pointer">
-     <div class="ph">YOU<span class="r hrx">96 bpm</span></div>
+     <div class="ph">YOU<span class="r hrx">—</span></div>
      <div class="envv" id="envVerdict"></div>
      <div class="envg" id="envGrid"></div>
      <div class="envvit" id="envVit"></div>
      <div class="envinj" id="envInj"></div>
     </div>
     <div class="panel cut seat oldyou" data-go="you" style="cursor:pointer">
-     <div class="ph">YOU<span class="r hrx">96 bpm</span></div>
+     <div class="ph">YOU<span class="r hrx">—</span></div>
      <div class="youcard">
       <div class="rings small" data-rings="mini"></div>
       <div class="figwrap" data-fig></div>
@@ -1404,14 +1406,7 @@ SLATE_BODY = r"""
     </div>
    </div>
    <div class="deck seat" id="deck"></div>
-   <div class="deck foot emotes">
-    <button class="btn cut"><svg class="ic"><use href="#i-party"/></svg>WAVE<small>emote</small></button>
-    <button class="btn cut"><svg class="ic"><use href="#i-ready"/></svg>SALUTE<small>emote</small></button>
-    <button class="btn cut"><svg class="ic"><use href="#i-obj"/></svg>POINT<small>emote</small></button>
-    <button class="btn cut"><svg class="ic"><use href="#i-friend"/></svg>AGREE<small>emote</small></button>
-    <button class="btn cut"><svg class="ic"><use href="#i-zone"/></svg>SIT<small>emote</small></button>
-    <button class="btn cut"><svg class="ic"><use href="#i-ping"/></svg>WHISTLE<small>emote</small></button>
-   </div>
+   <div class="deck foot emotes"></div>
   </section>
 
   <!-- MISSIONS -->
@@ -1522,9 +1517,9 @@ SLATE_BODY = r"""
     </div>
    </div>
    <div class="panel cut">
-    <div class="ph">THIS SESSION<span class="r">2 h 14 min</span></div>
+    <div class="ph">THIS SESSION<span class="r" id="sessT"></span></div>
     <div class="stiles sessgrid">
-     <div class="stile g"><span class="sti"><svg class="ic"><use href="#i-pay"/></svg></span><span class="stl">WALLET</span><b>+79,500</b></div><div class="stile "><span class="sti"><svg class="ic"><use href="#i-bank"/></svg></span><span class="stl">BALANCE</span><b>82.3 M</b></div><div class="stile "><span class="sti"><svg class="ic"><use href="#i-route"/></svg></span><span class="stl">FLOWN</span><b>57.5 km</b></div><div class="stile "><span class="sti"><svg class="ic"><use href="#i-bp"/></svg></span><span class="stl">BLUEPRINTS</span><b>1</b></div><div class="stile "><span class="sti"><svg class="ic"><use href="#i-downed"/></svg></span><span class="stl">DOWNED</span><b id="sDown">0</b></div><div class="stile "><span class="sti"><svg class="ic"><use href="#i-skull"/></svg></span><span class="stl">DEATHS</span><b>0</b></div><div class="stile "><span class="sti"><svg class="ic"><use href="#i-respawn"/></svg></span><span class="stl">RESPAWNS</span><b>0</b></div><div class="stile "><span class="sti"><svg class="ic"><use href="#i-seat"/></svg></span><span class="stl">SEAT CHANGES</span><b>6</b></div>
+     <div class="stile g"><span class="sti"><svg class="ic"><use href="#i-pay"/></svg></span><span class="stl">WALLET</span><b id="sWal">—</b></div><div class="stile "><span class="sti"><svg class="ic"><use href="#i-bank"/></svg></span><span class="stl">BALANCE</span><b id="sBal">—</b></div><div class="stile "><span class="sti"><svg class="ic"><use href="#i-route"/></svg></span><span class="stl">FLOWN</span><b id="sFlown">—</b></div><div class="stile "><span class="sti"><svg class="ic"><use href="#i-bp"/></svg></span><span class="stl">BLUEPRINTS</span><b id="sBp">—</b></div><div class="stile "><span class="sti"><svg class="ic"><use href="#i-downed"/></svg></span><span class="stl">DOWNED</span><b id="sDown">—</b></div><div class="stile "><span class="sti"><svg class="ic"><use href="#i-skull"/></svg></span><span class="stl">DEATHS</span><b id="sDead">—</b></div><div class="stile "><span class="sti"><svg class="ic"><use href="#i-respawn"/></svg></span><span class="stl">RESPAWNS</span><b id="sResp">—</b></div><div class="stile "><span class="sti"><svg class="ic"><use href="#i-seat"/></svg></span><span class="stl">SEAT CHANGES</span><b id="sSeat">—</b></div>
     </div>
    </div>
   </section>
@@ -1566,14 +1561,14 @@ function gunList(){
 /* ---- on foot / EVA: body card and suit cluster (actor telemetry + Game.log loadout) ---- */
 function footEnv(){const e=MODEL.env,v=MODEL.vitals;return {breath:e.breathable!==false,temp:e.temp==null?0:Math.round(e.temp),press:v.pressure==null?0:+v.pressure.toFixed(2),grav:v.gravity==null?0:v.gravity}}
 function bodyCard(){const el=$('#bodyCard');if(!el||!foot)return;
- const s=INJ(),L=SETS[setK],sh={h:'HEAD',t:'TORSO',la:'L ARM',ra:'R ARM',ll:'L LEG',rl:'R LEG'},word={min:'MINOR',mod:'MODERATE',sev:'SEVERE'},lc={min:'a',mod:'o',sev:'r'},cc={min:'#ffb347',mod:'#ff8a3d',sev:'#ff5468'};
+ const s=INJ(),L=LIVESET(),sh={h:'HEAD',t:'TORSO',la:'L ARM',ra:'R ARM',ll:'L LEG',rl:'R LEG'},word={min:'MINOR',mod:'MODERATE',sev:'SEVERE'},lc={min:'a',mod:'o',sev:'r'},cc={min:'#ffb347',mod:'#ff8a3d',sev:'#ff5468'};
  const hurt=Object.keys(sh).filter(k=>s[k]&&s[k]!=='ok'),rk={sev:0,mod:1,min:2};hurt.sort((a,b)=>rk[s[a]]-rk[s[b]]);
  const lamps=hurt.map(k=>`<span class="lmp ${lc[s[k]]}">${sh[k]} · ${word[s[k]]}</span>`).join('')+`<span class="lmp g">${hurt.length?'REST OK':'NO INJURIES'}</span>`;
  const worst=(...ks)=>ks.map(k=>s[k]).filter(v=>v&&v!=='ok').sort((a,b)=>rk[a]-rk[b])[0];
  const row=(icon,lab,name,extra='',val='',inj)=>`<div class="bslot${inj?' inj':''}"${inj?` style="--ic:${cc[inj]}"`:''}><span class="sic">${ic(icon)}</span><span class="stx"><span class="sl">${lab}${extra}</span><span class="sn">${esc(name)}</span></span>${val}</div>`;
  const armor=[['helmet','s-helmet','HELMET',['h']],['core','s-core','CORE',['t']],['arms','s-arms','ARMS',['la','ra']],['legs','s-legs','LEGS',['ll','rl']]].map(([k,icn,lab,ps])=>{const x=G(L[k]),w=worst(...ps);
   return row(icn,lab,x?x[0]:'none worn',(x&&x[2]?`<span class="cls cls${x[2]}">${x[2]}</span>`:'')+(w?`<span class="ichip" style="border-color:${cc[w]};color:${cc[w]}">${word[w]}</span>`:''),'',w)}).join('');
- const gear=Object.entries(L.w).slice(0,3).map(([slot,w])=>row('i-weapon',slot.toUpperCase(),w[0])).join('');
+ const gear=Object.entries(L.w).slice(0,3).map(([slot,w])=>row('i-weapon',slot.toUpperCase(),w[0])).join('')||'<div class="unit">No weapons in the log yet</div>';
  const S=gearSlots(),cnt=(lab,v,max,warn)=>`<span class="bcnt${warn?' w':''}"><i>${lab}</i><b>${v}</b>${max!=null?`<small>/ ${max}</small>`:''}</span>`;
  const fig=bodySvg(s,'bfig',{fill:v=>v==='ok'?'#0f2a33':cc[v]+'88',stroke:v=>v==='ok'?'#5be69a':cc[v],sw:2,glow:true});
  const v=VIT(),R=suitRating();
@@ -1581,10 +1576,9 @@ function bodyCard(){const el=$('#bodyCard');if(!el||!foot)return;
   <div class="lamps">${lamps}</div>
   <div class="bmid"><div class="bfigw">${fig}</div><div class="blist">
    <div class="bgrp"><div class="bsec">ARMOR<em>${esc(L.label)}</em></div>${armor}</div>
-   <div class="bgrp"><div class="bsec">GEAR<em>from Game.log</em></div>${gear}
-   <div class="bcnts">${cnt('MAGS',L.mag,S.mag)}${cnt('MEDPENS',L.med,S.med,!L.med)}${cnt('OXYPENS',L.oxy,S.oxy,seat==='eva'&&!L.oxy)}</div></div>
+   <div class="bgrp"><div class="bsec">GEAR<em>from Game.log</em></div>${gear}</div>
   </div></div>
-  <div class="bfoot"><span><i>HEALTH</i><b style="color:${v.hp<40?'#ff5468':v.hp<60?'#ffb347':'#5be69a'}">${v.hp}%</b></span><span class="r"><i>SUIT RATED</i><b>${R.tmin} to ${R.tmax} °C</b></span></div>`}
+  <div class="bfoot"><span><i>HEALTH</i><b style="color:${v.hp<40?'#ff5468':v.hp<60?'#ffb347':'#5be69a'}">${isNaN(v.hp)?'—':v.hp+'%'}</b></span><span class="r"><i>SUIT RATED</i><b>${R.tmin==null?'—':R.tmin+' to '+R.tmax+' °C'}</b></span></div>`}
 function suitHud(){const el=document.getElementById('suitsvg');if(!el||!el.getClientRects().length)return;
  const bb=el.getBoundingClientRect(),HV=Math.max(800,Math.round(300*bb.height/Math.max(1,bb.width))),GP=(HV-800)/4;el.setAttribute('viewBox',`0 0 300 ${HV}`);
  const C={bg:'#03121a',c:'#5bd1e6',c2:'#2b6b80',g:'#5be69a',a:'#ffb347',r:'#ff5468',dim:'#7aa3ae',line:'#1f4c5e',hi:'#eafcff',mute:'#4f6f78'};
@@ -1601,7 +1595,7 @@ function suitHud(){const el=document.getElementById('suitsvg');if(!el||!el.getCl
  const lamp=(x,y,w,t,st)=>{const S={g:['#5be69a','#0e2c1e'],a:['#ffb347','#3a2a0c'],r:['#ff5468','#3a0c14'],o:['#4f6f78','#0a161b']}[st];return NS('rect',{x,y,width:w,height:19,rx:2,fill:S[1],stroke:S[0],'stroke-opacity':st==='o'?.4:.9})+T(x+w/2,y+13,t,{s:8.5,f:S[0],w:700,ls:'.06em'})};
  const v=VIT(),E=footEnv(),R=suitRating(),eva=seat==='eva';
  let o=`<defs><linearGradient id="sTank" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#0a2a33"/><stop offset=".5" stop-color="#103a46"/><stop offset="1" stop-color="#0a2a33"/></linearGradient><radialGradient id="sFace"><stop offset="0" stop-color="#0b2430"/><stop offset="1" stop-color="#061219"/></radialGradient></defs>`;
- o+=T(6,14,'SUIT',{a:'start',s:9,ls:'.16em'})+T(294,14,SETS[setK].label,{a:'end',s:9});
+ o+=T(6,14,'SUIT',{a:'start',s:9,ls:'.16em'})+T(294,14,LIVESET().label,{a:'end',s:9});
  // O2 dial, built like the speed dial
  const V=v.o2,cx=150,cy=146,R0=104,A0=135,A1=405,ang=p=>A0+(A1-A0)*p/100;
  o+=NS('circle',{cx,cy,r:R0+14,fill:'url(#sFace)',stroke:C.line});
@@ -1611,10 +1605,10 @@ function suitHud(){const el=document.getElementById('suitsvg');if(!el||!el.getCl
  for(const[p,l,c] of [[10,'CRIT',C.r],[25,'LOW',C.a]]){const a=ang(p),[x0,y0]=P(cx,cy,R0+6,a),[x1,y1]=P(cx,cy,R0-6,a),[lx,ly]=P(cx,cy,R0+20,a);o+=NS('line',{x1:x0,y1:y0,x2:x1,y2:y1,stroke:c,'stroke-width':2.5})+T(lx,ly+3,l,{f:c,s:8.5,w:700})}
  {const[nx,ny]=P(cx,cy,R0-4,ang(V)),[bx,by]=P(cx,cy,-14,ang(V));o+=`<line x1="${bx.toFixed(1)}" y1="${by.toFixed(1)}" x2="${nx.toFixed(1)}" y2="${ny.toFixed(1)}" stroke="${C.hi}" stroke-width="3" stroke-linecap="round" ${glow(C.c)}/>`+NS('circle',{cx,cy,r:5,fill:'#0b2430',stroke:C.c,'stroke-width':2})}
  const mins=Math.max(1,Math.round(V/4.5));
- o+=T(cx,cy-36,'O₂',{s:10,ls:'.16em'})+T(cx,cy+60,V,{f:C.hi,s:34,w:700,m:1})+T(cx,cy+78,'% suit oxygen',{s:9,ls:'.16em'})+T(cx,cy+100,eva?`≈ ${mins} min left at this rate`:'helmet off · tank not in use',{s:9,f:eva?(V<=25?C.r:C.a):C.dim});
+ o+=T(cx,cy-36,'O₂',{s:10,ls:'.16em'})+T(cx,cy+60,V,{f:C.hi,s:34,w:700,m:1})+T(cx,cy+78,'% suit oxygen',{s:9,ls:'.16em'})+T(cx,cy+100,eva?`≈ ${mins} min left at this rate`:'',{s:9,f:eva?(V<=25?C.r:C.a):C.dim});
  // outside
  const Y1=272+GP;o+=NS('line',{x1:6,y1:Y1,x2:294,y2:Y1,stroke:C.line})+T(6,Y1+16,'OUTSIDE',{a:'start',s:9,ls:'.16em'})+T(294,Y1+16,E.breath?'breathable':eva?'vacuum':'no air',{a:'end',s:9,f:E.breath?C.g:C.a});
- const tin=E.temp>=R.tmin&&E.temp<=R.tmax,z=t=>fr(t,-250,150);
+ const tin=R.tmin==null||E.temp==null||E.temp>=R.tmin&&E.temp<=R.tmax,z=t=>fr(t,-250,150);
  o+=box(6,Y1+24,92,'TEMP',E.temp,'°C',tin?C.hi:C.r,{v:z(E.temp),z:[[0,z(R.tmin),'#4a1018'],[z(R.tmin),z(R.tmax),'#12404d'],[z(R.tmax),1,'#4a1018']]})
   +box(104,Y1+24,92,'PRESS',E.press.toFixed(2),'atm',E.press<.5?C.a:C.hi,{v:fr(E.press,0,2),z:[[0,.25,'#3a2e10'],[.25,1,'#12404d']]})
   +box(202,Y1+24,92,'GRAV',E.grav.toFixed(1),'g',C.hi,{v:fr(E.grav,0,2),z:[[0,1,'#12404d']]});
@@ -1734,7 +1728,7 @@ function gunsInner(){
  const n=weapons.length, rd=weapons.filter(w=>w[2]&&w[3]).length, up=weapons.filter(w=>!w[2]).length;
  return `<div class="dgl"><span class="dgn">GUNS</span><b>${rd}/${n}</b><span class="gdots">${weapons.map(w=>`<i class="${!w[2]?'off':w[3]?'rdy':'chg'} ${w[4]?'':'nog'}" title="${esc(w[0])} ${w[1]}"></i>`).join('')}</span>${up?`<span class="dgu">${up} off</span>`:''}<span class="unit dgx">${FIREGROUP} · gimbals ${WSET.gimbals?'locked':'free'}${WSET.stagger?' · staggered':''} · ${CM.decoy} decoys · ${CM.noise} noise</span></div>`}
 
-const PG={pw:{l:'ALL POWER',i:'i-power',act:'v_power_toggle'},en:{l:'ENGINES',i:'i-thr',act:'v_power_toggle_thrusters'},sh:{l:'SHIELDS',i:'i-shield',act:'v_power_toggle_shields'},wp:{l:'WEAPONS',i:'i-cross',act:'v_power_toggle_weapons'}};
+const PG={pw:{l:'ALL POWER',i:'i-power'},en:{l:'ENGINES',i:'i-thr'},sh:{l:'SHIELDS',i:'i-shield'},wp:{l:'WEAPONS',i:'i-cross'}};
 let PGON={pw:true,en:true,sh:true,wp:true};
 const partTxt=g=>(g||[]).map(([n,sz,c])=>`${c>1?c+' × ':''}${n}${sz?' · S'+sz:''}`).join(', ');
 function settings(){const el=$('#setgrid');if(!el)return;const r=(n,v,t)=>`<div class="sr">${n}<b class="${v?'y':''}">${t||(v?'on':'off')}</b></div>`;
@@ -1835,7 +1829,7 @@ function threat(){
  const yw=$('#youWhere'); if(yw)yw.textContent=seat==='eva'?'EVA · outside the '+(SH().short||'ship'):'on foot'+(place?' · '+place:'');
  const gw=$('#gunWhere'); if(gw)gw.textContent=SH().short+(myTurretObj()?' · '+myTurretObj().n.toLowerCase()+' turret':'');
  const lt=$('#lsTitle'); if(lt){lt.textContent=SH().short||'—';$('#lsFull').textContent=SH().full;const hideFull=!SH().full||SH().full.endsWith(SH().short)&&SH().full.length-SH().short.length<8;$('#lsFull').style.display=hideFull?'none':'';$('#lsSep').style.display=hideFull?'none':'';$('#lsWhere').textContent=seat==='eva'?'you left it':'last ship'}
- const lsr=document.querySelector('.lastship .ph .r'); if(lsr)lsr.textContent=LASTSHIP.t?'as of '+new Date(LASTSHIP.t).toTimeString().slice(0,5)+' · you left the '+(lastSeat==='gunner'?'gunner':'pilot')+' seat':'';
+ const lsr=document.querySelector('.lastship .ph .r'); if(lsr)lsr.textContent=LASTSHIP.t?'as of '+new Date(LASTSHIP.t).toTimeString().slice(0,5)+' · you left the '+(lastSeat==='gunner'?'gunner':'pilot')+' seat':'None yet';
  const zt=$('#zoneTxt'); if(zt){zt.textContent=zone?zone.charAt(0)+zone.slice(1).toLowerCase():'';zt.className=G.armistice?'zoneA':'zoneU'}
  const nz=$('#navZone'); if(nz){nz.textContent=zone?zone.charAt(0)+zone.slice(1).toLowerCase():'—';nz.className=G.armistice?'zoneA':'zoneU'}
  if(!phone){
@@ -2093,11 +2087,11 @@ function speedo(v){const el=$('#spdo');if(!el)return;const[scm,bst,max]=SPDS(),A
 /* T: VehicleFlightState (is_landed, gear, vtol, transformation) */
 function fstate(){const el=$('#fstate');if(!el)return;const c=CAPS(),landed=MODEL.flight.landed===true;
  const ch=(t,on,cls='')=>`<span class="fs ${on?'on':''} ${cls}">${t}</span>`;
- el.innerHTML=ch(landed?'LANDED':'FLYING',landed)+ch('GEAR '+(STATE.gear?'DOWN':'UP'),STATE.gear)+(c.vtol?ch('VTOL '+(STATE.vtol?'ON':'OFF'),STATE.vtol):'')+(c.wings?ch('WINGS '+(STATE.wings?'OUT':'FOLDED'),STATE.wings):'')+ch(STATE.master==='nav'?'NAV':'SCM',true,'mm')}
+ el.innerHTML=ch(landed?'LANDED':'FLYING',landed)+ch('GEAR '+(STATE.gear==null?'—':STATE.gear?'DOWN':'UP'),STATE.gear)+(c.vtol?ch('VTOL '+(STATE.vtol==null?'—':STATE.vtol?'ON':'OFF'),STATE.vtol):'')+(c.wings?ch('WINGS '+(STATE.wings==null?'—':STATE.wings?'OUT':'FOLDED'),STATE.wings):'')+(STATE.master?ch(STATE.master.toUpperCase(),true,'mm'):'')}
 /* T: VehicleState name / manufacturer / type, lights_enabled, doors */
 function shipInfo(){const S=SH(),id=$('#shipId'),st=$('#shipState');
  if(id)id.textContent=`${S.full} · spaceship`;
- if(st)st.innerHTML=[['LIGHTS',STATE.lights?'on':'off',STATE.lights],['DOORS',STATE.doors?'open':'closed',STATE.doors],['LOCK',STATE.locks?'locked':'unlocked',STATE.locks]].map(([n,v,on])=>`<span class="fs ${on?'on':''}">${n} ${v.toUpperCase()}</span>`).join('')}
+ if(st)st.innerHTML=[['LIGHTS',STATE.lights==null?'—':STATE.lights?'on':'off',STATE.lights],['DOORS',STATE.doors==null?'—':STATE.doors?'open':'closed',STATE.doors],['LOCK',STATE.locks==null?'—':STATE.locks?'locked':'unlocked',STATE.locks]].map(([n,v,on])=>`<span class="fs ${on?'on':''}">${n} ${v.toUpperCase()}</span>`).join('')}
 /* T: ActorEnvironment (temp, radiation, breathable) + ActorVitals (gravity, pressure) + VehicleFlightInstruments.atmospheric_density */
 function envData(){const e=MODEL.env,v=MODEL.vitals,F=MODEL.flight;return {air:e.breathable===false?'no air':'breathable',breath:e.breathable!==false,temp:e.temp==null?null:Math.round(e.temp),press:v.pressure==null?0:v.pressure,grav:v.gravity==null?0:v.gravity,rad:e.rad||0,dens:F.density==null?1:F.density}}
 function envVerdict(E){const R=suitRating(true);
@@ -2148,25 +2142,25 @@ function fig(){
 /* keys show the game's state only. Live View never sends input to the game. */
 let STATE={master:'scm',gear:false,vtol:false,wings:false,doors:false,locks:false,lights:false,coupled:false,power:true,nv:false};
 const BTN={
- qt:{icon:'i-qt',l:'QUANTUM',kind:'mom',s:'spool · jump',act:'v_toggle_qdrive_engagement',need:c=>c.sys&&c.sys.qd.length>0},
- gear:{icon:'i-gear',l:'GEAR',kind:'tog',st:'gear',on:'down',off:'up',act:'v_toggle_landing_system'},
- wings:{icon:'i-wings',l:'WINGS',kind:'tog',st:'wings',on:'extended',off:'folded',act:'v_transform_cycle',need:c=>c.wings},
- vtol:{icon:'i-vtol',l:'VTOL',kind:'tog',st:'vtol',on:'on',off:'off',act:'v_vtol_toggle',need:c=>c.vtol},
- ping:{icon:'i-ping',l:'PING',kind:'hold',s:'hold',act:'v_invoke_ping'},
- doors:{icon:'i-doors',l:'DOORS',kind:'tog',st:'doors',on:'open',off:'closed',act:'v_toggle_all_doors'},
- locks:{icon:'i-lock',l:'LOCKS',kind:'tog',st:'locks',on:'locked',off:'unlocked',act:'v_toggle_all_doorlocks'},
- lights:{icon:'i-lights',l:'LIGHTS',kind:'tog',st:'lights',on:'on',off:'off',act:'v_lights'},
- atc:{icon:'i-atc',l:'ATC',kind:'mom',s:'request pad',act:'v_atc_request'},
- hail:{icon:'i-hailc',l:'HAIL',kind:'mom',s:'target',act:'v_target_hail'},
- coupled:{icon:'i-coupled',l:'COUPLED',kind:'tog',st:'coupled',on:'on',off:'decoupled',act:'v_ifcs_vector_decoupling_toggle'},
- power:{icon:'i-power',l:'POWER',kind:'tog',st:'power',on:'on',off:'off',act:'v_power_toggle'},
+
+ gear:{icon:'i-gear',l:'GEAR',kind:'tog',st:'gear',on:'down',off:'up'},
+ wings:{icon:'i-wings',l:'WINGS',kind:'tog',st:'wings',on:'extended',off:'folded',need:c=>c.wings},
+ vtol:{icon:'i-vtol',l:'VTOL',kind:'tog',st:'vtol',on:'on',off:'off',need:c=>c.vtol},
+
+ doors:{icon:'i-doors',l:'DOORS',kind:'tog',st:'doors',on:'open',off:'closed'},
+ locks:{icon:'i-lock',l:'LOCKS',kind:'tog',st:'locks',on:'locked',off:'unlocked'},
+ lights:{icon:'i-lights',l:'LIGHTS',kind:'tog',st:'lights',on:'on',off:'off'},
 
 
- nv:{icon:'i-eye',l:'NIGHT VISION',kind:'tog',st:'nv',on:'on',off:'off',act:'v_light_amplification_toggle'},
- exit:{icon:'i-exit',l:'LEAVE SEAT',kind:'mom',s:'stand up',act:'v_exit'},
+ coupled:{icon:'i-coupled',l:'COUPLED',kind:'tog',st:'coupled',on:'on',off:'decoupled'},
+ power:{icon:'i-power',l:'POWER',kind:'tog',st:'power',on:'on',off:'off'},
+
+
+
+
 
 };
-const OPS={GUNS:['i-cross','v_set_guns_mode'],MISSILES:['i-missile','v_set_missile_mode'],SCAN:['i-scan','v_set_scan_mode'],MINING:['i-mine','v_set_mining_mode'],SALVAGE:['i-salv','v_set_salvage_mode']};
+const OPS={};
 let opSent=null, armed=null;
 const CAPS=()=>SH().caps||{};
 const seatEject=s=>{const c=CAPS(), seats=c.seats||[];
@@ -2179,24 +2173,23 @@ function opList(){const c=CAPS(), S=SH(), o=[];
  if(guns)o.push('GUNS'); if(mis&&o.length<2)o.push('MISSILES');
  o.push('SCAN'); return o.slice(0,3)}
 function buildDeck(cells){
- if(seat==='gunner'){const ids=['nv'];return {list:ids.map(id=>({id,...BTN[id]})),info:'Turret aim and modes stay in game.'}}
+ if(seat==='gunner')return {list:[],info:'Turret aim and modes stay in game.'};
  const c=CAPS(), guards=[];
- const pri=['qt','gear','wings','vtol','ping','doors','locks','lights','atc','hail','coupled','power'].filter(id=>!BTN[id].need||BTN[id].need(c));
- const room=cells-3-guards.length;
- return {master:true,ops:opList(),list:[...pri.slice(0,room),...guards].map(id=>({id,...BTN[id]}))}}
+ const pri=['gear','wings','vtol','doors','locks','lights','coupled','power'].filter(id=>!BTN[id].need||BTN[id].need(c));
+ const room=cells-1-guards.length;
+ return {master:true,ops:[],list:[...pri.slice(0,room),...guards].map(id=>({id,...BTN[id]}))}}
 let SD=null;const sdLeft=()=>0;const mmss=n=>Math.floor(n/60)+':'+String(n%60).padStart(2,'0');function sdStart(){}function sdCancel(){}function sdRender(){}
 function btnHtml(b){let cls='btn cut',sub='';
-  if(b.kind==='tog'){const on=STATE[b.st];if(on)cls+=' lit';sub=on?b.on:b.off}
+  if(b.kind==='tog'){const on=STATE[b.st];if(on)cls+=' lit';sub=on==null?'—':on?b.on:b.off}
  else sub=b.s;
  return `<button class="${cls}" data-id="${b.id}">${ic(b.icon)}<span class="bl">${b.l}</span><small>${sub}</small></button>`}
 function deckHtml(cells){const D=buildDeck(cells);let h='';
- if(D.master)h+=`<div class="btn cut split"><button class="seg ${STATE.master==='nav'?'on':''}" data-mm="nav">NAV<small>travel</small></button><button class="seg ${STATE.master==='scm'?'on':''}" data-mm="scm">SCM<small>combat</small></button></div>`+
-  `<div class="btn cut opm"><span class="opl">SET MODE</span><div class="opsegs">${D.ops.map(o=>`<button class="seg ${opSent===o?'sent':''}" data-op="${o}">${ic(OPS[o][0],'ic sm')}${o}</button>`).join('')}</div></div>`;
+ if(D.master)h+=`<div class="btn cut split"><button class="seg ${STATE.master==='nav'?'on':''}" data-mm="nav">NAV<small>travel</small></button><button class="seg ${STATE.master==='scm'?'on':''}" data-mm="scm">SCM<small>combat</small></button></div>`;
  h+=D.list.map(btnHtml).join('');
  if(D.info)h+=`<div class="deckinfo" style="grid-column:1/-1">${D.info}</div>`;
  return h}
 function bindDeck(root){}
-function deckRender(){const d=$('#deck');if(!d)return;d.innerHTML=deckHtml(12);d.classList.toggle('gdeck',seat==='gunner');d.style.gridTemplateColumns=seat==='gunner'?`repeat(${d.querySelectorAll('[data-id]').length},1fr)`:'';bindDeck(d)}
+function deckRender(){const d=$('#deck');if(!d)return;d.innerHTML=deckHtml(12);d.classList.toggle('gdeck',seat==='gunner');const nk=d.children.length;d.style.gridTemplateColumns=`repeat(${seat==='gunner'?Math.max(1,nk):Math.max(1,Math.ceil(nk/2))},1fr)`;bindDeck(d)}
 function press(){}
 
 /* ---- needs + feed ---- */
@@ -2352,41 +2345,47 @@ function layout(){
 /* ---- loadout (Game.log AttachmentReceived per port) ---- */
 /* ---- gear: slots come from the pieces worn (scunpacked fps-items ports), ratings from the same data ---- */
 const GEARCAT={"cds_combat_light_legs_03_03_xenothreat":["FBL-8a Legs Justified","legs","L",20,-35,65,26000,2500,{"med":2,"util":2,"oxy":2,"side":1},[]],"qrt_combat_medium_backpack_01_01_15":["Testudo Backpack Earthshake","backpack","M",null,null,null,null,105000,{"util":1},[["Secondary",4],["Primary",5]],"Medium & Heavy",2],"qrt_utility_heavy_backpack_02_01_01":["Palatino Backpack Mark I","backpack","H",null,null,null,null,180000,{"util":1},[["Secondary",4],["Primary",5]],"Heavy",3],"clda_env_armor_heavy_helmet_01_01_expo":["Novikov \"Expo\" Helmet","helmet","H",25,-225,75,33600,0,{"radar":1},[]],"qrt_utility_heavy_helmet_02_01_01":["Palatino Helmet Mark I","helmet","H",40,-70,100,26800,0,{"radar":1},[]],"cds_combat_light_core_03_03_xenothreat":["FBL-8a Core Justified","core","L",20,-32,62,26000,4000,{"mag":4,"gren":2,"bp":1,"util":1},[["Primary",5]]],"qrt_combat_medium_legs_01_01_15":["Testudo Legs Earthshake","legs","M",30,-50,80,26400,4000,{"med":2,"util":2,"oxy":2,"side":1},[]],"qrt_utility_heavy_arms_02_01_01":["Palatino Arms Mark I","arms","H",40,-70,100,26800,0,{},[]],"qrt_specialist_heavy_helmet_01_01_01":["Antium Helmet","helmet","H",40,-85,115,26800,0,{"radar":1},[]],"cds_combat_light_backpack_01_02_10":["Geist Backpack Whiteout","backpack","L",null,null,null,null,54000,{"util":1},[["Secondary",4],["Primary",5]],"All",1],"rsi_odyssey_undersuit_01_01_12":["Odyssey II Undersuit Exec","undersuit","",5,-30,60,15200,0,{"mag":2,"med":1,"util":1,"oxy":1,"side":1},[["Primary",5]]],"qrt_combat_medium_arms_01_01_15":["Testudo Arms Earthshake","arms","M",30,-50,80,26400,0,{},[]],"cds_combat_light_helmet_03_03_xenothreat":["FBL-8a Helmet Justified","helmet","L",20,-35,65,26000,0,{"radar":1},[]],"qrt_utility_heavy_legs_02_01_01":["Palatino Legs Mark I","legs","H",40,-70,100,26800,8000,{"med":2,"util":2,"oxy":2,"side":1},[]],"qrt_combat_medium_helmet_01_01_15":["Testudo Helmet Earthshake","helmet","M",30,-50,80,26400,0,{"radar":1},[]],"clda_env_heavy_backpack_01_01_01":["Novikov Backpack","backpack","H",null,null,null,null,180000,{"util":1},[["Secondary",4],["Primary",5]],"Heavy",3],"qrt_utility_heavy_core_01_01_01":["Palatino Core","core","H",40,-70,100,26800,8000,{"mag":8,"gren":4,"bp":3,"util":1},[["Secondary",4],["Primary",5]]],"clda_env_armor_heavy_suit_01_01_01":["Novikov Exploration Suit","undersuit","H",25,-225,75,33600,22000,{"mag":8,"gren":4,"bp":3,"util":3,"med":2,"oxy":2,"side":1},[["Secondary",4],["Primary",5]]],"rsi_odyssey_undersuit_helmet_01_01_02":["Odyssey II Racing Helmet Red","helmet","",5,-30,60,15200,0,{"radar":1},[]],"qrt_combat_medium_core_01_01_15":["Testudo Core Earthshake","core","M",30,-50,80,26400,8000,{"mag":6,"gren":3,"bp":2,"util":1},[["Secondary",4],["Primary",5]]],"qrt_specialist_heavy_core_01_01_01":["Antium Core","core","H",40,-95,120,26800,10500,{"mag":8,"gren":4,"bp":3,"util":1},[["Secondary",4],["Primary",5]]],"cds_combat_light_arms_03_03_xenothreat":["FBL-8a Arms Justified","arms","L",20,-35,65,26000,0,{},[]]};
-const SETS={"medium":{"label":"Testudo · medium","helmet":"qrt_combat_medium_helmet_01_01_15","core":"qrt_combat_medium_core_01_01_15","arms":"qrt_combat_medium_arms_01_01_15","legs":"qrt_combat_medium_legs_01_01_15","undersuit":"rsi_odyssey_undersuit_01_01_12","backpack":"qrt_combat_medium_backpack_01_01_15","w":{"Primary":["Arlington Rifle","TS-25 Basara 2.5x · comp barrel"],"Sidearm":["Arclight Pistol","laser underbarrel"]},"hand":["Pyro RYT Multi-Tool","tractor beam module"],"mag":4,"gren":1,"med":2,"oxy":0,"util":1},"heavy":{"label":"Palatino · heavy","helmet":"qrt_utility_heavy_helmet_02_01_01","core":"qrt_utility_heavy_core_01_01_01","arms":"qrt_utility_heavy_arms_02_01_01","legs":"qrt_utility_heavy_legs_02_01_01","undersuit":"rsi_odyssey_undersuit_01_01_12","backpack":"qrt_utility_heavy_backpack_02_01_01","w":{"Primary":["FS-9 LMG","holographic sight"],"Secondary":["Arrowhead Sniper Rifle","Tarsus 8x"],"Sidearm":["Arclight Pistol",""],"Backpack 1":["Animus Missile Launcher",""]},"hand":null,"mag":7,"gren":3,"med":2,"oxy":2,"util":2},"light":{"label":"FBL-8a · light","helmet":"cds_combat_light_helmet_03_03_xenothreat","core":"cds_combat_light_core_03_03_xenothreat","arms":"cds_combat_light_arms_03_03_xenothreat","legs":"cds_combat_light_legs_03_03_xenothreat","undersuit":"rsi_odyssey_undersuit_01_01_12","backpack":"cds_combat_light_backpack_01_02_10","w":{"Primary":["P4-AR Rifle",""],"Sidearm":["S-38 Pistol",""]},"hand":null,"mag":3,"gren":2,"med":1,"oxy":1,"util":0},"mixed":{"label":"Antium core + FBL-8a · mixed","helmet":"qrt_specialist_heavy_helmet_01_01_01","core":"qrt_specialist_heavy_core_01_01_01","arms":"cds_combat_light_arms_03_03_xenothreat","legs":"cds_combat_light_legs_03_03_xenothreat","undersuit":"rsi_odyssey_undersuit_01_01_12","backpack":null,"w":{"Primary":["Karna Rifle",""],"Secondary":["Devastator Shotgun",""],"Sidearm":["Coda Pistol",""]},"hand":null,"mag":5,"gren":2,"med":2,"oxy":1,"util":1},"undersuit":{"label":"Odyssey II undersuit only","helmet":"rsi_odyssey_undersuit_helmet_01_01_02","core":null,"arms":null,"legs":null,"undersuit":"rsi_odyssey_undersuit_01_01_12","backpack":null,"w":{"Primary":["P4-AR Rifle",""],"Sidearm":["S-38 Pistol",""]},"hand":null,"mag":1,"gren":0,"med":1,"oxy":1,"util":0},"explorer":{"label":"Novikov exploration suit","helmet":"clda_env_armor_heavy_helmet_01_01_expo","core":null,"arms":null,"legs":null,"undersuit":"clda_env_armor_heavy_suit_01_01_01","backpack":"clda_env_heavy_backpack_01_01_01","w":{"Sidearm":["Arclight Pistol",""]},"hand":["Pyro RYT Multi-Tool","mining module"],"mag":0,"gren":0,"med":1,"oxy":1,"util":1}};
-let setK='medium', outT=21;
+function itemName(c){const N=MODEL.names||{};return N[String(c).toLowerCase()]||String(c)}
+function LIVESET(){const lo=(MODEL.log||{}).loadout||{},g=p=>{const c=lo[p];return c&&c!=='Default'?c:null};
+ const w={};Object.keys(lo).filter(k=>/^wep_stocked_\d+$/.test(k)).sort().forEach((k,i)=>{const c=g(k);if(c&&!w[i?'Secondary':'Primary'])w[i?'Secondary':'Primary']=[itemName(c),'']});
+ if(g('wep_sidearm'))w.Sidearm=[itemName(g('wep_sidearm')),''];
+ const pcs=['Armor_Helmet','Armor_Torso','Armor_Arms','Armor_Legs'].map(g).filter(Boolean),br=pcs.map(c=>itemName(c).split(' ')[0]);
+ return {label:pcs.length?(br.every(b=>b===br[0])?br[0]+' set':'mixed armor'):'',helmet:g('Armor_Helmet'),core:g('Armor_Torso'),arms:g('Armor_Arms'),legs:g('Armor_Legs'),
+  undersuit:g('Armor_Undersuit'),backpack:g('backpack'),w,hand:null,mag:null,gren:null,med:null,oxy:null,util:null}}
+let outT=null;
 const OUTSIDE=[[21,'']];
-const G=k=>k?GEARCAT[k]:null, CLS={L:'LIGHT',M:'MEDIUM',H:'HEAVY'};
-function gearSlots(){const L=SETS[setK], core=G(L.core), legs=G(L.legs), us=G(L.undersuit), bp=G(L.backpack);
+const G=k=>k?(GEARCAT[String(k).toLowerCase()]||[itemName(k),null,null,null,null,null,null,null,{},[]]):null, CLS={L:'LIGHT',M:'MEDIUM',H:'HEAVY'};
+function gearSlots(){const L=LIVESET(), core=G(L.core), legs=G(L.legs), us=G(L.undersuit), bp=G(L.backpack);
  const cp=core?core[8]:(us?us[8]:{}), cw=core?core[9]:(us?us[9]:[]), lp=legs?legs[8]:(us?us[8]:{});
  const weap=[...cw].sort((x,y)=>(x[0]==='Primary'?0:1)-(y[0]==='Primary'?0:1)).map(w=>[w[0]||'Weapon',w[1]]).concat(bp?bp[9].map((w,i)=>['Backpack '+(i+1),w[1]]):[]).concat(lp.side?[['Sidearm',1]]:[]);
  const util=(core?cp.util||0:0)+(legs?lp.util||0:0)+(!core&&!legs&&us?us[8].util||0:0);
  return {weap,mag:cp.mag||0,gren:cp.gren||0,med:lp.med||0,oxy:lp.oxy||0,util,bpMax:cp.bp||0,bp,core,legs,us}}
-function suitRating(noHelmet){const L=SETS[setK], us=G(L.undersuit);
+function suitRating(noHelmet){const L=LIVESET(), us=G(L.undersuit);
  // each body area is rated by its outer layer: armor piece if worn, else the undersuit
  const areas=[['head',(noHelmet?null:G(L.helmet))||us,(L.helmet&&!noHelmet)?'helmet':'undersuit'],['torso',G(L.core)||us,L.core?'core':'undersuit'],['arms',G(L.arms)||us,L.arms?'arms':'undersuit'],['legs',G(L.legs)||us,L.legs?'legs':'undersuit']].filter(a=>a[1]);
  const withT=areas.filter(a=>a[1][4]!=null&&a[1][5]!=null);
- const tmin=Math.max(...withT.map(a=>a[1][4])), tmax=Math.min(...withT.map(a=>a[1][5]));
+ const tmin=withT.length?Math.max(...withT.map(a=>a[1][4])):null, tmax=withT.length?Math.min(...withT.map(a=>a[1][5])):null;
  const coldA=withT.find(a=>a[1][4]===tmin), hotA=withT.find(a=>a[1][5]===tmax);
- const rad=Math.min(...areas.map(a=>a[1][6]).filter(v=>v!=null));
+ const rads=areas.map(a=>a[1][6]).filter(v=>v!=null),rad=rads.length?Math.min(...rads):null;
  const pcs=['helmet','core','arms','legs','undersuit'].map(k=>G(L[k])).filter(Boolean);
- const carry=pcs.reduce((a,x)=>a+(x[7]||0),0), bp=G(L.backpack);
+ const carry=pcs.some(x=>x[7]!=null)?pcs.reduce((a,x)=>a+(x[7]||0),0):null, bp=G(L.backpack);
  return {tmin,tmax,coldP:coldA&&coldA[0]+' ('+coldA[2]+')',hotP:hotA&&hotA[0]+' ('+hotA[2]+')',rad,carry,bpCap:bp?bp[7]:0}}
 const fmtU=n=>n>=1000?Math.round(n/1000)+'K':String(n);
-function suitTempState(){if(seat==='eva')return {ok:true,txt:'in space · no reading'};const R=suitRating();
+function suitTempState(){if(seat==='eva')return {ok:true,txt:'in space · no reading'};const R=suitRating();if(outT==null)return {ok:true,txt:'—'};if(R.tmin==null)return {ok:true,txt:outT+' °C'};
  if(outT<R.tmin)return {ok:false,txt:`${outT} °C · suit min ${R.tmin}`,cold:true};
  if(outT>R.tmax)return {ok:false,txt:`${outT} °C · suit max ${R.tmax}`,hot:true};
  return {ok:true,txt:`${outT} °C · in range`}}
 
-function loadout(){const L=SETS[setK], S=gearSlots(), R=suitRating(), T=suitTempState();
+function loadout(){const L=LIVESET(), S=gearSlots(), R=suitRating(), T=suitTempState();
  const brand=n=>(n||'').split(' ')[0];
  const pieces=['helmet','core','arms','legs'].map(k=>G(L[k])).filter(Boolean);
  const same=pieces.length&&pieces.every(x=>brand(x[0])===brand(pieces[0][0]));
- const armorTxt=pieces.length?(same?`${brand(pieces[0][0])} set · ${CLS[(G(L.core)||pieces[0])[2]]?.toLowerCase()||''}`:'mixed armor'):G(L.undersuit)[0];
+ const armorTxt=pieces.length?(same?`${brand(pieces[0][0])} set · ${CLS[(G(L.core)||pieces[0])[2]]?.toLowerCase()||''}`:'mixed armor'):(G(L.undersuit)||['—'])[0];
  const wl=Object.entries(L.w);
  const mini=`<div class="lrow"><svg class="ic sm"><use href="#i-shield"/></svg><span>${esc(armorTxt)}</span><span class="unit">${T.ok?'':'<span style="color:#ff8a94">temp!</span>'}</span></div>`+
   wl.slice(0,2).map(([slot,w])=>`<div class="lrow"><svg class="ic sm"><use href="#i-weapon"/></svg><span>${esc(w[0])}</span><span class="unit">${slot.toLowerCase()}</span></div>`).join('')+
-  `<div class="lrow"><svg class="ic sm"><use href="#v-hp"/></svg><span>${L.med} MedPen${L.med===1?'':'s'} · ${L.gren} grenade${L.gren===1?'':'s'}</span><span class="unit">${L.backpack?'backpack':'no backpack'}</span></div>`;
- const miniEva=`<div class="lrow"><svg class="ic sm"><use href="#i-shield"/></svg><span class="lone">${esc([armorTxt,...wl.map(x=>x[1][0].split(' ')[0])].join(' · '))} · ${L.med} MedPens</span></div>`;
+  `<div class="lrow"><svg class="ic sm"><use href="#s-pack"/></svg><span>${L.backpack?esc(G(L.backpack)[0]):'No backpack'}</span><span class="unit">backpack</span></div>`;
+ const miniEva=`<div class="lrow"><svg class="ic sm"><use href="#i-shield"/></svg><span class="lone">${esc([armorTxt,...wl.map(x=>x[1][0].split(' ')[0])].join(' · '))}</span></div>`;
  const sec=(t,rows)=>`<div class="lsec"><div class="lh">${t}</div>${rows}</div>`;
  const full=sec('ARMOR',['helmet','core','arms','legs','undersuit'].map(k=>{const x=G(L[k]);return `<div class="lrow"><span class="lk">${k}</span><span>${x?esc(x[0]):'none'}</span></div>`}).join(''))+
   sec('WEAPONS',S.weap.map(([slot])=>{const w=L.w[slot];return `<div class="lrow"><span class="lk">${slot}</span><span>${w?esc(w[0]):'empty'}</span></div>`}).join(''));
@@ -2396,7 +2395,7 @@ function loadout(){const L=SETS[setK], S=gearSlots(), R=suitRating(), T=suitTemp
 /* ---- paper doll: slots from the worn pieces, injuries on the body ---- */
 function doll(){
  if(!$('#slotsL'))return;
- const L=SETS[setK], S=gearSlots(), R=suitRating(), T=suitTempState();
+ const L=LIVESET(), S=gearSlots(), R=suitRating(), T=suitTempState();
  const s=INJ(), word={ok:'',min:'minor',mod:'moderate',sev:'severe'}, col={ok:'#5be69a',min:'#ffb347',mod:'#ff8a3d',sev:'#ff5468'};
  const inj=(...ks)=>{const w=ks.map(k=>s[k]).filter(v=>v!=='ok');if(!w.length)return '';const worst=w.includes('sev')?'sev':w.includes('mod')?'mod':'min';return `<span class="ichip" style="border-color:${col[worst]};color:${col[worst]}">${word[worst]}</span>`};
  const tile=(icon,slot,name,sub,extra='',empty=false)=>`<div class="slot cut ${empty?'empty':''}"><div class="sic">${ic(icon)}</div><div class="stx"><div class="sl">${slot}${extra}</div><div class="sn">${name}</div>${sub?`<div class="ss">${sub}</div>`:''}</div></div>`;
@@ -2408,35 +2407,35 @@ function doll(){
   return tile(icon,label,esc(nm),sub,chip+(injK?inj(...injK):'')).replace('<div class="sn">',`<div class="sn" title="${esc(x[0])}">`)};
  $('#slotsL').innerHTML=piece('helmet','s-helmet','HELMET',['h'])+piece('core','s-core','CORE',['t'])+piece('arms','s-arms','ARMS',['la','ra'])+piece('legs','s-legs','LEGS',['ll','rl'])+piece('undersuit','s-suit','UNDERSUIT');
  const bp=S.bp, fits=!bp||(bp[11]||0)<=S.bpMax;
- const bpTile=S.bpMax||bp?tile('s-pack','BACKPACK',bp?esc(bp[0].replace(/\s+Backpack\b/,'')):'none',bp?`size ${bp[11]} · ${fmtU(bp[7])} µSCU${fits?'':' · too big for this core'}`:`fits up to size ${S.bpMax}`,'',!bp):tile('s-pack','BACKPACK','no backpack port','',' ',true);
+ const bpTile=S.bpMax||bp?tile('s-pack','BACKPACK',bp?esc(bp[0].replace(/\s+Backpack\b/,'')):'none',bp?(bp[7]!=null?`size ${bp[11]} · ${fmtU(bp[7])} µSCU${fits?'':' · too big for this core'}`:''):`fits up to size ${S.bpMax}`,'',!bp):tile('s-pack','BACKPACK','no backpack port','',' ',true);
  const wt=S.weap.map(([slot,max])=>{const w=L.w[slot];return tile(slot==='Sidearm'?'i-weapon':'i-weapon',slot.toUpperCase(),w?esc(w[0]):'empty',w?(w[1]||''):`size ${max} slot`,'',!w)}).join('');
- const hand=tile('s-tool','IN HAND',L.hand?esc(L.hand[0]):'nothing',L.hand?L.hand[1]:'','',!L.hand);
+ const hand=tile('s-tool','IN HAND',L.hand?esc(L.hand[0]):'—',L.hand?L.hand[1]:'','',!L.hand);
  $('#slotsR').innerHTML=bpTile+wt+hand;
  const p=(k,d)=>`<path d="${d}" fill="${s[k]==='ok'?'#0f2a33':col[s[k]]+'55'}" stroke="${s[k]==='ok'?'#5bd1e6':col[s[k]]}" stroke-width="1.6"/>`;
  $('#dollFig').innerHTML=bodySvg(s,'dollsvg',{fill:v=>v==='ok'?'#0f2a33':col[v]+'55',stroke:v=>v==='ok'?'#5bd1e6':col[v],sw:1.6,glow:true}).replace('</svg>','<text x="6" y="228" font-size="10" fill="#5f8a96">R</text><text x="108" y="228" font-size="10" fill="#5f8a96">L</text></svg>')+`<div class="dollnote">${Object.entries(s).filter(([k,v])=>v!=='ok').map(([k,v])=>`<span style="color:${col[v]}">${{la:'Left arm',ra:'Right arm',ll:'Left leg',rl:'Right leg',t:'Torso',h:'Head'}[k]} · ${word[v]}</span>`).join('<br>')||'No injuries'}</div>`;
  const c=(icon,name,n,cap)=>cap?`<div class="ctile cut ${n>cap?'over':''}">${ic(icon,'ic sm')}<span>${name}</span><b>${n} / ${cap}</b></div>`:'';
- $('#carry').innerHTML=c('s-mag','Magazines',L.mag,S.mag)+c('s-gren','Throwables',L.gren,S.gren)+c('v-hp','MedPens',L.med,S.med)+c('v-o2','OxyPens',L.oxy,S.oxy)+c('s-tool','Utility',L.util,S.util);
+ $('#carry').innerHTML=c('s-mag','Magazines','—',S.mag)+c('s-gren','Throwables','—',S.gren)+c('v-hp','MedPens','—',S.med)+c('v-o2','OxyPens','—',S.oxy)+c('s-tool','Utility','—',S.util);
  const sp=$('#suitPanel'); if(sp){
   const pr=k=>k;
   sp.innerHTML=`<div class="ph">SUIT<span class="r">${esc(L.label)}</span></div>
-   <div class="kv">TEMP RATING <b>${R.tmin} / ${R.tmax} °C</b></div>
-   <div class="unit" style="margin:-2px 0 4px">weakest area: ${pr(R.coldP)}${R.hotP!==R.coldP?' for cold, '+pr(R.hotP)+' for heat':''}</div>
+   <div class="kv">TEMP RATING <b>${R.tmin==null?'—':R.tmin+' / '+R.tmax+' °C'}</b></div>
+   ${R.coldP?`<div class="unit" style="margin:-2px 0 4px">weakest area: ${pr(R.coldP)}${R.hotP!==R.coldP?' for cold, '+pr(R.hotP)+' for heat':''}</div>`:''}
    <div class="kv">OUTSIDE <b style="color:${T.ok?'var(--g)':'#ff8a94'}">${T.txt}</b></div>
-   <div class="kv">RADIATION <b>${R.rad.toLocaleString()} REM</b></div>
-   <div class="kv">CARRY <b>${fmtU(R.carry)} µSCU${R.bpCap?' + '+fmtU(R.bpCap)+' pack':''}</b></div>
+   <div class="kv">RADIATION <b>${R.rad==null?'—':R.rad.toLocaleString()+' REM'}</b></div>
+   <div class="kv">CARRY <b>${R.carry==null?'—':fmtU(R.carry)+' µSCU'}${R.bpCap?' + '+fmtU(R.bpCap)+' pack':''}</b></div>
    <div class="suitscale">${(()=>{const t=seat==='eva'?footEnv().temp:outT,z=x=>Math.max(0,Math.min(1,(x+250)/400)),ok=t>=R.tmin&&t<=R.tmax;
     return vbox('OUTSIDE · SUIT RANGE',t,'°C',ok?'#eafcff':'#ff5468',z(t),[[0,z(R.tmin),ZR],[z(R.tmin),z(R.tmax),ZT],[z(R.tmax),1,ZR]])})()}</div>`}
 }
 
 /* ---- phone MAIN ---- */
-function miniShip(){const bubble=((SH().caps||{}).sys||{}).faces!=='Quadrant';const f0=combat?{F:18,R:84,L:79,B:62}:{F:100,R:100,L:100,B:100},f=bubble?(v=>({F:v,R:v,L:v,B:v}))(combat?61:100):f0;
- const G=shipGeo(shipK),hull=combat?62:100,pad=11*G.u;
+function miniShip(){const bubble=((SH().caps||{}).sys||{}).faces!=='Quadrant';const SF=MODEL.shields||{},fc=SF.faces,f=bubble||!fc?(v=>({F:v,R:v,L:v,B:v}))(SF.bubble==null?null:SF.bubble):{F:fc[0],R:fc[1],B:fc[2],L:fc[3]};
+ const G=shipGeo(shipK),hull=MODEL.hull,pad=11*G.u;
  return `<svg viewBox="${G.cx-G.rx-pad} ${G.cy-G.ry-pad} ${2*(G.rx+pad)} ${2*(G.ry+pad)}" class="msh">${defMarkup(G,f,hull,bubble,false,'hullclipm')}</svg>`}
 let phMapBig=false;
 function phoneRender(){applyShip();
  const el=$('#phmain'); if(!el)return; if(!phone){el.innerHTML='';return}
  const A=window.AS||{}, v=VIT(), tall=app.classList.contains('phtall'), short=app.classList.contains('phshort');
- const tot=combat?61:100, hull=combat?62:100, open=needs.filter(n=>!n.done).length;
+ const SFm=MODEL.shields||{},tot=SFm.bubble!=null?Math.round(SFm.bubble):SFm.faces?Math.round(SFm.faces.reduce((a,b)=>a+b,0)/SFm.faces.length):null, hull=MODEL.hull, open=needs.filter(n=>!n.done).length;
  const lights=Object.entries(A).filter(([k,s])=>s==='min'||s==='maj').map(([k,s])=>`<span class="pl ${s}">${k}</span>`).join('')||'<span class="pl ok">ALL SYSTEMS OK</span>';
  const loc=`<button class="phrow" data-go="nav">${ic('t-nav','ic sm')}<span><b>${esc((MODEL.log||{}).place||'—')}</b> ${(MODEL.log||{}).armistice===true?'<span class="zoneA">Armistice</span>':''}</span><span class="unit" style="margin-left:auto">▸</span></button>`;
  const pm=PM(), po=pm?curObj(pm):null;
@@ -2444,23 +2443,22 @@ function phoneRender(){applyShip();
  const EV=foot?null:envCard(), env=EV?`<button class="phrow env ${EV[0]}" data-go="you">${ic('v-air','ic sm')}<span><b>${EV[1].split(' · ')[0]}</b></span><span class="unit" style="margin-left:auto">${EV[2].temp==null?'space':EV[2].temp+' °C'} · ${EV[2].grav.toFixed(1)} g</span></button>`:'';
  const wait=open?`<button class="phrow wait" data-go="feed">${ic('i-party','ic sm')}<span><b>${open} waiting</b> · ${needs.filter(n=>!n.done).map(n=>NTYPE[n.type][1].split(' ')[0]).join(', ')}</span><span class="unit" style="margin-left:auto">▸</span></button>`:'';
  const pfight=combat&&!pinMap&&(seat==='pilot'||seat==='gunner');
- const mapstrip=pfight?`<div class="phdmg"><div class="phdh"><span>DAMAGE</span><button class="mapbtn" id="phMapPin">MAP</button></div>${[(((SH().caps||{}).sys||{}).faces==='Quadrant'?['maj','SHIELDS','front 18%',18]:['maj','SHIELDS','bubble 61%',61]),['min','HULL','62%',62],['min','THRUSTERS','warning',null]].map(r=>`<button class="phdr ${r[0]}" data-go="sys"><span class="phdn">${r[0]==='maj'?'▲':'●'} ${r[1]}</span><span class="phdd">${r[2]}</span>${r[3]!=null?`<span class="phbar"><i style="width:${r[3]}%"></i></span>`:''}</button>`).join('')}<div class="dguns ph" data-guns>${gunsInner()}</div><div class="phdok">4 systems OK · quantum off</div></div>`
+ const mapstrip=pfight?`<div class="phdmg"><div class="phdh"><span>DAMAGE</span><button class="mapbtn" id="phMapPin">MAP</button></div>${phDmgRows(tot,hull).map(r=>`<button class="phdr ${r[0]}" data-go="sys"><span class="phdn">${r[0]==='maj'?'▲':'●'} ${r[1]}</span><span class="phdd">${r[2]}</span>${r[3]!=null?`<span class="phbar"><i style="width:${r[3]}%"></i></span>`:''}</button>`).join('')}<div class="dguns ph" data-guns>${gunsInner()}</div><div class="phdok">${Object.values(MODEL.ann||{}).filter(l=>l==='ok').length} systems OK</div></div>`
   :`<div class="phmap"><div class="phmhead"><button data-z="sys" class="${mapMode==='sys'?'on':''}">SYSTEM</button><button data-z="loc" class="${mapMode==='loc'?'on':''}">LOCAL</button><span class="phmsys">${SYSN[mapView]}</span><button class="phexp">${phMapBig?'CLOSE':'EXPAND'}</button></div><div class="phsvg">${$(mapMode==='loc'?'#mapLoc':'#mapSys').outerHTML.replace(/ id="map(Sys|Loc)"/,'').replace(/ style="[^"]*"/,'')}</div>${phMapBig?`<div class="phdist">${$('.mapwrap .dist').innerHTML}</div>`:''}${combat&&pinMap&&seat!=='foot'&&seat!=='eva'?'<button class="mapbtn phback" id="phDmgBack">DAMAGE</button>':''}</div>`;
  let glance='', deckIds=[];
  if(seat==='pilot'||seat==='gunner'){
   const left=seat==='pilot'?`<div class="phspd"><span class="big">${$('#spd').textContent}</span><span class="unit">m/s · ${$('#mode').textContent}</span><span class="unit">G ${$('#g').textContent.split(' /')[0]} · H₂ ${MODEL.flight.h2==null?'—':Math.round(MODEL.flight.h2)+'%'}</span></div>`
-   :`<div class="phspd"><span class="big" style="font-size:26px">${bigShip&&myTurretObj()?myTurretObj().n.toUpperCase():'TURRET'}</span><span class="unit">${(bigShip?weapons:[1,1]).length} guns · ${bigShip?weapons.filter(w=>!(w[2]&&w[3])).length+' not ready':'1 charging'}</span><span class="unit">48 decoys · 5 noise</span></div>`;
-  glance=`<div class="phglance">${left}<div class="phdef">${miniShip()}<div class="phdv"><span style="color:${tot<60?'#ffb347':'#5bd1e6'}">${tot}%</span><span class="unit">SHIELD</span><span style="color:${hull<70?'#ffb347':'#5be69a'}">${hull}%</span><span class="unit">HULL</span></div></div></div><div class="phlights">${lights}</div>`;
-  deckIds=seat==='pilot'?['gear','qt','mode','land','doors','locks','ping','eject']:['g_guns','g_scan','g_nv','g_opn','g_t2','g_exit','g_pwr','g_eject'];
+   :`<div class="phspd"><span class="big" style="font-size:26px">${bigShip&&myTurretObj()?myTurretObj().n.toUpperCase():'TURRET'}</span><span class="unit">${weapons.length} guns · ${weapons.filter(w=>!(w[2]&&w[3])).length} not ready</span><span class="unit">${MODEL.cm.decoy??'—'} decoys · ${MODEL.cm.noise??'—'} noise</span></div>`;
+  glance=`<div class="phglance">${left}<div class="phdef">${miniShip()}<div class="phdv"><span style="color:${tot!=null&&tot<60?'#ffb347':'#5bd1e6'}">${tot==null?'—':tot+'%'}</span><span class="unit">SHIELD</span><span style="color:${hull!=null&&hull<70?'#ffb347':'#5be69a'}">${hull==null?'—':hull+'%'}</span><span class="unit">HULL</span></div></div></div><div class="phlights">${lights}</div>`;
  }else{
   const vb=seat==='eva'?['o2','hp','food','water']:['hp','o2','food','water'];
   glance=`<div class="phglance foot"><div class="vgrid ph">${vb.map(k=>vitBox(k)).join('')}</div><div class="figwrap" data-fig></div></div>
-   <button class="phrow" data-go="you">${ic('i-shield','ic sm')}<span>Testudo set · Arlington · Arclight</span><span class="unit" style="margin-left:auto">2 medpens ▸</span></button>
-   ${short?'':`<div class="phrow dim">${ic('t-ship','ic sm')}<span>${SH().short} · hull 92% · shields 61%</span><span class="unit" style="margin-left:auto">12:16</span></div>`}`;
+   <button class="phrow" data-go="you">${ic('i-shield','ic sm')}<span>${esc([LIVESET().label,...Object.values(LIVESET().w).map(x=>x[0])].filter(Boolean).join(' · ')||'No loadout in the log yet')}</span><span class="unit" style="margin-left:auto">▸</span></button>
+   ${short?'':`<div class="phrow dim">${ic('t-ship','ic sm')}<span>${esc(SH().short||'—')}${LASTSHIP.hull!=null?' · hull '+LASTSHIP.hull+'%':''}${LASTSHIP.sh!=null?' · shields '+LASTSHIP.sh+'%':''}</span><span class="unit" style="margin-left:auto">${LASTSHIP.t?new Date(LASTSHIP.t).toTimeString().slice(0,5):''}</span></div>`}`;
   deckIds=[];
  }
  const pdeck=(seat==='pilot'||seat==='gunner')?deckHtml(8):''; const pcols=seat==='gunner'?(pdeck.match(/data-id=/g)||[]).length:4;
- const emotes=(seat==='foot'||seat==='eva')?`<div class="phdeck">${['WAVE','SALUTE','POINT','AGREE'].map(e=>`<button class="btn cut">${ic('i-party')}${e}<small>emote</small></button>`).join('')}</div>`:'';
+ const emotes='';
  el.classList.toggle('mapbig',phMapBig&&!pfight);
  const tight=short&&pfight; el.classList.toggle('tight',tight);
  el.innerHTML=glance+mapstrip+loc+env+(tight?'':msn)+wait+(pdeck?`<div class="phdeck" style="grid-template-columns:repeat(${pcols},1fr)">${pdeck}</div>`:'')+emotes;
@@ -2727,6 +2725,12 @@ function api(p){const u=new URL(p,location.href);if(KEY)u.searchParams.set('k',K
 function shipNameOf(c){const x=SHIPS[c]||ALLSHIPS.find(a=>a.class===c);return x&&x.name?x.name:String(c||'').replace(/_\d+$/,'').replace(/^[A-Z]{3,4}_/,'').replace(/_/g,' ')}
 function killRows(n){return(((MODEL.log||{}).kills)||[]).slice(-n).reverse()}
 function mtypeOf(n){n=String(n||'');return /bounty/i.test(n)?'bounty':/haul|cargo/i.test(n)?'haul':/deliver/i.test(n)?'delivery':/mining|mine /i.test(n)?'mining':/salvage|recover/i.test(n)?'recover':/eliminate|defend|kill|patrol/i.test(n)?'combat':'contract'}
+const T0=Date.now();let WAL0=null,FLOWN=0,LASTT=0;const SESS={downed:0,dead:0,respawn:0,seat:0},SEEN=new Set();
+/* the recorder keeps the last 50 events: count each one once, by time and type */
+function countEvents(evs){(evs||[]).forEach(e=>{const k=e.t+'|'+e.type;if(SEEN.has(k))return;SEEN.add(k);const t=String(e.type||'');
+ if(t.indexOf('DOWNED')>=0)SESS.downed++;else if(t.indexOf('RESPAWN')>=0)SESS.respawn++;else if(t.indexOf('DEAD')>=0)SESS.dead++;else if(t.indexOf('ENTER_SEAT')>=0)SESS.seat++})}
+function phDmgRows(tot,hull){const r=[];if(tot!=null)r.push([tot<30?'maj':'min','SHIELDS',tot+'%',tot]);if(hull!=null)r.push([hull<35?'maj':'min','HULL',hull+'%',hull]);
+ Object.entries(MODEL.ann||{}).forEach(([k,l])=>{if(l==='maj'||l==='min')r.push([l,k.toUpperCase(),l==='maj'?'fault':'warning',null])});return r}
 function agoMin(t){const m=Math.max(0,Math.round((Date.now()/1000-t)/60));return m<1?'now':m+' min'}
 function registerShip(p){const c=Object.assign({},p,{pilotGunList:p.pilotGuns||[]});
  SHIPS[p.class]=fromCaps(c);if(p.shape)SHAPE[p.class]=p.shape;if(p.dims)SDIM[p.class]=p.dims;if(p.speeds)SPEEDS[p.class]=p.speeds;
@@ -2737,16 +2741,18 @@ async function loadShip(cls){if(!cls||SHIPS[cls]||SHIPREQ===cls||SHIPFAIL[cls])r
 const GICON={alert:'i-skull',msn:'i-obj',money:'i-pay',people:'i-party',ship:'i-land',zone:'i-zone',tip:'i-bell'};
 function applyModel(){const M=MODEL,f=M.flight;
  const s=M.seat==='crew'?'gunner':(M.seat||'pilot');
- if(s!==seat){if(seat==='pilot'||seat==='gunner')LASTSHIP.t=Date.now();lastSeat=seat;seat=s}
+ if(s!==seat){if((seat==='pilot'||seat==='gunner')&&LASTSHIP.seen)LASTSHIP.t=Date.now();lastSeat=seat;seat=s}
  foot=seat==='foot'||seat==='eva';
  combat=!!M.threat;
  if(M.ship&&M.ship.cls){shipK=M.ship.cls;loadShip(shipK)}
  SNOW=Math.round(f.speed||0);GNOW=f.g;if(f.heading!=null)HDG=f.heading;
  CM={decoy:M.cm.decoy,noise:M.cm.noise};FIREGROUP=M.preset||'';WSET={gimbals:!!M.gimbalsLocked,stagger:!!M.staggered};
- const dp=v=>/DEPLOY/.test(v||'')&&!/RETRACT/.test(v||'');
- STATE=Object.assign(STATE,{master:f.master||'scm',gear:dp(f.gear),vtol:dp(f.vtol),wings:dp(f.wings),
-  lights:!!(M.ship&&M.ship.lights),doors:!!(M.ship&&M.ship.doorsOpen),locks:!!(M.ship&&M.ship.doorsLocked),
-  coupled:!!(M.ifcs.ifcs_coupled&&M.ifcs.ifcs_coupled.active),power:(M.power||{}).powerplants!==false});
+ /* null = the game didn't send it: the key shows — */
+ const dp=v=>v==null?null:/DEPLOY/.test(v)&&!/RETRACT/.test(v), sv=v=>v==null?null:!!v, sp=M.ship||{};
+ STATE=Object.assign(STATE,{master:f.master,gear:dp(f.gear),vtol:dp(f.vtol),wings:dp(f.wings),
+  lights:sv(sp.lights),doors:sv(sp.doorsOpen),locks:sv(sp.doorsLocked),
+  coupled:M.ifcs.ifcs_coupled?!!M.ifcs.ifcs_coupled.active:null,power:(M.power||{}).powerplants==null?null:M.power.powerplants!==false});
+ const md=$('#mode');if(md)md.textContent=f.master?f.master.toUpperCase():'—';
  const P=M.power||{};PGON={pw:P.powerplants!==false,en:P.engines!==false,sh:P.shield_generators!==false,wp:P.weapons!==false};
  hrNow=Math.round(M.vitals.hr||0);if(M.env.temp!=null)outT=Math.round(M.env.temp);
  const G=M.log||{};
@@ -2757,6 +2763,17 @@ function applyModel(){const M=MODEL,f=M.flight;
  const sx=(id,v)=>{const e=$('#'+id);if(e)e.textContent=v};
  sx('navPlace',G.place||'—');sx('mapPlace',G.place||'');sx('h2t',f.h2==null?'—':Math.round(f.h2)+'%');
  const hb=$('#h2');if(hb)hb.style.width=(f.h2||0)+'%';sx('navJur',G.jurisdiction||'—');sx('navZone',G.armistice===true?'Armistice':G.armistice===false?'Outside armistice':'—');
+ /* last ship: the values seen while seated, kept once you leave the seat */
+ if(M.ship){const SFl=M.shields||{};Object.assign(LASTSHIP,{seen:true,hull:M.hull,sh:SFl.bubble!=null?Math.round(SFl.bubble):SFl.faces?Math.round(SFl.faces.reduce((a,b)=>a+b,0)/SFl.faces.length):null,h2:f.h2==null?null:Math.round(f.h2),qt:f.qt==null?null:Math.round(f.qt)})}
+ const pc=v=>v==null?'—':v+'%';sx('lsHull',pc(LASTSHIP.hull));sx('lsSh',pc(LASTSHIP.sh));sx('lsH2',pc(LASTSHIP.h2));sx('lsQt',pc(LASTSHIP.qt));
+ /* this session: since the page opened */
+ const now=Date.now();if(M.live&&M.ship&&LASTT)FLOWN+=(f.speed||0)*Math.min(5,(now-LASTT)/1000);LASTT=now;
+ if(WAL0==null&&M.wallet!=null)WAL0=M.wallet;
+ const dW=M.wallet!=null&&WAL0!=null?Math.round(M.wallet-WAL0):null,big=n=>n>=1e6?(n/1e6).toFixed(1)+' M':n.toLocaleString('en-US');
+ sx('sessT','since '+new Date(T0).toTimeString().slice(0,5));
+ sx('sWal',dW==null?'—':(dW>0?'+':dW<0?'−':'')+Math.abs(dW).toLocaleString('en-US'));sx('sBal',M.wallet==null?'—':big(Math.round(M.wallet)));
+ sx('sFlown',FLOWN>=1000?(FLOWN/1000).toFixed(1)+' km':Math.round(FLOWN)+' m');sx('sBp',String(G.blueprints||0));
+ sx('sDown',String(SESS.downed));sx('sDead',String(SESS.dead));sx('sResp',String(SESS.respawn));sx('sSeat',String(SESS.seat));
  const nr=$('#mainNear');if(nr){const k=killRows(2);nr.innerHTML=k.length?k.map(x=>`<div class="line unit">${esc(x.killer||'Unknown')} destroyed a ${esc(shipNameOf(x.cls))} · ${agoMin(x.t)}</div>`).join(''):'<div class="line unit">No ships destroyed nearby</div>'}
 }
 function applyWeapons(){if(MODEL.weapons&&MODEL.weapons.length)weapons=MODEL.weapons.map(w=>w.slice())}
@@ -2764,7 +2781,7 @@ let LASTN=0,LASTR=0,LASTK='';
 /* 4 polls a second while live: instruments every poll, the full redraw once a second or when the scene changes */
 async function poll(){let wait=2000,p=null;
  try{const r=await fetch(api('/api/telemetry/live'),{credentials:'same-origin',cache:'no-store'});if(r.ok)p=await r.json()}catch(e){}
- try{MODEL=slateModel(p||{},SHIPS[shipK]?SH().caps:null);
+ try{MODEL=slateModel(p||{},SHIPS[shipK]?SH().caps:null);MODEL.names=(p&&p.names)||{};if(p)countEvents(p.events);
   const G=MODEL.log||{},n=(G.notices||[]).length;
   applyModel();
   if(n>LASTN&&LASTN){const last=G.notices[n-1];unread++;toast(GICON[last.group]||'i-bell',last.group,last.text)}LASTN=n;

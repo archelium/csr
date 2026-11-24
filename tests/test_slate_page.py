@@ -30,6 +30,19 @@ class PageTests(unittest.TestCase):
                   'scrBtn', 'bellBtn', "KESTREL"):
             self.assertIn(i, self.html, i)
 
+    def test_foot_sys_you_parts_present(self):
+        for i in ('id="bodyCard"', 'id="suitsvg"', 'id="lsSil"', 'id="page-sys"', 'id="page-you"', 'class="vgrid"'):
+            self.assertIn(i, self.html, i)
+
+    def test_no_foot_sys_you_demo_values(self):
+        for s in ("40 m from you", "as of 12:16", "96 bpm", "2 h 14 min", "+79,500", "82.3 M", "57.5 km",
+                  "Testudo set", "2 medpens", "hull 92%", "48 decoys", "Testudo · medium"):
+            self.assertNotIn(s, self.html, s)
+
+    def test_deck_is_state_only(self):
+        for s in ("SET MODE", "<small>emote</small>", "request pad", "v_toggle_", "v_set_", "act:'"):
+            self.assertNotIn(s, self.html, s)
+
     def test_no_action_hooks(self):
         low = self.html.lower()
         self.assertNotIn("triggergameaction", low)

@@ -44,6 +44,14 @@ class ApiTests(unittest.TestCase):
         body = json.loads(api("/api/telemetry/live", live=lambda: dict(LIVE, snapshot=snap)))
         self.assertEqual(body["names"], {"klwe_laserrepeater_s3": "CF-337 Panther Repeater"})
 
+    def test_live_names_loadout_items(self):
+        log = dict(LOG, loadout={"Armor_Torso": "qrt_combat_medium_core_01_01_15", "wep_sidearm": "klwe_pistol_energy_01",
+                                 "Armor_Helmet": "Default"})
+        with mock.patch.object(sc_livelog, "get_state", lambda *a, **k: log):
+            names = json.loads(api("/api/telemetry/live"))["names"]
+        self.assertEqual(names, {"qrt_combat_medium_core_01_01_15": "Testudo Core Earthshake",
+                                 "klwe_pistol_energy_01": "Arclight Pistol"})
+
     def test_live_names_empty_off_seat(self):
         self.assertEqual(json.loads(api("/api/telemetry/live"))["names"], {})
 

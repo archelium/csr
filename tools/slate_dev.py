@@ -1,6 +1,6 @@
 """Dev preview for the Kestrel slate: the page plus a telemetry capture replayed in a loop.
 
-  py -3 tools/slate_dev.py --fixture takeoff [--port 7895] [--log path/to/Game.log] [--state waiting]
+  py -3 tools/slate_dev.py --fixture takeoff [--port 7895] [--log path/to/Game.log] [--state waiting] [--range -170:]
 
 Serves /live, /api/telemetry/live and /api/telemetry/ship like CSR does, with no key.
 For layout work and the browser audit only. Nothing here ships in the exe."""
@@ -38,10 +38,12 @@ def main():
     ap.add_argument("--port", type=int, default=7895)
     ap.add_argument("--log", default=None, help="a Game.log to tail for the log state")
     ap.add_argument("--state", default="live", choices=("live", "waiting"))
+    ap.add_argument("--range", default=":", help="frames to loop, python slice a:b (landing -170: is on foot)")
     a = ap.parse_args()
-    fr = frames(a.fixture)
+    lo, hi = (int(x) if x else None for x in a.range.split(":"))
+    fr = frames(a.fixture)[lo:hi]
     t0 = time.time()
-    tail = sc_livelog.LiveTail(lambda: a.log) if a.log else None
+    tail = sc_livelog.LiveTail(lambda: a.log, lambda c: sc_stats.place_name(c)[0]) if a.log else None
 
     def live():
         if a.state != "live":
@@ -66,10 +68,10 @@ def main():
                 self._send(200, sc_slate.slate_html().replace("/*__FONTS__*/", ""), "text/html; charset=utf-8")
             elif p.path == "/api/telemetry/live":
                 data = live()
-                data["names"] = sc_stats._slate_gun_names(data.get("snapshot"))
                 if tail:
                     tail.poll()
                 data["log"] = tail.state() if tail else sc_livelog.LogState().state()
+                data["names"] = sc_stats._slate_gun_names(data.get("snapshot"), data["log"]["loadout"].values())
                 self._send(200, json.dumps(sc_stats._json_safe(data), default=str))
             elif p.path == "/api/telemetry/ship":
                 body = sc_stats.tlm_api_get(self.path, None, None, None)

@@ -861,8 +861,9 @@ def _slate_log_path():
 _SLATE_NAMES = {}
 
 
-def _slate_gun_names(snapshot):
-    """{class: display name} for the guns in this frame, from CSR's item names."""
+def _slate_gun_names(snapshot, items=()):
+    """{class: display name} for the guns in this frame and the given item classes
+    (the Game.log loadout), from CSR's item names."""
     if not _SLATE_NAMES:
         try:
             with open(os.path.join(resource_dir(), "sc_item_names.json"), encoding="utf-8") as fh:
@@ -870,8 +871,10 @@ def _slate_gun_names(snapshot):
         except (OSError, ValueError):
             pass
     out = {}
-    for w in (((snapshot or {}).get("weapons") or {}).get("weapons") or []):
-        cls = re.sub(r"_\d{6,}$", "", str(w.get("name") or "")).lower()
+    guns = [re.sub(r"_\d{6,}$", "", str(w.get("name") or ""))
+            for w in (((snapshot or {}).get("weapons") or {}).get("weapons") or [])]
+    for cls in guns + [str(i or "") for i in items]:
+        cls = cls.lower()
         if cls and cls in _SLATE_NAMES:
             out[cls] = _SLATE_NAMES[cls]
     return out
@@ -881,11 +884,11 @@ def live_payload(live):
     """The live view's poll: telemetry state, display names for the guns in the frame and
     the live Game.log state (None when the log can't be read)."""
     data = dict(live())
-    data["names"] = _slate_gun_names(data.get("snapshot"))
     try:
         data["log"] = sc_livelog.get_state(_slate_log_path, lambda code: place_name(code)[0])
     except Exception:
         data["log"] = None
+    data["names"] = _slate_gun_names(data.get("snapshot"), ((data["log"] or {}).get("loadout") or {}).values())
     return data
 
 
