@@ -16,11 +16,14 @@ uses [Semantic Versioning](https://semver.org/) (MAJOR.MINOR.PATCH).
   play. One CSR window records at a time.
 - **Detail and retention.** Full, Normal or Light (about 1.7, 0.4 and 0.1 MB per hour).
   Keep recordings forever, 1 year, 3 months or 1 month. Pick which groups to record.
-- **Live view** (sidebar). The Kestrel K-7 slate: flight, weapons, warnings, shields and
+- **Space limit.** Recordings stay under 1 GB by default (250 MB to 5 GB, or no limit).
+  Oldest go first. Career stats from them stay.
+- **Kestrel K-7 Flight Slate** (top of the sidebar). Click it for a QR code, scan it with
+  a tablet or phone on the same Wi-Fi. Open on this PC is still there. The slate: flight, weapons, warnings, shields and
   hull when seated, vitals, injuries and loadout on foot. Contracts, notices, place and
   ships destroyed nearby from Game.log. Tablet first, works on a phone.
-- **Phone access.** Turn it on in the Telemetry card for a QR code and a private link on
-  port 7890-7899. Live view only, LAN only. Windows asks to allow CSR on the network the
+- **Phone access.** Turn it on from the Kestrel K-7 drawer or the Telemetry card for a
+  private link on port 7890-7899. Kestrel only, LAN only. Windows asks to allow CSR on the network the
   first time.
 - **Career stats from telemetry.** Wallet on Economy. Flight records, How you fly and
   Weapons on Flight & Travel. Warnings & countermeasures on Combat. On foot & in seat and

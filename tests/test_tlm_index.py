@@ -91,6 +91,26 @@ class IndexTests(IndexBase):
         self.assertEqual(st.apply_retention(self.root, 30, now), 0)
         self.assertTrue(os.path.exists(bad))
 
+    def test_size_cap_deletes_oldest_first(self):
+        base = datetime(2026, 11, 20, 12, 0, 0)
+        a = self.rec(base, W2)
+        b = self.rec(base + timedelta(days=1), W2)
+        c = self.rec(base + timedelta(days=2), W2)
+        size = os.path.getsize(a)
+        self.assertEqual(st.apply_size_cap(self.root, None), 0)
+        self.assertEqual(st.apply_size_cap(self.root, size * 3), 0)
+        self.assertEqual(st.apply_size_cap(self.root, size * 2), 1)
+        self.assertEqual(st.recording_files(self.root), sorted([b, c]))
+        self.assertIn(os.path.basename(a), st.load_index(self.root))
+
+    def test_size_cap_skips_open_recording(self):
+        base = datetime(2026, 11, 20, 12, 0, 0)
+        a = self.rec(base, W2)
+        b = self.rec(base + timedelta(days=1), W2)
+        self.assertEqual(st.apply_size_cap(self.root, 1, skip={os.path.basename(a)}), 1)
+        self.assertEqual(st.recording_files(self.root), [a])
+        self.assertFalse(os.path.exists(b))
+
     def test_delete_all_indexes_first(self):
         p = self.rec(datetime(2026, 11, 24, 19, 0, 0), W2)
         self.assertEqual(st.delete_all_recordings(self.root), 1)

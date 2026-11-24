@@ -575,9 +575,10 @@ def remember_folder(path):
     return update_config(live_path=path)
 
 
-TLM_DEFAULTS = {"record": True, "detail": "normal", "keep_days": None,
+TLM_DEFAULTS = {"record": True, "detail": "normal", "keep_days": None, "max_mb": 1000,
                 "groups": sc_telemetry.DEFAULT_GROUPS, "phone": False, "phone_key": None}
 TLM_KEEP_DAYS = (None, 365, 90, 30)
+TLM_MAX_MB = (None, 5000, 2000, 1000, 500, 250)
 TLM_GROUP_NAMES = [g for g, _ in sc_telemetry.GROUPS] + ["other"]
 
 
@@ -606,7 +607,7 @@ def save_tlm_settings(changes):
 
 def validate_tlm_settings(body):
     """(True, cleaned) for a settings POST body, (False, error message) otherwise.
-    Only record, detail, keep_days, groups and phone are taken. Other keys are dropped."""
+    Only record, detail, keep_days, max_mb, groups and phone are taken. Other keys are dropped."""
     if not isinstance(body, dict):
         return False, "Bad request."
     out = {}
@@ -624,6 +625,11 @@ def validate_tlm_settings(body):
         if isinstance(v, bool) or v not in TLM_KEEP_DAYS:
             return False, "Keep must be forever, 365, 90 or 30 days."
         out["keep_days"] = v
+    if "max_mb" in body:
+        v = body["max_mb"]
+        if isinstance(v, bool) or v not in TLM_MAX_MB:
+            return False, "Space limit must be none, 5000, 2000, 1000, 500 or 250 MB."
+        out["max_mb"] = v
     if "groups" in body:
         g = body["groups"]
         if not isinstance(g, list) or not all(isinstance(x, str) for x in g):
@@ -8473,6 +8479,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
   .tlmcard .ol-t{margin-bottom:8px}
   .tlmrow{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:8px 0;font-size:13px;color:var(--muted)}
   .tlmrow>label,.tlmrow>.tlml{min-width:120px;color:var(--txt)}
+  .tlmrow.tlmhint{margin-top:-4px;font-size:12px}
   .tlmrow select{background:var(--panel2);color:var(--txt);border:1px solid var(--line);border-radius:8px;padding:5px 8px}
   .tlmgroups{display:flex;flex-wrap:wrap;gap:6px 16px}
   .tlmgroups label{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--muted)}
@@ -9695,6 +9702,16 @@ img[src*="xparrow-lite.pages.dev"]{object-fit:scale-down!important}
           <option value="90">3 months</option>
           <option value="30">1 month</option>
         </select></div>
+      <div class="tlmrow"><label for="tlmMax">Space limit</label>
+        <select id="tlmMax">
+          <option value="">No limit</option>
+          <option value="5000">5 GB</option>
+          <option value="2000">2 GB</option>
+          <option value="1000">1 GB</option>
+          <option value="500">500 MB</option>
+          <option value="250">250 MB</option>
+        </select></div>
+      <div class="tlmrow tlmhint">Oldest recordings go first. Career stats from them stay.</div>
       <div class="tlmrow"><span class="tlml">Groups</span><div class="tlmgroups" id="tlmGroups"></div></div>
       <div class="tlmrow"><span id="tlmDisk">—</span>
         <button class="mbtn ghost tlmbtn" id="tlmDeleteAll">Delete all recordings</button></div>
@@ -13483,6 +13500,7 @@ function tlmRender(st){
   $('#tlmRecord').checked=!!s.record;
   $('#tlmDetail').value=s.detail||'normal';
   $('#tlmKeep').value=s.keep_days==null?'':String(s.keep_days);
+  $('#tlmMax').value=s.max_mb==null?'':String(s.max_mb);
   const on=new Set(s.groups||[]);
   $('#tlmGroups').innerHTML=TLM_GROUP_LABELS.map(([k,l])=>
     `<label><input type="checkbox" data-g="${k}"${on.has(k)?' checked':''}>${esc(l)}</label>`).join('');
@@ -13505,7 +13523,8 @@ function tlmRender(st){
 // the parts that change while the game runs
 function tlmLive(st){
   $('#tlmRec').textContent=tlmRecText(st.recorder);
-  $('#tlmDisk').textContent='Recordings use '+tlmMB(st.disk||0)+'.';
+  const cap=st.settings&&st.settings.max_mb;
+  $('#tlmDisk').textContent='Recordings use '+tlmMB(st.disk||0)+(cap?' of '+(cap>=1000?cap/1000+' GB':cap+' MB'):'')+'.';
   $('#dmExportTlmLbl').textContent='Include telemetry recordings ('+tlmMB(st.disk||0)+')';
   const u=st.unmatched||[], box=$('#tlmUnmatched');
   if(u.length){
@@ -13523,6 +13542,7 @@ function tlmLoad(){
 $('#tlmRecord').onchange=e=>tlmSave({record:e.target.checked});
 $('#tlmDetail').onchange=e=>tlmSave({detail:e.target.value});
 $('#tlmKeep').onchange=e=>tlmSave({keep_days:e.target.value===''?null:+e.target.value});
+$('#tlmMax').onchange=e=>tlmSave({max_mb:e.target.value===''?null:+e.target.value});
 $('#tlmPhone').onchange=e=>tlmSave({phone:e.target.checked});
 $('#tlmNewLink').onclick=()=>{
   tlmErr('');
@@ -14301,8 +14321,11 @@ def serve(out_path, port=7878, explicit_logs=None, open_browser=True,
             skip = tlm_skip()
             before = sc_tlm_stats.load_index(tlm_root)
             sc_tlm_stats.refresh_index(tlm_root, skip=skip)
-            sc_tlm_stats.apply_retention(tlm_root, tlm_settings().get("keep_days"),
-                                         datetime.now(), skip=skip)
+            s = tlm_settings()
+            sc_tlm_stats.apply_retention(tlm_root, s.get("keep_days"), datetime.now(), skip=skip)
+            cap = s.get("max_mb")
+            if cap in TLM_MAX_MB and cap:
+                sc_tlm_stats.apply_size_cap(tlm_root, cap * 1024 * 1024, skip=skip)
             return sc_tlm_stats.load_index(tlm_root) != before
         except Exception as e:
             cerr(f"telemetry index error: {e}")
@@ -14731,7 +14754,7 @@ def serve(out_path, port=7878, explicit_logs=None, open_browser=True,
                     self._send(200, json.dumps({"ok": False, "error":
                         f"Could not save {config_path()}. Settings not changed."}))
                     return
-                if "keep_days" in res:
+                if "keep_days" in res or "max_mb" in res:
                     tlm_wake.set()             # apply the new retention off this thread
                 if "phone" in res:
                     phone_sync()

@@ -265,6 +265,20 @@ class ValidationTests(unittest.TestCase):
         self.assertTrue(ok)
         self.assertEqual(cleaned, {"keep_days": None})
 
+    def test_settings_validation_max_mb(self):
+        for v in (None, 5000, 1000, 250):
+            ok, cleaned = sc_stats.validate_tlm_settings({"max_mb": v})
+            self.assertTrue(ok, v)
+            self.assertEqual(cleaned, {"max_mb": v})
+        for v in (123, "1000", True, -1):
+            ok, err = sc_stats.validate_tlm_settings({"max_mb": v})
+            self.assertFalse(ok, v)
+            self.assertIsInstance(err, str)
+
+    def test_default_space_limit(self):
+        self.assertEqual(sc_stats.TLM_DEFAULTS["max_mb"], 1000)
+        self.assertIn(sc_stats.TLM_DEFAULTS["max_mb"], sc_stats.TLM_MAX_MB)
+
 
 class ChannelNowTests(_TmpDir):
     def test_tlm_channel_now(self):
