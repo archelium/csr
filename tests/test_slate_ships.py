@@ -25,6 +25,14 @@ class ShipDataTests(unittest.TestCase):
         self.assertEqual(sc_slate_ships.ship_payload("RSI_Apollo_Medivac_Tier_2")["speeds"],
                          sc_slate_ships.ship_payload("RSI_Apollo_Medivac")["speeds"])
 
+    def test_eject_from_game_records(self):
+        seats = {x[0]: x[3] for x in sc_slate_ships.ship_payload("DRAK_Marauder")["seats"]}
+        self.assertTrue(seats["hardpoint_seat_pilot"])
+
+    def test_eject_keeps_scunpacked_seats(self):
+        seats = {x[0]: x[3] for x in sc_slate_ships.ship_payload("AEGS_Gladius")["seats"]}
+        self.assertTrue(seats["hardpoint_seat_pilot"])
+
     def test_unknown(self):
         self.assertIsNone(sc_slate_ships.ship_payload("NOPE_Ship"))
         self.assertIsNone(sc_slate_ships.ship_payload(""))
