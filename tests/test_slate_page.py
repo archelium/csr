@@ -50,6 +50,17 @@ class PageTests(unittest.TestCase):
                   "partyRender()"):
             self.assertNotIn(s, self.html, s)
 
+    def test_no_mock_starting_values(self):
+        for v in ('id="spd">370<', 'id="bst">8%<', 'id="o2v">63%<', 'id="o2t">14 min<', "In space · no air",
+                  "DECOYS <b>48</b>", "QT <b>100%</b>", "Marauder · top turret", "NIGHT VIS", 'id="mode">SCM<',
+                  "${combat?'Ungoverned':'Armistice'}", "V/4.5", "v.o2/4.5", "STATE.master==='nav'?'NAV':'SCM'",
+                  "total 61%", "quantum off"):
+            self.assertNotIn(v, self.html, v)
+
+    def test_filled_elements_start_without_numbers(self):
+        for m in re.finditer(r'<\w+[^>]*\bid="([^"]+)"[^>]*>([^<]+)<', sc_slate.SLATE_BODY):
+            self.assertFalse(re.search(r"\d", m.group(2)), m.group(1) + ": " + m.group(2))
+
     def test_deck_is_state_only(self):
         for s in ("SET MODE", "<small>emote</small>", "request pad", "v_toggle_", "v_set_", "act:'"):
             self.assertNotIn(s, self.html, s)

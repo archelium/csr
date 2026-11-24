@@ -74,14 +74,15 @@ class LogState:
 
     def reset(self):
         self._st = {"place": None, "jurisdiction": None, "armistice": None, "notices": [], "contracts": [],
-                    "kills": [], "injuries": {}, "loadout": {}, "blueprints": 0}
+                    "kills": [], "injuries": {}, "loadout": {}, "blueprints": 0, "seq": 0}
+        self._bp_seen = set()     # one blueprint receipt is 2-4 lines sharing its notification id
 
     def state(self):
         s = self._st
         return {"place": s["place"], "jurisdiction": s["jurisdiction"], "armistice": s["armistice"],
                 "notices": [dict(n) for n in s["notices"]], "contracts": [dict(c) for c in s["contracts"]],
                 "kills": [dict(k) for k in s["kills"]], "injuries": dict(s["injuries"]),
-                "loadout": dict(s["loadout"]), "blueprints": s["blueprints"]}
+                "loadout": dict(s["loadout"]), "blueprints": s["blueprints"], "seq": s["seq"]}
 
     def feed(self, line, t=None):
         if t is None:
@@ -104,7 +105,9 @@ class LogState:
             if m and p:
                 s["loadout"][p.group(1)] = m.group(1).strip()
             return
-        if BLUEPRINT_RE.search(line):
+        m = BLUEPRINT_RE.search(line)
+        if m and (m.group(2), m.group(1)) not in self._bp_seen:
+            self._bp_seen.add((m.group(2), m.group(1)))
             s["blueprints"] += 1
         m = NOTIF_RE.search(line)
         if m:
@@ -115,6 +118,7 @@ class LogState:
             return
         s = self._st
         s["notices"].append({"t": t, "text": txt, "group": group_of(txt)})
+        s["seq"] += 1             # notices are capped, the count of notices seen is not
         del s["notices"][:-MAX_NOTICES]
         low = txt.lower()
         if low.startswith("entering armistice zone"):
