@@ -2496,8 +2496,8 @@ const anc=x=>x>455?'end':x<145?'start':'middle';
 const gm=(a,b)=>Math.hypot(a[3]-b[3],a[4]-b[4]);
 const esc=t=>String(t).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/'/g,'&#39;');
 function objDist(){const a=ent(HERE.sys,HERE.name),b=ent(OBJ.sys,OBJ.name);return a&&b&&HERE.sys===OBJ.sys?Math.round(gm(a,b)):null}
-function youMark(x,y,lab){const pn=partyNear(), pd=Array.from({length:pn},(_,i)=>{const a=-Math.PI/2+i*0.9;return `<circle cx="${(Math.cos(a)*13).toFixed(1)}" cy="${(Math.sin(a)*13).toFixed(1)}" r="2.6" fill="#5be69a" stroke="#06121a"/>`}).join('');
- return `<g transform="translate(${x} ${y})">${pd}</g>`+(pn?`<text x="${x+16}" y="${y-10}" font-size="10" fill="#5be69a">+${pn} party</text>`:'')+`<g transform="translate(${x} ${y})"><circle r="16" fill="none" stroke="#5bd1e6" stroke-opacity=".35"><animate attributeName="r" values="8;20;8" dur="2.4s" repeatCount="indefinite"/></circle><circle r="7" fill="none" stroke="#5bd1e6" stroke-width="2"/><circle r="3" fill="#5bd1e6"/></g><text x="${x}" y="${y+24}" font-size="12" fill="#eafcff" text-anchor="middle">${esc(lab)}</text>`}
+function youMark(x,y,lab,dy){const pn=partyNear(), pd=Array.from({length:pn},(_,i)=>{const a=-Math.PI/2+i*0.9;return `<circle cx="${(Math.cos(a)*13).toFixed(1)}" cy="${(Math.sin(a)*13).toFixed(1)}" r="2.6" fill="#5be69a" stroke="#06121a"/>`}).join('');
+ return `<g transform="translate(${x} ${y})">${pd}</g>`+(pn?`<text x="${x+16}" y="${y-10}" font-size="10" fill="#5be69a">+${pn} party</text>`:'')+`<g transform="translate(${x} ${y})"><circle r="16" fill="none" stroke="#5bd1e6" stroke-opacity=".35"><animate attributeName="r" values="8;20;8" dur="2.4s" repeatCount="indefinite"/></circle><circle r="7" fill="none" stroke="#5bd1e6" stroke-width="2"/><circle r="3" fill="#5bd1e6"/></g><text x="${x}" y="${y+(dy||24)}" font-size="12" fill="#eafcff" text-anchor="middle">${esc(lab)}</text>`}
 function objMark(x,y,lab){return `<g transform="translate(${x} ${y})"><path d="M0 -9 L9 0 L0 9 L-9 0Z" fill="none" stroke="#ffb347" stroke-width="2"/><circle r="2.5" fill="#ffb347"/></g><text x="${x}" y="${y-14}" font-size="12" fill="#ffb347" text-anchor="middle">${esc(lab)}</text>`}
 function drawSystem(s){
  const E=STARMAP[s]||[], cx=300, cy=210;
@@ -2522,7 +2522,7 @@ function drawSystem(s){
  if(a&&b){const[x1,y1]=P(a),[x2,y2]=OFF(b);o+=`<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="#ffb347" stroke-width="2" stroke-dasharray="6 5"/>`}
  o+=PINS.map(({m,q})=>lead(q)+numMark(q[0],q[1],m.n)).join('');
  if(b){const q=OFF(b),[x,y]=q;o+=lead(q);o+=objMark(x,y,pinned+' · '+shortPlace(OBJ.name)+(a?' · '+objDist()+' Gm':''))}
- if(a){const[x,y]=P(a);o+=youMark(x,y,'YOU · '+HERE.name)}
+ if(a){const[x,y]=P(a),near=E.some(r=>r[1]==='planet'&&Math.hypot(P(r)[0]-x,P(r)[1]-y)<40);o+=youMark(x,y,'YOU · '+HERE.name,near?38:24)}
  if(s==='nyx')o+=`<text x="300" y="414" font-size="11" fill="#7aa3ae" text-anchor="middle" letter-spacing=".1em">OPENS WITH 5.0</text>`;
  return o;
 }

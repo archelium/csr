@@ -2,7 +2,8 @@
 
   py -3 tools/slate_dev.py --fixture takeoff [--port 7895] [--log path/to/Game.log] [--state waiting] [--range -170:]
 
-Serves /live, /api/telemetry/live and /api/telemetry/ship like CSR does, with no key.
+Serves /live, /api/telemetry/live and /api/telemetry/ship like CSR does, with no key,
+plus /slate_audit.js (load it in the page, then auditLive({touch: true})).
 For layout work and the browser audit only. Nothing here ships in the exe."""
 import argparse
 import http.server
@@ -76,6 +77,9 @@ def main():
             elif p.path == "/api/telemetry/ship":
                 body = sc_stats.tlm_api_get(self.path, None, None, None)
                 self._send(404, "{}") if body is None else self._send(200, body)
+            elif p.path == "/slate_audit.js":
+                with open(os.path.join(HERE, "tools", "slate_audit.js"), encoding="utf-8") as fh:
+                    self._send(200, fh.read(), "text/javascript; charset=utf-8")
             else:
                 self._send(404, "{}")
 

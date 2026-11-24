@@ -3,6 +3,7 @@ import os
 import re
 import sys
 import unittest
+import unittest.mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import sc_slate  # noqa: E402
@@ -66,6 +67,21 @@ class PageTests(unittest.TestCase):
     def test_polls_live_and_ship(self):
         self.assertIn("/api/telemetry/live", self.html)
         self.assertIn("/api/telemetry/ship?c=", self.html)
+
+
+class SwitchOverTests(unittest.TestCase):
+    def test_live_html_is_the_slate(self):
+        import sc_stats
+        with unittest.mock.patch.object(sc_stats.sc_names, "fetch_google_fonts_embed", lambda *a, **k: "/*fonts*/"):
+            h = sc_stats.LIVE_HTML()
+        self.assertIn("KESTREL", h)
+        self.assertIn("/*fonts*/", h)
+        self.assertNotIn("/*__FONTS__*/", h)
+        self.assertNotIn("<title>CSR · Live</title>", h)
+
+    def test_old_template_gone(self):
+        import sc_stats
+        self.assertFalse(hasattr(sc_stats, "LIVE_TEMPLATE"))
 
 
 if __name__ == "__main__":

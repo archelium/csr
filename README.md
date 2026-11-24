@@ -233,6 +233,11 @@ Flight & Travel, Combat and Activity, and a **Live view** page in the sidebar.
   backup. It takes effect on the next game launch.
 - **Disk use** per hour of play: Full 1.7 MB, Normal 0.4 MB, Light 0.1 MB. Keep
   recordings forever, 1 year, 3 months or 1 month.
+- **Live view** is the Kestrel K-7 slate, sized for a tablet and fine on a phone.
+  Seated: speed, fuel, G, IFCS and power, guns, countermeasures, warnings, shields and
+  hull (SC 5.0). On foot and EVA: vitals, injuries, suit, loadout, last ship. Contracts,
+  HUD notices, where you are and ships destroyed nearby come from Game.log. Keys show
+  state only. Nothing on the page sends input to the game.
 - **Phone access** is off by default. When on, the card shows a QR code and a private
   link on port 7890-7899. It shows the live view only and works on your LAN only.
 - **CSR must be open while you play.** Nothing is recorded while it's closed.
