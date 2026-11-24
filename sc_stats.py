@@ -9255,6 +9255,44 @@ nav a::after{background:var(--menu-bg);border-color:var(--glass-line);box-shadow
 .bxtot .bxkey span{display:inline-flex;align-items:center;gap:6px}
 .bxtot .bxkey .bsq{width:14px;height:14px;cursor:default;border-radius:3px}
 .bsq[data-bpplan]:hover,.bdot[data-bpplan]:hover{outline:2px solid var(--cyan);outline-offset:1px}
+/* the Kestrel K-7 entry: first in the sidebar, amber, a device, not a page */
+#nav a.nav-kestrel{margin:0 0 10px;min-height:52px;color:var(--amber);border:1px solid rgba(244,169,42,.45);border-left-width:1px;
+  background:linear-gradient(90deg,rgba(244,169,42,.16),rgba(244,169,42,.03))}
+#nav a.nav-kestrel:hover{background:linear-gradient(90deg,rgba(244,169,42,.26),rgba(244,169,42,.06));color:var(--amber)}
+#nav a.nav-kestrel .kt{display:flex;flex-direction:column;font-style:normal;line-height:1.2;min-width:0}
+#nav a.nav-kestrel .kt b{font-weight:700;letter-spacing:.02em}
+#nav a.nav-kestrel .kt small{font-family:var(--font-mono);font-size:10.5px;letter-spacing:.04em;color:var(--muted);white-space:nowrap}
+@media(max-width:760px){ #nav a.nav-kestrel{box-shadow:0 0 0 2px rgba(244,169,42,.45)} #nav a.nav-kestrel .kt{display:none} }
+/* the Kestrel K-7 code: a drawer beside the sidebar entry, a bottom sheet on phones */
+.kpop{display:none;position:fixed;z-index:61;width:min(430px,calc(100vw - 24px));padding:18px 18px 14px;
+  background:var(--menu-bg,var(--panel));border:1px solid rgba(244,169,42,.45);border-radius:var(--r-lg,16px);
+  box-shadow:var(--menu-shadow,0 24px 70px rgba(0,0,0,.55));animation:kin .16s ease-out}
+.kpop.on{display:block}
+.kpop::before{content:"";position:absolute;left:-7px;top:calc(var(--ka,28px) - 6px);width:12px;height:12px;
+  background:inherit;border-left:1px solid rgba(244,169,42,.45);border-bottom:1px solid rgba(244,169,42,.45);transform:rotate(45deg)}
+.kpop.sheet{left:0;right:0;bottom:0;top:auto;width:auto;max-height:88vh;overflow:auto;border-radius:18px 18px 0 0;
+  border-bottom:0;animation:kup .2s ease-out;padding-bottom:max(14px,env(safe-area-inset-bottom))}
+.kpop.sheet::before{display:none}
+@keyframes kin{from{opacity:0;transform:translateX(-6px)}to{opacity:1;transform:none}}
+@keyframes kup{from{transform:translateY(30px);opacity:0}to{transform:none;opacity:1}}
+.kx{position:absolute;top:8px;right:10px;background:none;border:0;color:var(--muted);font-size:22px;line-height:1;cursor:pointer;padding:4px 8px}
+.kx:hover{color:var(--txt)}
+.kh{font-family:var(--font-display);font-weight:700;font-size:17px;letter-spacing:.4px}
+.khead{display:flex;gap:12px;align-items:center;margin:0 26px 14px 0}
+.khead .kic{display:grid;place-items:center;width:40px;height:40px;border-radius:12px;color:var(--amber);background:rgba(244,169,42,.12);flex:none}
+.khead .kic svg{width:22px;height:22px}
+.ksub{font-size:13.5px;color:var(--muted);margin-top:2px}
+.kstep{font-size:14px;line-height:1.5;color:var(--txt);margin:0 0 14px}
+.kqr{display:flex;gap:18px;align-items:center;flex-wrap:wrap}
+.kcode{background:#fff;border-radius:10px;padding:8px;width:168px;height:168px;flex:none;box-sizing:border-box}
+.kcode svg{width:100%;height:100%;display:block}
+.ksteps{margin:0;padding-left:18px;font-size:13px;line-height:1.55;color:var(--txt);flex:1;min-width:170px}
+.kurl{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:14px 0 8px}
+.kurl code{font-family:var(--font-mono);font-size:12px;color:var(--cyan);word-break:break-all;flex:1 1 100%}
+.kstat{margin-top:12px;font-family:var(--font-mono);font-size:12px;color:var(--muted)}
+.kerr{color:var(--red);font-size:13px;min-height:4px;margin-top:6px}
+.kacts{display:flex;align-items:center;gap:14px;margin-top:8px;font-size:12.5px}
+.kacts .foot-link:first-child{margin-right:auto}
 /* xparrow-lite icons are 128 px on transparent: shown whole, never blown up */
 img[src*="xparrow-lite.pages.dev"]{object-fit:scale-down!important}
 /* their pictures are see-through: hide the placeholder icon behind them */
@@ -9473,6 +9511,7 @@ img[src*="xparrow-lite.pages.dev"]{object-fit:scale-down!important}
         <div class="brand-sub">CITIZEN SERVICE RECORD</div></div>
     </button>
     <nav id="nav">
+      <a href="#kestrel" id="navKestrel" class="nav-kestrel" data-label="Kestrel K-7" style="display:none" title="Kestrel K-7 Flight Slate: open it on a tablet or phone"><span>📟</span><em class="kt"><b>Kestrel K-7</b><small>Flight Slate</small></em></a>
       <a data-sec="overview" data-label="Overview" class="active"><span>📊</span> Overview</a>
       <a data-sec="flight" data-label="Flight &amp; Travel"><span>🚀</span> Flight &amp; Travel</a>
       <a data-sec="combat" data-label="Combat"><span>💀</span> Combat</a>
@@ -9483,7 +9522,6 @@ img[src*="xparrow-lite.pages.dev"]{object-fit:scale-down!important}
       <a data-sec="activity" data-label="Activity"><span>📆</span> Activity</a>
       <a data-sec="system" data-label="Your Machine"><span>🖥️</span> Your Machine</a>
       <a data-sec="stability" data-label="Stability &amp; Crashes"><span>🩺</span> Stability<i class="navlive" id="navLive" title="CSR is watching your logs"></i></a>
-      <a href="/live" target="_blank" id="navLiveView" data-label="Live view" style="display:none"><span>📡</span> Live view</a>
       <a data-sec="orgs" data-label="Orgs &amp; Profile"><span>🪪</span> Orgs &amp; Profile</a>
     </nav>
     <div class="side-toc" id="sideToc" aria-label="On this page" hidden></div>
@@ -9675,6 +9713,18 @@ img[src*="xparrow-lite.pages.dev"]{object-fit:scale-down!important}
     <div class="mb" id="dmMsg" style="min-height:18px;margin-top:4px"></div>
     <div class="mactions"><button class="mbtn ghost" id="dmClose">Close</button></div>
   </div>
+</div>
+
+<div class="kpop" id="kModal" role="dialog" aria-labelledby="kTitle">
+  <button class="kx" id="kClose" title="Close" aria-label="Close">×</button>
+  <div class="khead"><span class="kic" id="kIc"></span>
+    <div><div class="kh" id="kTitle">Kestrel K-7 Flight Slate</div>
+      <div class="ksub">Scan with a tablet or phone on the same Wi-Fi.</div></div></div>
+  <div id="kBody"><div class="dmnote">Loading…</div></div>
+  <div class="kerr" id="kErr"></div>
+  <div class="kacts">
+    <a class="foot-link" id="kSettings" href="#">Telemetry settings</a>
+    <a class="foot-link" id="kPc" href="/live" target="_blank" rel="noopener">Open on this PC</a></div>
 </div>
 
 <div class="modal-back" id="aboutModal">
@@ -9909,6 +9959,7 @@ const ICON = {
   star:_SVG('<path d="M12 3.4l2.6 5.7 6.2.7-4.6 4.2 1.3 6.1L12 17l-5.5 3.1 1.3-6.1L3.2 9.8l6.2-.7z"/>'),
   starOn:_SVG('<path d="M12 3.4l2.6 5.7 6.2.7-4.6 4.2 1.3 6.1L12 17l-5.5 3.1 1.3-6.1L3.2 9.8l6.2-.7z" fill="currentColor"/>'),
   blueprints:_SVG('<rect x="3.5" y="3.5" width="17" height="17" rx="1.8"/><path d="M3.5 9h17"/><path d="M9 9v11.5"/><path d="M12.5 13h5M12.5 16.5h3.5"/>'),
+  tablet:_SVG('<rect x="2.8" y="5" width="18.4" height="14" rx="2.2"/><path d="M6 8.5h9M6 11.5h12M6 14.5h7"/><circle cx="18.6" cy="15.6" r=".9" fill="currentColor" stroke="none"/>'),
   search:_SVG('<circle cx="10.5" cy="10.5" r="6.2"/><path d="M15.2 15.2l5.3 5.3"/>'),
   helmet:_SVG('<path d="M4 15.5a8 8 0 0116 0V19H4z"/><path d="M7.5 13.2h9l-1 3.3h-7z"/>'),
   mag:_SVG('<rect x="8" y="2.8" width="8" height="18.4" rx="1.6"/><path d="M8 8.4h8M8 13.6h8"/>')
@@ -12853,8 +12904,9 @@ document.addEventListener('keydown',e=>{
 });
 
 document.querySelectorAll('#nav a').forEach(a=>{
-  if(!a.dataset.sec){   // plain links (Live view) open as-is
-    const ls=a.querySelector('span'); if(ls&&a.id==='navLiveView') ls.innerHTML=ICON.satellite;
+  if(!a.dataset.sec){   // the Kestrel K-7 opens its own window, not a page
+    const ls=a.querySelector('span'); if(ls&&a.id==='navKestrel') ls.innerHTML=ICON.tablet;
+    if(a.id==='navKestrel') a.onclick=e=>{ e.preventDefault(); kestrelOpen(); };
     return; }
   const s=a.querySelector('span'); if(s&&ICON[a.dataset.sec]) s.innerHTML=ICON[a.dataset.sec];  // swap emoji → HUD glyph
   a.onclick=(e)=>{ e.preventDefault();
@@ -13035,13 +13087,77 @@ $('#themeBtn').onclick=()=>{
 
 // ---- local-app mode: in-page Refresh (only when served by the CSR app) ----
 function modal(id,on){ const m=$('#'+id); if(m) m.classList.toggle('on', on); }
+// ---- Kestrel K-7: made for a tablet. Opening it shows a code to scan on a device on the
+// same network, with the PC as the fallback.
+function kestrelPlace(){
+  const pop=$('#kModal'), a=$('#navKestrel');
+  if(!pop.classList.contains('on')) return;
+  pop.classList.toggle('sheet', innerWidth<=760);
+  if(innerWidth<=760 || !a){ pop.style.left=pop.style.top=''; return; }
+  const r=a.getBoundingClientRect();
+  pop.style.left=Math.round(r.right+12)+'px';
+  pop.style.top=Math.round(Math.max(12, Math.min(r.top, innerHeight-pop.offsetHeight-12)))+'px';
+  pop.style.setProperty('--ka', Math.round(r.top+r.height/2-parseFloat(pop.style.top))+'px');
+}
+function kestrelOpen(){
+  const pop=$('#kModal');
+  if(pop.classList.contains('on')){ $('#kClose').click(); return; }
+  modal('kModal', true); kestrelPlace();
+  const ic=$('#kIc'); if(ic) ic.innerHTML=ICON.tablet;
+  $('#kErr').textContent='';
+  kestrelLoad();
+}
+function kestrelLoad(){
+  return fetch('/api/telemetry/status',{cache:'no-store'}).then(r=>r.json()).then(st=>{ kestrelRender(st); kestrelPlace(); })
+    .catch(()=>{ $('#kBody').innerHTML='<div class="dmnote">CSR isn’t running. Start CSR.exe and try again.</div>'; });
+}
+function kestrelRender(st){
+  const s=(st&&st.settings)||{}, ph=(st&&st.phone)||{}, body=$('#kBody');
+  const rec=st&&st.recorder ? `<div class="kstat">${esc(tlmRecText(st.recorder))}</div>` : '';
+  if(!s.phone){
+    body.innerHTML=`<div class="kstep"><b>Phone access is off.</b> Turning it on gives Kestrel a private link on your home
+      network, on port 7890-7899. Only Kestrel is reachable through it. Nothing leaves your network.</div>
+      <button class="mbtn go" id="kOn">Turn on and show the code</button>${rec}`;
+    $('#kOn').onclick=()=>{ $('#kOn').disabled=true;
+      tlmPost('/api/telemetry/settings',{phone:true}).then(res=>{
+        if(!res.ok) $('#kErr').textContent=res.error||'Could not turn it on.';
+        kestrelLoad(); }).catch(()=>{ $('#kErr').textContent='Lost contact with CSR.'; }); };
+    return;
+  }
+  if(!ph.url){
+    body.innerHTML=`<div class="kstep">${ph.why==='ports'?'Phone access didn’t start. Ports 7890-7899 are in use.'
+      :ph.why==='config'?'Phone access didn’t start. CSR can’t save the link key to csr_config.json.'
+      :'Phone access didn’t start.'}</div>${rec}`;
+    return;
+  }
+  body.innerHTML=`<div class="kqr"><div class="kcode">${ph.qr_svg||''}</div>
+      <ol class="ksteps"><li>Connect your tablet or phone to the same Wi-Fi as this PC.</li>
+        <li>Scan the code with its camera, or open the link.</li>
+        <li>Add it to the home screen for a full-screen slate.</li></ol></div>
+    <div class="kurl"><code id="kUrl">${esc(ph.url)}</code><button class="mbtn ghost tlmbtn" id="kCopy">Copy link</button>
+      <button class="mbtn ghost tlmbtn" id="kNew" title="Old links and devices stop working">New link</button></div>
+    <div class="dmnote">The first time, Windows asks to allow CSR on your network. Allow it on private networks.</div>${rec}`;
+  $('#kCopy').onclick=()=>copyText(ph.url, ok=>{ $('#kCopy').textContent=ok?'Copied':'Copy failed';
+    setTimeout(()=>{ const b=$('#kCopy'); if(b) b.textContent='Copy link'; },1600); });
+  $('#kNew').onclick=()=>confirmBtn($('#kNew'),'Confirm. Old links stop working.',()=>{
+    tlmPost('/api/telemetry/new-link').then(res=>{ if(!res.ok) $('#kErr').textContent=res.error||'Could not save.'; kestrelLoad(); })
+      .catch(()=>{ $('#kErr').textContent='Lost contact with CSR.'; }); });
+}
+$('#kClose').onclick=()=>{ modal('kModal', false); if(location.hash==='#kestrel') history.replaceState(null,'',location.pathname+location.search); };
+document.addEventListener('mousedown', e=>{ const pop=$('#kModal');
+  if(pop.classList.contains('on') && !pop.contains(e.target) && !e.target.closest('#navKestrel')) $('#kClose').click(); });
+addEventListener('resize', kestrelPlace);
+document.addEventListener('keydown', e=>{ if(e.key==='Escape' && $('#kModal').classList.contains('on')) $('#kClose').click(); });
+$('#kSettings').onclick=e=>{ e.preventDefault(); modal('kModal', false); $('#dataBtn').click();
+  setTimeout(()=>{ const c=$('#tlmCard'); if(c) c.scrollIntoView({block:'start'}); }, 150); };
 let SERVED=false;
 // probe the local server; if absent (opened as a plain file), the buttons stay hidden
 fetch('/api/status').then(r=>r.ok?r.json():Promise.reject()).then(s=>{
   // SERVED flips here, asynchronously — anything whose visibility depends on it has
   // to be told again, or it stays hidden from the one render that ran before this.
   SERVED=true; $('#refreshBtn').style.display=''; $('#dataBtn').style.display='';
-  $('#navLiveView').style.display='';
+  $('#navKestrel').style.display='';
+  if(location.hash==='#kestrel') kestrelOpen();
   renderBell();
   if(s&&s.sessions!=null) $('#dmCount').textContent=fmt(s.sessions)+' sessions';
   if(s&&s.online){ ONLINE=s.online; olWhen(); }
@@ -14000,6 +14116,7 @@ def start_tray(url, refresh, quit_):
         m.set_autostart(not m.autostart_enabled())
 
     items = [("!Open dashboard", open_dash),
+             ("Kestrel K-7 (show code)", lambda: webbrowser.open(url + "#kestrel")),
              ("Refresh logs", refresh),
              None,
              ("Start with Windows", (toggle_autostart, m.autostart_enabled)),
