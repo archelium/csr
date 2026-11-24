@@ -11,3 +11,5 @@
 *.png binary
 *.zip binary
 *.exe binary
+*.bin binary
+*.desc binary

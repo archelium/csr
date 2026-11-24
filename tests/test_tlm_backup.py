@@ -1,0 +1,236 @@
+"""Backup and transfer: archive export with telemetry, zip round trip, import."""
+import io
+import json
+import os
+import sys
+import tempfile
+import unittest
+import zipfile
+from unittest import mock
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import sc_stats  # noqa: E402
+import sc_tlm_stats as st  # noqa: E402
+from tests.test_tlm_index import IndexBase, W2  # noqa: E402
+from datetime import datetime  # noqa: E402
+
+
+class BackupBase(IndexBase):
+    def setUp(self):
+        super().setUp()
+        self.other = tempfile.TemporaryDirectory()
+        self.addCleanup(self.other.cleanup)
+        self.root_b = os.path.join(self.other.name, "telemetry")
+        os.makedirs(self.root_b)
+        self.arch = os.path.join(self.tmp.name, "arch.json")
+        with open(self.arch, "w", encoding="utf-8") as f:
+            json.dump({"v": 1, "app": "CSR", "version": "x", "saved": "now", "sessions": []}, f)
+        self.rec(datetime(2026, 5, 1, 10, 0, 0), W2)
+        self.rec(datetime(2026, 5, 2, 11, 0, 0), W2, channel="PTU")
+        st.refresh_index(self.root)
+
+    def payload(self, rec):
+        if not rec:
+            return sc_stats.export_payload(False, root=self.root, archive_file=self.arch)
+        tmp, name = sc_stats.export_zip_file(self.root, self.arch)
+        self.addCleanup(lambda: os.path.exists(tmp) and os.remove(tmp))
+        with open(tmp, "rb") as f:
+            return f.read(), "application/zip", name
+
+
+class Export(BackupBase):
+    def test_json_export_has_summaries(self):
+        body, ctype, name = self.payload(False)
+        obj = json.loads(body)
+        self.assertEqual(ctype, "application/json")
+        self.assertTrue(name.endswith(".json"))
+        self.assertEqual({e["file"] for e in obj["telemetry"]},
+                         set(st.load_index(self.root)))
+        self.assertEqual(len(obj["telemetry"]), 2)
+
+    def test_zip_members(self):
+        body, ctype, name = self.payload(True)
+        self.assertEqual(ctype, "application/zip")
+        self.assertTrue(name.endswith(".zip"))
+        names = zipfile.ZipFile(io.BytesIO(body)).namelist()
+        self.assertEqual(sum(n.startswith("CSR-archive-") and n.endswith(".json") for n in names), 1)
+        self.assertIn("telemetry/LIVE/20260501-100000.jsonl.gz", names)
+        self.assertIn("telemetry/PTU/20260502-110000.jsonl.gz", names)
+
+
+class Import(BackupBase):
+    def test_zip_roundtrip(self):
+        body, _c, _n = self.payload(True)
+        zpath = os.path.join(self.other.name, "in.zip")
+        with open(zpath, "wb") as f:
+            f.write(body)
+        res = sc_stats.import_zip_file(zpath, root=self.root_b, archive_file=None, merge=False)
+        self.assertEqual(res["telemetry"], 2)
+        self.assertEqual(set(st.load_index(self.root_b)), set(st.load_index(self.root)))
+        self.assertEqual([os.path.relpath(p, self.root_b) for p in st.recording_files(self.root_b)],
+                         [os.path.relpath(p, self.root) for p in st.recording_files(self.root)])
+
+    def test_old_export_imports(self):
+        self.assertEqual(sc_stats.import_telemetry(None, {}, root=self.root_b), 0)
+        self.assertEqual(st.load_index(self.root_b), {})
+
+    def test_import_skips_existing(self):
+        entries = list(st.load_index(self.root).values())
+        with open(st.recording_files(self.root)[0], "rb") as f:
+            data = f.read()
+        files = {"LIVE/20260501-100000.jsonl.gz": data}
+        self.assertEqual(sc_stats.import_telemetry(entries, files, root=self.root_b), 2)
+        self.assertEqual(sc_stats.import_telemetry(entries, files, root=self.root_b), 0)
+
+    def test_zip_slip_ignored(self):
+        zpath = os.path.join(self.other.name, "evil.zip")
+        with zipfile.ZipFile(zpath, "w") as z:
+            z.writestr("CSR-archive-2026-01-01.json", json.dumps({"sessions": []}))
+            z.writestr("telemetry/../../evil.jsonl.gz", b"x")
+            z.writestr("/abs/x.jsonl.gz", b"x")
+            z.writestr("telemetry/LIVE/..\evil.jsonl.gz", b"x")
+            z.writestr("telemetry/LIVE/notes.txt", b"x")
+            z.writestr("telemetry/LIVE/ok.jsonl.gz", b"x")
+        res = sc_stats.import_zip_file(zpath, root=self.root_b, archive_file=None, merge=False)
+        self.assertEqual(res["telemetry"], 1)
+        self.assertEqual([d for d in os.listdir(self.root_b) if os.path.isdir(os.path.join(self.root_b, d))], ["LIVE"])
+        self.assertEqual(os.listdir(os.path.join(self.root_b, "LIVE")), ["ok.jsonl.gz"])
+        self.assertFalse(os.path.exists(os.path.join(self.other.name, "evil.jsonl.gz")))
+
+    def test_zip_without_archive_json_fails(self):
+        zpath = os.path.join(self.other.name, "bad.zip")
+        with zipfile.ZipFile(zpath, "w") as z:
+            z.writestr("hello.txt", b"x")
+        with self.assertRaises(ValueError):
+            sc_stats.import_zip_file(zpath, root=self.root_b, archive_file=None, merge=False)
+
+    def _zip(self, members):
+        zpath = os.path.join(self.other.name, "t.zip")
+        with zipfile.ZipFile(zpath, "w") as z:
+            z.writestr("CSR-archive-2026-01-01.json", json.dumps({"sessions": []}))
+            for k, v in members.items():
+                z.writestr(k, v)
+        return zpath
+
+    def _imp(self, zpath):
+        return sc_stats.import_zip_file(zpath, root=self.root_b, archive_file=None, merge=False)
+
+    def test_member_over_limit_stops(self):
+        zpath = self._zip({"telemetry/LIVE/a.jsonl.gz": b"x" * 100,
+                           "telemetry/LIVE/b.jsonl.gz": b"x" * 10})
+        with mock.patch.object(sc_stats, "TLM_MEMBER_MAX", 50):
+            with self.assertRaises(sc_stats.ImportTooLarge) as cm:
+                self._imp(zpath)
+        self.assertIn("too large", str(cm.exception))
+        self.assertEqual(st.recording_files(self.root_b), [])
+        self.assertEqual([f for d in os.listdir(self.root_b) if os.path.isdir(os.path.join(self.root_b, d))
+                          for f in os.listdir(os.path.join(self.root_b, d))], [])
+
+    def test_lying_header_is_caught(self):
+        zpath = self._zip({"telemetry/LIVE/a.jsonl.gz": b"x" * 100})
+        real = zipfile.ZipInfo
+        orig = sc_stats.zipfile.ZipFile.infolist
+
+        def liar(zf):
+            out = orig(zf)
+            for i in out:
+                if i.filename.startswith("telemetry/"):
+                    i.file_size = 1
+            return out
+        with mock.patch.object(sc_stats, "TLM_MEMBER_MAX", 50),                 mock.patch.object(zipfile.ZipFile, "infolist", liar):
+            with self.assertRaises((sc_stats.ImportTooLarge, zipfile.BadZipFile)):
+                self._imp(zpath)
+        self.assertEqual(st.recording_files(self.root_b), [])
+        self.assertEqual(os.listdir(os.path.join(self.root_b, "LIVE")), [])
+
+    def test_understated_size_caught_while_copying(self):
+        src = {"LIVE/a.jsonl.gz": lambda: (io.BytesIO(b"x" * 100), 1)}
+        with mock.patch.object(sc_stats, "TLM_MEMBER_MAX", 50):
+            with self.assertRaises(sc_stats.ImportTooLarge):
+                sc_stats.import_telemetry([], src, root=self.root_b)
+        self.assertEqual(os.listdir(os.path.join(self.root_b, "LIVE")), [])
+
+    def test_total_limit(self):
+        zpath = self._zip({"telemetry/LIVE/a.jsonl.gz": b"x" * 40,
+                           "telemetry/LIVE/b.jsonl.gz": b"x" * 40})
+        with mock.patch.object(sc_stats, "TLM_TOTAL_MAX", 60):
+            with self.assertRaises(sc_stats.ImportTooLarge):
+                self._imp(zpath)
+
+    def test_archive_member_cap(self):
+        zpath = self._zip({})
+        with mock.patch.object(sc_stats, "ARCHIVE_MEMBER_MAX", 5):
+            with self.assertRaises(ValueError):
+                self._imp(zpath)
+
+    def test_entry_whitelist(self):
+        good = {"file": "20260501-100000.jsonl.gz", "channel": "LIVE", "started": "2026-05-01T10:00:00",
+                "ended": None, "build": "1", "groups": ["flight"], "v": 3, "sum": {"a": 1},
+                "evil": "x", "__proto__": {}}
+        bad_type = {"file": "20260502-100000.jsonl.gz", "v": "3"}
+        bad_group = {"file": "20260503-100000.jsonl.gz", "groups": ["nope"]}
+        bad_chan = {"file": "20260504-100000.jsonl.gz", "channel": "../x"}
+        self.assertEqual(sc_stats.import_telemetry(
+            [good, bad_type, bad_group, bad_chan, "x", {"file": "CON.jsonl.gz"}], {},
+            root=self.root_b), 1)
+        idx = st.load_index(self.root_b)
+        self.assertEqual(list(idx), ["20260501-100000.jsonl.gz"])
+        self.assertNotIn("evil", idx["20260501-100000.jsonl.gz"])
+        self.assertNotIn("__proto__", idx["20260501-100000.jsonl.gz"])
+
+    def test_unhashable_groups_rejected_import_continues(self):
+        es = [{"file": "20260501-100000.jsonl.gz", "groups": [[1]]},
+              {"file": "20260502-100000.jsonl.gz", "groups": [{}]},
+              {"file": "20260503-100000.jsonl.gz", "groups": ["flight"]}]
+        self.assertEqual(sc_stats.import_telemetry(es, {}, root=self.root_b), 1)
+
+    def test_trailing_newline_rejected(self):
+        nl = chr(10)
+        self.assertEqual(sc_stats.import_telemetry(
+            [{"file": "20260501-100000.jsonl.gz" + nl},
+             {"file": "20260502-100000.jsonl.gz", "channel": "LIVE" + nl}],
+            {"LIVE" + nl + "/a.jsonl.gz": b"x", "LIVE/b.jsonl.gz" + nl: b"x"},
+            root=self.root_b), 0)
+
+    def test_big_sum_rejected(self):
+        e = {"file": "20260501-100000.jsonl.gz", "sum": {"a": "x" * 300000}}
+        self.assertEqual(sc_stats.import_telemetry([e], {}, root=self.root_b), 0)
+
+    def test_sum_values_checked(self):
+        ok_sum = {"dist_m": 5.0, "takeoffs": 2, "warn": {"pwr": 1}, "t_ifcs": {"esp": 2.5},
+                  "uec_series": [["2026-05-01T10:00:00", 100]]}
+        bads = ({"dist_m": "5"}, {"dist_m": True}, {"warn": {"pwr": "1"}}, {"warn": [1]},
+                {"uec_series": {"a": 1}}, {"uec_series": [["t"]]}, {"uec_series": [[1, 2]]},
+                {"dist_m": None}, {"dist_m": float("nan")}, {"warn": {"pwr": {"x": 1}}})
+        es = [{"file": "20260501-100000.jsonl.gz", "sum": ok_sum}]
+        es += [{"file": "2026050%d-100000.jsonl.gz" % (i + 2) if i < 8 else
+                "2026051%d-100000.jsonl.gz" % i, "sum": b} for i, b in enumerate(bads)]
+        self.assertEqual(sc_stats.import_telemetry(es, {}, root=self.root_b), 1)
+        self.assertEqual(st.load_index(self.root_b)["20260501-100000.jsonl.gz"]["sum"], ok_sum)
+
+    def test_imported_file_not_recent(self):
+        with open(st.recording_files(self.root)[0], "rb") as f:
+            data = f.read()
+        self.assertEqual(sc_stats.import_telemetry([], {"LIVE/20260501-100000.jsonl.gz": data},
+                                                   root=self.root_b), 1)
+        self.assertEqual(list(st.refresh_index(self.root_b)), ["20260501-100000.jsonl.gz"])
+
+    def test_existing_entries_untouched(self):
+        name = "20260501-100000.jsonl.gz"
+        before = dict(st.load_index(self.root)[name])
+        sc_stats.import_telemetry([{"file": name, "v": 99}], {}, root=self.root)
+        self.assertEqual(st.load_index(self.root)[name], before)
+
+    def test_entry_cap(self):
+        with mock.patch.object(sc_stats, "TLM_ENTRIES_MAX", 2):
+            es = [{"file": "2026050%d-100000.jsonl.gz" % i} for i in range(5)]
+            self.assertEqual(sc_stats.import_telemetry(es, {}, root=self.root_b), 2)
+
+    def test_reserved_names(self):
+        files = {"LIVE/nul.jsonl.gz": b"x", "LIVE/COM1.jsonl.gz": b"x", "con/ok.jsonl.gz": b"x",
+                 "LIVE/lpt9.jsonl.gz": b"x", "LIVE/fine.jsonl.gz": b"x"}
+        self.assertEqual(sc_stats.import_telemetry([], files, root=self.root_b), 1)
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -8,6 +8,23 @@ uses [Semantic Versioning](https://semver.org/) (MAJOR.MINOR.PATCH).
 ## [Unreleased]
 
 ### Added
+- **Telemetry recording.** CSR records the game's own telemetry stream while you play:
+  wallet, flight, weapons, warnings, on-foot and seat state, survival. The game's
+  telemetry setting starts off. Press Turn on in the Telemetry card (Backup & transfer,
+  💾). It adds `grpc.client.server.enabled = true` to your channel's user.cfg, with a
+  `.csr-bak` backup. It takes effect on the next game launch. CSR must be open while you
+  play. One CSR window records at a time.
+- **Detail and retention.** Full, Normal or Light (about 1.7, 0.4 and 0.1 MB per hour).
+  Keep recordings forever, 1 year, 3 months or 1 month. Pick which groups to record.
+- **Live view** (sidebar). The Kestrel K-7 slate: flight, weapons, warnings, shields and
+  hull when seated, vitals, injuries and loadout on foot. Contracts, notices, place and
+  ships destroyed nearby from Game.log. Tablet first, works on a phone.
+- **Phone access.** Turn it on in the Telemetry card for a QR code and a private link on
+  port 7890-7899. Live view only, LAN only. Windows asks to allow CSR on the network the
+  first time.
+- **Career stats from telemetry.** Wallet on Economy. Flight records, How you fly and
+  Weapons on Flight & Travel. Warnings & countermeasures on Combat. On foot & in seat and
+  Survival on Activity. Cards show "From N of M sessions with telemetry".
 - **CSR lives in the tray.** No console window. Its icon sits by the clock: click it for
   the dashboard, right-click for Refresh logs, Start with Windows, Open log, Open data
   folder and Quit. Crashes and disconnects show as Windows notifications.
@@ -19,6 +36,8 @@ uses [Semantic Versioning](https://semver.org/) (MAJOR.MINOR.PATCH).
   a Star Citizen fan site, while you view the page. Nothing of theirs is stored.
 
 ### Changed
+- **Config saves are atomic.** CSR never overwrites a csr_config.json it can't read.
+- **CSR refuses requests from other websites.** Origin and Host are checked.
 - CSR's output goes to `CSR-data\csr.log`, the run before kept as `csr.log.1`. Open it
   from the tray or the status light. `--console` shows it in a window instead.
 - CSR keeps running with no dashboard open. It used to quit after 15 minutes.

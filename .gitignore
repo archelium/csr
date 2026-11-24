@@ -27,6 +27,8 @@ csr_config.json
 csr_prefs.json
 # each user's accumulated session archive — personal play history
 csr_archive.json
+# telemetry recordings from source runs, they carry the wallet balance
+/telemetry/
 # each user's own ship/gun art cache (~9 MB, fetched per install)
 sc_images.json
 

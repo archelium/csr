@@ -29,21 +29,34 @@ Usage:
 
 import argparse
 import glob
+import hmac
 import html
+import http.server
 import json
 import math
 import os
 import re
+import secrets
+import socket
 import sys
 import time
 import shutil
 import subprocess
+import tempfile
 import threading
+import urllib.parse
+import zipfile
 import webbrowser
 from collections import defaultdict, Counter, deque
 from datetime import datetime, timedelta, timezone
 
 import sc_names
+import sc_qr
+import sc_livelog
+import sc_slate
+import sc_slate_ships
+import sc_telemetry
+import sc_tlm_stats
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -494,18 +507,449 @@ def config_path():
     return os.path.join(app_dir(), CONFIG_NAME)
 
 
+def _read_config_file(path):
+    """Parsed config file. A UTF-8 BOM is fine, an empty or blank file is {}."""
+    with open(path, encoding="utf-8-sig") as fh:
+        text = fh.read()
+    return json.loads(text) if text.strip() else {}
+
+
 def load_config():
     try:
-        return json.load(open(config_path(), encoding="utf-8"))
+        return _read_config_file(config_path())
     except Exception:
         return {}
 
 
 def save_config(cfg):
+    """Write the config through a temp file and os.replace, so a crash or a failed write
+    never leaves a half-written file. Returns True when saved."""
+    path = config_path()
+    tmp = "%s.%d.%d.tmp" % (path, os.getpid(), threading.get_ident())
     try:
-        json.dump(cfg, open(config_path(), "w", encoding="utf-8"), indent=2)
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(cfg, fh, indent=2)
+        os.replace(tmp, path)
+        return True
     except Exception as e:
         cerr(f"could not save config: {e}")
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        return False
+
+
+#: request threads and the telemetry recorder read and write the config concurrently
+_CONFIG_LOCK = threading.RLock()
+
+
+def _config_for_update():
+    """The saved config for a read-modify-write: {} when there is no file, None when the
+    file is there but can't be read as a JSON object. Saving over that would wipe it."""
+    path = config_path()
+    if not os.path.exists(path):
+        return {}
+    try:
+        cfg = _read_config_file(path)
+    except Exception:
+        return None
+    return cfg if isinstance(cfg, dict) else None
+
+
+def update_config(**kv):
+    """Merge top-level keys into the saved config and save it. Keys not named are kept.
+    Returns the saved config, or None when nothing was saved (unreadable file, failed
+    write)."""
+    with _CONFIG_LOCK:
+        cfg = _config_for_update()
+        if cfg is None:
+            cerr(f"{config_path()} is unreadable. Not overwriting it.")
+            return None
+        cfg.update(kv)
+        return cfg if save_config(cfg) else None
+
+
+def remember_folder(path):
+    """Save the linked StarCitizen folder without touching the rest of the config."""
+    return update_config(live_path=path)
+
+
+TLM_DEFAULTS = {"record": True, "detail": "normal", "keep_days": None,
+                "groups": sc_telemetry.DEFAULT_GROUPS, "phone": False, "phone_key": None}
+TLM_KEEP_DAYS = (None, 365, 90, 30)
+TLM_GROUP_NAMES = [g for g, _ in sc_telemetry.GROUPS] + ["other"]
+
+
+def tlm_settings():
+    """Telemetry settings: config "tlm" merged over TLM_DEFAULTS."""
+    with _CONFIG_LOCK:
+        saved = load_config().get("tlm")
+    out = {k: (list(v) if isinstance(v, list) else v) for k, v in TLM_DEFAULTS.items()}
+    if isinstance(saved, dict):
+        out.update(saved)
+    return out
+
+
+def save_tlm_settings(changes):
+    """Merge `changes` into config "tlm" and save. Other keys are kept. Returns the saved
+    config, or None when nothing was saved."""
+    with _CONFIG_LOCK:
+        cfg = _config_for_update()
+        if cfg is None:
+            cerr(f"{config_path()} is unreadable. Not overwriting it.")
+            return None
+        cur = cfg.get("tlm")
+        cur = cur if isinstance(cur, dict) else {}
+        return update_config(tlm={**cur, **changes})
+
+
+def validate_tlm_settings(body):
+    """(True, cleaned) for a settings POST body, (False, error message) otherwise.
+    Only record, detail, keep_days, groups and phone are taken. Other keys are dropped."""
+    if not isinstance(body, dict):
+        return False, "Bad request."
+    out = {}
+    for key in ("record", "phone"):
+        if key in body:
+            if not isinstance(body[key], bool):
+                return False, f"{key} must be true or false."
+            out[key] = body[key]
+    if "detail" in body:
+        if body["detail"] not in sc_telemetry.DETAIL_SECONDS:
+            return False, "Unknown detail level."
+        out["detail"] = body["detail"]
+    if "keep_days" in body:
+        v = body["keep_days"]
+        if isinstance(v, bool) or v not in TLM_KEEP_DAYS:
+            return False, "Keep must be forever, 365, 90 or 30 days."
+        out["keep_days"] = v
+    if "groups" in body:
+        g = body["groups"]
+        if not isinstance(g, list) or not all(isinstance(x, str) for x in g):
+            return False, "groups must be a list of names."
+        if not g:
+            return False, "Pick at least one group, or turn recording off."
+        bad = [x for x in g if x not in TLM_GROUP_NAMES]
+        if bad:
+            return False, f"Unknown group: {bad[0]}"
+        out["groups"] = list(dict.fromkeys(g))
+    return True, out
+
+
+def tlm_settings_reply(status, saved):
+    """Reply to a settings POST that was saved. A failing status() still reports the save
+    with the saved settings. `saved` is the config save_tlm_settings returned."""
+    try:
+        return {"ok": True, **status()}
+    except Exception:
+        tlm = (saved or {}).get("tlm")
+        s = {**TLM_DEFAULTS, **(tlm if isinstance(tlm, dict) else {})}
+        return {"ok": True, "settings": {k: v for k, v in s.items() if k != "phone_key"}}
+
+
+# --- phone listener --------------------------------------------------------------------
+# A second HTTP server on the LAN that serves only the live view. Every request needs
+# the private key from the link (?k=) or the cookie set on the first /live visit.
+
+PHONE_PORTS = range(7890, 7900)
+PHONE_COOKIE = "csrk"
+_PHONE = {"srv": None, "port": None, "key": None, "live": None, "on_seen": None,
+          "qr": (None, None)}
+_PHONE_LOCK = threading.RLock()
+
+
+def lan_ip():
+    """This PC's address on the local network. A UDP connect picks the outgoing
+    interface without sending anything. 127.0.0.1 when there is no network."""
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            s.connect(("192.0.2.1", 9))
+            ip = s.getsockname()[0]
+        finally:
+            s.close()
+    except OSError:
+        return "127.0.0.1"
+    return ip if ip and ip != "0.0.0.0" else "127.0.0.1"
+
+
+class _PhoneServer(http.server.ThreadingHTTPServer):
+    # Windows lets SO_REUSEADDR bind a port another server already holds. Take it
+    # exclusively so a busy port falls through to the next one.
+    allow_reuse_address = False
+
+    def server_bind(self):
+        if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
+            self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+        super().server_bind()
+
+
+class _PhoneHandler(http.server.BaseHTTPRequestHandler):
+    """Live view only: /live and /api/telemetry/live. Everything else is 404."""
+    timeout = 10          # a silent connection can't hold a thread forever
+
+    def _send(self, code, body, ctype="application/json; charset=utf-8", extra=None):
+        b = body.encode("utf-8") if isinstance(body, str) else body
+        self.send_response(code)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(b)))
+        self.send_header("Cache-Control", "no-store")
+        for k, v in (extra or {}).items():
+            self.send_header(k, v)
+        self.end_headers()
+        try:
+            self.wfile.write(b)
+        except Exception:
+            pass
+
+    def _cookie_key(self):
+        for part in (self.headers.get("Cookie") or "").split(";"):
+            name, _, value = part.strip().partition("=")
+            if name == PHONE_COOKIE:
+                return value
+        return None
+
+    def _key_ok(self, query):
+        want = _PHONE["key"]
+        if not want:
+            return False
+        want = want.encode("utf-8")
+        for got in (query.get("k", [None])[0], self._cookie_key()):
+            if got and hmac.compare_digest(got.encode("utf-8", "replace"), want):
+                return True
+        return False
+
+    def do_GET(self):
+        parts = urllib.parse.urlsplit(self.path)
+        path = parts.path
+        if path not in ("/live", "/api/telemetry/live", "/api/telemetry/ship"):
+            self._send(404, "Not found.", "text/plain; charset=utf-8")
+            return
+        if not self._key_ok(urllib.parse.parse_qs(parts.query)):
+            self._send(403, "Old or wrong link. Scan the QR code in CSR again.",
+                       "text/plain; charset=utf-8")
+            return
+        if path == "/live":
+            cookie = (f"{PHONE_COOKIE}={_PHONE['key']}; Path=/; Max-Age=31536000; "
+                      f"HttpOnly; SameSite=Strict")
+            self._send(200, LIVE_HTML(), "text/html; charset=utf-8",
+                       extra={"Set-Cookie": cookie})
+            return
+        if path == "/api/telemetry/ship":
+            body = tlm_api_get(self.path, None, None, None)
+            if body is None:
+                self._send(404, "{}")
+            else:
+                self._send(200, body)
+            return
+        on_seen = _PHONE["on_seen"]
+        if on_seen:
+            on_seen()
+        try:
+            body = json.dumps(_json_safe(live_payload(_PHONE["live"])), default=str)
+        except Exception as e:
+            self._send(200, json.dumps({"ok": False, "error": str(e)}))
+            return
+        self._send(200, body)
+
+    def _not_found(self):
+        self._send(404, "Not found.", "text/plain; charset=utf-8")
+
+    do_POST = do_PUT = do_DELETE = do_PATCH = do_HEAD = do_OPTIONS = _not_found
+
+    def log_message(self, *a):
+        pass
+
+
+def start_phone_server(port_range=PHONE_PORTS, key=None, live=None, on_seen=None,
+                       host="0.0.0.0"):
+    """Start the phone listener on the first free port in `port_range`. `key` defaults
+    to the saved phone key, `live` returns the live payload, `on_seen` runs on each
+    valid poll. Already running: takes the new key and callbacks, keeps its port.
+    Returns the port, or None when no port in the range is free."""
+    with _PHONE_LOCK:
+        _PHONE["key"] = key if key is not None else tlm_settings().get("phone_key")
+        if live is not None:
+            _PHONE["live"] = live
+        if on_seen is not None:
+            _PHONE["on_seen"] = on_seen
+        if _PHONE["srv"] is not None:
+            return _PHONE["port"]
+        for p in port_range:
+            try:
+                srv = _PhoneServer((host, p), _PhoneHandler)
+            except OSError:
+                continue
+            _PHONE["srv"], _PHONE["port"] = srv, srv.server_address[1]
+            threading.Thread(target=srv.serve_forever, name="phone", daemon=True).start()
+            return _PHONE["port"]
+        return None
+
+
+def stop_phone_server():
+    with _PHONE_LOCK:
+        srv, _PHONE["srv"], _PHONE["port"] = _PHONE["srv"], None, None
+    if srv is not None:
+        try:
+            srv.shutdown()
+            srv.server_close()
+        except Exception:
+            pass
+
+
+def phone_url():
+    """The private link for the phone, or None when the listener isn't running."""
+    port, key = _PHONE["port"], _PHONE["key"]
+    if port is None or not key:
+        return None
+    return f"http://{lan_ip()}:{port}/live?k={urllib.parse.quote(key, safe='')}"
+
+
+def new_phone_key():
+    """Make and save a new phone key. Old links and cookies stop working. Returns the
+    key, or None when the config couldn't be saved."""
+    key = secrets.token_urlsafe(16)
+    if save_tlm_settings({"phone_key": key}) is None:
+        return None
+    with _PHONE_LOCK:
+        _PHONE["key"] = key
+    return key
+
+
+def sync_phone_server(live=None, on_seen=None, host="0.0.0.0", port_range=PHONE_PORTS):
+    """Match the listener to the saved "phone" setting. On: makes a key if there is
+    none and starts. Off: stops. Returns the port, or None when not listening. When it
+    returns None with the setting on, _PHONE["why"] is "ports" or "config"."""
+    with _PHONE_LOCK:                 # one sync at a time, listener and key stay in step
+        _PHONE["why"] = None
+        s = tlm_settings()
+        if not s.get("phone"):
+            stop_phone_server()
+            return None
+        key = s.get("phone_key") or new_phone_key()
+        if not key:
+            _PHONE["why"] = "config"
+            return None
+        port = start_phone_server(port_range, key=key, live=live, on_seen=on_seen, host=host)
+        if port is None:
+            _PHONE["why"] = "ports"
+        return port
+
+
+def phone_sync_error(port_range=PHONE_PORTS, **kw):
+    """Run sync_phone_server. Returns None when fine, else a message naming the cause."""
+    try:
+        port = sync_phone_server(port_range=port_range, **kw)
+    except Exception as e:
+        _PHONE["why"] = "error"
+        return f"phone view error: {e}"
+    if port is not None or not tlm_settings().get("phone"):
+        return None
+    if _PHONE.get("why") == "config":
+        return "phone view: couldn't save the link key to csr_config.json."
+    return f"phone view: no free port in {port_range.start}-{port_range.stop - 1}."
+
+
+def phone_status():
+    """The "phone" block of /api/telemetry/status."""
+    if not tlm_settings().get("phone"):
+        return {"on": False, "url": None}
+    url = phone_url()
+    svg = None
+    if url:
+        cached_url, cached_svg = _PHONE["qr"]
+        if cached_url == url:
+            svg = cached_svg
+        else:
+            svg = sc_qr.qr_svg(url)
+            _PHONE["qr"] = (url, svg)
+    # why: "ports", "config" or "error" when it is on but not listening
+    return {"on": True, "url": url, "qr_svg": svg,
+            "why": None if url else (_PHONE.get("why") or "error")}
+
+
+def local_request_ok(method, headers, port):
+    """False for a request another site could have made through the browser: a Host
+    other than this server (DNS rebinding), or a POST from a foreign Origin. No Origin
+    (curl, scripts) is fine."""
+    mine = {f"127.0.0.1:{port}", f"localhost:{port}"}
+    host = (headers.get("Host") or "").strip().lower()
+    if host not in mine:
+        return False
+    if method == "POST":
+        origin = headers.get("Origin")
+        if origin is not None and origin.strip().lower() not in {"http://" + h for h in mine}:
+            return False
+    return True
+
+
+def _slate_log_path():
+    """The Game.log of the channel being played, or None."""
+    ch = tlm_channel_now()
+    return os.path.join(ch[1], "Game.log") if ch else None
+
+
+_SLATE_NAMES = {}
+
+
+def _slate_gun_names(snapshot, items=()):
+    """{class: display name} for the guns in this frame and the given item classes
+    (the Game.log loadout), from CSR's item names."""
+    if not _SLATE_NAMES:
+        try:
+            with open(os.path.join(resource_dir(), "sc_item_names.json"), encoding="utf-8") as fh:
+                _SLATE_NAMES.update(json.load(fh).get("names") or {})
+        except (OSError, ValueError):
+            pass
+    out = {}
+    guns = [re.sub(r"_\d{6,}$", "", str(w.get("name") or ""))
+            for w in (((snapshot or {}).get("weapons") or {}).get("weapons") or [])]
+    for cls in guns + [str(i or "") for i in items]:
+        cls = cls.lower()
+        if cls and cls in _SLATE_NAMES:
+            out[cls] = _SLATE_NAMES[cls]
+    return out
+
+
+def live_payload(live):
+    """The live view's poll: telemetry state, display names for the guns in the frame and
+    the live Game.log state (None when the log can't be read)."""
+    data = dict(live())
+    try:
+        data["log"] = sc_livelog.get_state(_slate_log_path, lambda code: place_name(code)[0])
+    except Exception:
+        data["log"] = None
+    data["names"] = _slate_gun_names(data.get("snapshot"), ((data["log"] or {}).get("loadout") or {}).values())
+    return data
+
+
+def tlm_api_get(path, live, status, on_seen):
+    """JSON body for GET /api/telemetry/live, /api/telemetry/status and
+    /api/telemetry/ship?c=CLASS (None when the ship is unknown). A live poll counts as
+    a page watching CSR."""
+    parts = urllib.parse.urlsplit(path)
+    if parts.path.endswith("/ship"):
+        cls = urllib.parse.parse_qs(parts.query).get("c", [None])[0]
+        ship = sc_slate_ships.ship_payload(cls)
+        return None if ship is None else json.dumps(ship)
+    if parts.path.endswith("/live"):
+        on_seen()
+        data = live_payload(live)
+    else:
+        data = status()
+    return json.dumps(_json_safe(data), default=str)
+
+
+def _json_safe(o):
+    """NaN and infinity become None. JSON.parse in the page rejects them."""
+    if isinstance(o, float):
+        return o if math.isfinite(o) else None
+    if isinstance(o, dict):
+        return {k: _json_safe(v) for k, v in o.items()}
+    if isinstance(o, (list, tuple)):
+        return [_json_safe(v) for v in o]
+    return o
 
 
 # What you choose in the page that should outlive the browser: pinned blueprints (per
@@ -829,6 +1273,97 @@ def _channel_dir(files, live):
 
 #: channel label -> install folder, so a write can find the file again later
 _CHANNEL_DIRS = {}
+
+#: telemetry index entries no session claimed. Filled by the page build.
+_TLM_UNMATCHED: list = []
+
+TLM_CFG_LINE = "grpc.client.server.enabled = true"
+_TLM_CFG_RE = re.compile(r"^\s*grpc\.client\.server\.enabled\s*=\s*(true|1)\s*$", re.I)
+_TLM_APPLIED_NAMES = ("GRPC_CLIENT_SERVER_ENABLED", "grpc-client-server-enabled")
+_TLM_APPLIED_LINES = 300
+
+
+TLM_CHANNEL_FRESH_S = 600
+
+
+def tlm_channel_now():
+    """(label, folder) of the channel whose Game.log was written last, or None. A log
+    not written in the last 10 minutes doesn't count."""
+    best = None
+    cutoff = time.time() - TLM_CHANNEL_FRESH_S
+    for label, cdir in list(_CHANNEL_DIRS.items()):
+        try:
+            mt = os.path.getmtime(os.path.join(cdir, "Game.log"))
+        except (OSError, TypeError):
+            continue
+        if mt < cutoff:
+            continue
+        if best is None or mt > best[0]:
+            best = (mt, label, cdir)
+    return (best[1], best[2]) if best else None
+
+
+def _user_cfg_has_line(path):
+    try:
+        with open(path, encoding="utf-8-sig", errors="replace") as fh:
+            return any(_TLM_CFG_RE.match(ln) for ln in fh)
+    except OSError:
+        return False
+
+
+def user_cfg_state(channel_dir):
+    """{"line": user.cfg turns the telemetry port on, "applied": the game launched after
+    user.cfg last changed and its Game.log names the setting in its first lines}."""
+    out = {"line": False, "applied": False}
+    if not channel_dir:
+        return out
+    cfg = os.path.join(channel_dir, "user.cfg")
+    log = os.path.join(channel_dir, "Game.log")
+    out["line"] = _user_cfg_has_line(cfg)
+    try:
+        cfg_mt = os.path.getmtime(cfg)
+    except OSError:
+        cfg_mt = 0.0
+    try:
+        if os.path.getmtime(log) <= cfg_mt:
+            return out                      # a log from before the last user.cfg edit
+        with open(log, encoding="utf-8", errors="replace") as fh:
+            for i, ln in enumerate(fh):
+                if i >= _TLM_APPLIED_LINES:
+                    break
+                if any(n in ln for n in _TLM_APPLIED_NAMES):
+                    out["applied"] = True
+                    break
+    except OSError:
+        pass
+    return out
+
+
+def enable_user_cfg(channel_dir):
+    """Append the telemetry line to the channel's user.cfg. Every other line is kept and
+    the old file is copied to user.cfg.csr-bak first. An existing backup is kept, so it
+    always holds the file from before CSR first touched it. The game reads user.cfg only at
+    launch, so this is safe while it runs. Returns (ok, message)."""
+    if not channel_dir or not os.path.isdir(channel_dir):
+        return False, "No folder for that channel."
+    path = os.path.join(channel_dir, "user.cfg")
+    if _user_cfg_has_line(path):
+        return True, "Already in user.cfg."
+    try:
+        data = b""
+        if os.path.isfile(path):
+            with open(path, "rb") as fh:
+                data = fh.read()
+            if not os.path.exists(path + ".csr-bak"):
+                shutil.copy2(path, path + ".csr-bak")
+        add = (TLM_CFG_LINE + "\r\n").encode("utf-8")
+        if data and not data.endswith(b"\n"):
+            add = b"\r\n" + add
+        with open(path, "ab") as fh:
+            fh.write(add)
+    except OSError as e:
+        return False, f"Could not write user.cfg: {e}"
+    return True, "Added to user.cfg. Restart the game to turn it on."
 
 
 # --------------------------------------------------------------------------- #
@@ -4288,6 +4823,8 @@ def blank_patch():
         "sk_lost": [], "sk_sessions": 0, "sk_kill_sessions": 0, "vd_secs": 0,
         # home inventory: [local date, start, inv dict] per session that logged anything
         "inv": [],
+        # telemetry recordings matched to these sessions (sc_tlm_stats career accumulator)
+        "tlm": sc_tlm_stats.new_acc(),
     }
 
 
@@ -4295,6 +4832,7 @@ def fold(agg, s):
     if s.get("handle"):
         _KNOWN_HANDLES.add(s["handle"].lower().strip())
     agg["sessions"] += 1
+    sc_tlm_stats.fold_tlm(agg["tlm"], s.get("_tlm"), s.get("start"))
     agg["seconds"] += s["dur"]
     agg["longest"] = max(agg["longest"], s["dur"])
     if s.get("limited"):
@@ -5269,6 +5807,7 @@ def finalize(agg):
     boot_sum = _episode_summary(agg["boots"], agg["boot_sessions"], agg)
     soft_sum = _episode_summary(agg["softs"], agg["soft_sessions"], agg)
     return {
+        "tlm": sc_tlm_stats.finalize_tlm(agg["tlm"], agg["sessions"]),
         "boots": boot_sum,
         "soft": soft_sum,
         "servers": _server_summary(agg),
@@ -5708,6 +6247,15 @@ def scan_channels(channels, reuse=None):
 def build_from_sessions(sessions, fresh_profile=False):
     """Bucket already-scanned sessions by their stored channel → per-channel
     datasets. Sessions come from the archive (accumulated) + this run's scan."""
+    global _TLM_UNMATCHED
+    # copies carry `_tlm`, the archive's own dicts stay as they are. Telemetry never
+    # fails the page: a bad index leaves the cards out.
+    try:
+        sessions, _TLM_UNMATCHED = sc_tlm_stats.attach(
+            sessions, sc_tlm_stats.load_index(sc_tlm_stats.tlm_dir(app_dir())))
+    except Exception as e:
+        cwarn(f"telemetry stats skipped: {e}")
+        _TLM_UNMATCHED = []
     buckets = defaultdict(list)
     for s in sessions:
         buckets[s.get("channel") or "LIVE"].append(s)
@@ -5868,6 +6416,262 @@ def import_archive_file(path_or_sessions):
     merged = merge_sessions(existing, incoming)
     save_archive(merged)
     return len(merged) - before, len(merged)
+
+
+_TLM_CHANNEL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,31}$")
+_TLM_FILE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}\.jsonl\.gz$")
+_ARCHIVE_MEMBER_RE = re.compile(r"^CSR-archive-[A-Za-z0-9_.-]{1,40}\.json$")
+IMPORT_ZIP_MAX = 2 * 1024 ** 3
+
+
+def _archive_object(archive_file=None):
+    path = archive_file or archive_path()
+    try:
+        with open(path, encoding="utf-8") as fh:
+            obj = json.load(fh)
+    except Exception:
+        obj = None
+    if not isinstance(obj, dict):
+        obj = {"v": ARCHIVE_VERSION, "app": "CSR", "version": CSR_VERSION,
+               "saved": datetime.now().isoformat(), "sessions": []}
+    obj["prefs"] = load_prefs()           # pins and main accounts ride along
+    return obj
+
+
+def export_zip_file(root=None, archive_file=None):
+    """Zip the archive and every recording into a temp file. Returns (path, filename).
+    The caller deletes the file."""
+    root = root or sc_tlm_stats.tlm_dir(app_dir())
+    stamp = datetime.now().strftime("%Y-%m-%d")
+    obj = _archive_object(archive_file)
+    obj["telemetry"] = list(sc_tlm_stats.load_index(root).values())
+    fd, tmp = tempfile.mkstemp(suffix=".zip", prefix="csr-export-")
+    os.close(fd)
+    try:
+        with zipfile.ZipFile(tmp, "w", zipfile.ZIP_STORED, allowZip64=True) as z:
+            z.writestr("CSR-archive-%s.json" % stamp,
+                       json.dumps(obj, default=_json_default))
+            for f in sc_tlm_stats.recording_files(root):
+                chan = os.path.basename(os.path.dirname(f))
+                try:
+                    z.write(f, "telemetry/%s/%s" % (chan, os.path.basename(f)))
+                except OSError:
+                    pass
+    except Exception:
+        os.remove(tmp)
+        raise
+    return tmp, "CSR-backup-%s.zip" % stamp
+
+
+def export_payload(include_recordings, root=None, archive_file=None):
+    """(body, content type, filename) for the JSON export: the archive plus the telemetry
+    summaries. The zip with recordings is streamed from export_zip_file instead."""
+    if include_recordings:
+        raise ValueError("use export_zip_file for recordings")
+    root = root or sc_tlm_stats.tlm_dir(app_dir())
+    obj = _archive_object(archive_file)
+    obj["telemetry"] = list(sc_tlm_stats.load_index(root).values())
+    stamp = datetime.now().strftime("%Y-%m-%d")
+    return (json.dumps(obj, default=_json_default).encode("utf-8"), "application/json",
+            "CSR-archive-%s.json" % stamp)
+
+
+class ImportTooLarge(ValueError):
+    pass
+
+
+_TOO_LARGE = "Import stopped. A recording in the zip is too large."
+_WIN_RESERVED = re.compile(r"^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$", re.I)
+_TLM_ENTRY_KEYS = ("file", "channel", "started", "ended", "build", "groups", "v", "sum", "empty")
+_TLM_GROUP_NAMES = frozenset([g for g, _ in sc_telemetry.GROUPS] + ["other", "force_feedback"])
+TLM_MEMBER_MAX = 256 * 1024 ** 2
+TLM_TOTAL_MAX = 8 * 1024 ** 3
+ARCHIVE_MEMBER_MAX = 256 * 1024 ** 2
+TLM_ENTRIES_MAX = 100000
+TLM_SUM_MAX = 256 * 1024
+
+
+def _safe_name(rx, name):
+    return (isinstance(name, str) and bool(rx.fullmatch(name))
+            and not _WIN_RESERVED.match(name.split(".")[0]))
+
+
+def _finite(x):
+    return isinstance(x, (int, float)) and not isinstance(x, bool) and math.isfinite(x)
+
+
+def _sum_value_ok(key, v):
+    """One value of an imported `sum`: a number, a dict of numbers, or for uec_series a
+    list of [time, number] pairs."""
+    if not isinstance(key, str):
+        return False
+    if key == "uec_series":
+        return isinstance(v, list) and all(
+            isinstance(p, list) and len(p) == 2 and isinstance(p[0], str) and _finite(p[1])
+            for p in v)
+    if isinstance(v, dict):
+        return all(isinstance(k, str) and _finite(x) for k, x in v.items())
+    return _finite(v)
+
+
+def _clean_entry(e):
+    """Whitelisted, type-checked copy of an imported index entry. None when it fails."""
+    if not isinstance(e, dict) or not _safe_name(_TLM_FILE_RE, e.get("file")):
+        return None
+    out = {"file": e["file"]}
+    for k in _TLM_ENTRY_KEYS[1:]:
+        if k not in e:
+            continue
+        v = e[k]
+        if k == "channel":
+            if v is not None and not _safe_name(_TLM_CHANNEL_RE, v):
+                return None
+        elif k in ("started", "ended", "build"):
+            if v is not None and not (isinstance(v, str) and len(v) <= 64):
+                return None
+        elif k == "groups":
+            if not isinstance(v, list) or any(not isinstance(g, str) or g not in _TLM_GROUP_NAMES for g in v):
+                return None
+        elif k == "v":
+            if not isinstance(v, int) or isinstance(v, bool):
+                return None
+        elif k == "sum":
+            if not isinstance(v, dict) or not all(_sum_value_ok(kk, x) for kk, x in v.items()):
+                return None
+            try:
+                if len(json.dumps(v)) > TLM_SUM_MAX:
+                    return None
+            except (TypeError, ValueError):
+                return None
+        elif k == "empty":
+            if not isinstance(v, bool):
+                return None
+        out[k] = v
+    return out
+
+
+def _copy_bounded(src, out, limit):
+    """Copy at most `limit` bytes. Returns the count. ImportTooLarge when there is more."""
+    n = 0
+    while True:
+        chunk = src.read(1024 * 1024)
+        if not chunk:
+            return n
+        n += len(chunk)
+        if n > limit:
+            raise ImportTooLarge(_TOO_LARGE)
+        out.write(chunk)
+
+
+def _date_recording(path):
+    """Set an imported recording's modified time to its start time from the file name.
+    A fresh mtime would read as a file still being written (sc_tlm_stats.RECENT_S)."""
+    try:
+        t = datetime.strptime(os.path.basename(path)[:15], "%Y%m%d-%H%M%S").timestamp()
+    except ValueError:
+        t = time.time() - 3600
+    try:
+        os.utime(path, (t, t))
+    except OSError:
+        pass
+
+
+def import_telemetry(entries, files, root=None):
+    """Add index entries and recording files that are not there yet (same file name).
+    `files` maps "<channel>/<file>" to bytes or a callable returning (stream, header size).
+    Returns how many recordings were added. Raises ImportTooLarge past the size limits
+    (what was added before stays)."""
+    root = root or sc_tlm_stats.tlm_dir(app_dir())
+    added = set()
+    total = 0
+    with sc_tlm_stats._index_lock:
+        idx = sc_tlm_stats.load_index(root)
+        try:
+            have = {os.path.basename(p) for p in sc_tlm_stats.recording_files(root)}
+            for e in (entries[:TLM_ENTRIES_MAX] if isinstance(entries, list) else []):
+                c = _clean_entry(e)
+                if c is not None and c["file"] not in idx:
+                    idx[c["file"]] = c
+                    added.add(c["file"])
+            for key, src in (files or {}).items():
+                chan, _sep, name = str(key).partition("/")
+                if (not _safe_name(_TLM_CHANNEL_RE, chan) or not _safe_name(_TLM_FILE_RE, name)
+                        or name in have):
+                    continue
+                d = os.path.join(root, chan)
+                os.makedirs(d, exist_ok=True)
+                dest, tmp = os.path.join(d, name), os.path.join(d, name + ".import.tmp")
+                try:
+                    with open(tmp, "wb") as out:
+                        if isinstance(src, (bytes, bytearray)):
+                            if len(src) > TLM_MEMBER_MAX or total + len(src) > TLM_TOTAL_MAX:
+                                raise ImportTooLarge(_TOO_LARGE)
+                            out.write(src)
+                            total += len(src)
+                        else:
+                            stream, declared = src()
+                            with stream:
+                                if declared > TLM_MEMBER_MAX or total + declared > TLM_TOTAL_MAX:
+                                    raise ImportTooLarge(_TOO_LARGE)
+                                total += _copy_bounded(
+                                    stream, out, min(TLM_MEMBER_MAX, TLM_TOTAL_MAX - total))
+                    os.replace(tmp, dest)
+                    _date_recording(dest)
+                except Exception as ex:
+                    try:
+                        os.remove(tmp)
+                    except OSError:
+                        pass
+                    if not isinstance(ex, OSError):
+                        raise
+                    continue
+                have.add(name)
+                added.add(name)
+        finally:
+            if added:
+                sc_tlm_stats.save_index(root, idx)
+    return len(added)
+
+
+def import_zip_file(path, root=None, archive_file=None, merge=True):
+    """Merge a CSR backup zip. Returns {"added", "total", "telemetry"}. Only members shaped
+    `CSR-archive-*.json` and `telemetry/<channel>/<file>.jsonl.gz` are read."""
+    root = root or sc_tlm_stats.tlm_dir(app_dir())
+    with zipfile.ZipFile(path) as z:
+        arch = [i for i in z.infolist() if _ARCHIVE_MEMBER_RE.match(i.filename)]
+        if not arch:
+            raise ValueError("no CSR archive in that zip")
+        if arch[0].file_size > ARCHIVE_MEMBER_MAX:
+            raise ValueError("archive file too large")
+        with z.open(arch[0]) as f:
+            raw = f.read(ARCHIVE_MEMBER_MAX + 1)
+        if len(raw) > ARCHIVE_MEMBER_MAX:
+            raise ValueError("archive file too large")
+        try:
+            obj = json.loads(raw.decode("utf-8", "replace"))
+            sessions = [_deser_session(x) for x in obj.get("sessions", [])]
+            entries = obj.get("telemetry")
+        except Exception:
+            raise ValueError("that archive can't be read")
+        del raw
+        added = total = 0
+        if merge:
+            added, total = import_archive_file(sessions)
+            if isinstance(obj.get("prefs"), dict):     # the backup's pins and main accounts
+                try:
+                    save_prefs(merge_prefs(load_prefs(), obj["prefs"]))
+                except Exception:
+                    pass
+        files = {}
+        for i in z.infolist():
+            parts = i.filename.split("/")
+            if (len(parts) == 3 and parts[0] == "telemetry" and not i.is_dir()
+                    and _safe_name(_TLM_CHANNEL_RE, parts[1])
+                    and _safe_name(_TLM_FILE_RE, parts[2])):
+                files["%s/%s" % (parts[1], parts[2])] = (
+                    lambda n=i: (z.open(n), n.file_size))
+        n = import_telemetry(entries, files, root=root)
+    return {"added": added, "total": total, "telemetry": n}
 
 
 def import_log_folder(path):
@@ -7664,6 +8468,20 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
   /* three transfer routes (export / import logs / import backup) need more room */
   .modal.data:has(.datarow.three){max-width:760px}
   .dmnote{font-size:11.5px;color:var(--dim);margin:2px 0 0}
+  .modal.data{max-height:92vh;overflow-y:auto}
+  .tlmcard{text-align:left;margin-top:14px;border:1px solid var(--line);border-radius:12px;padding:14px 16px}
+  .tlmcard .ol-t{margin-bottom:8px}
+  .tlmrow{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:8px 0;font-size:13px;color:var(--muted)}
+  .tlmrow>label,.tlmrow>.tlml{min-width:120px;color:var(--txt)}
+  .tlmrow select{background:var(--panel2);color:var(--txt);border:1px solid var(--line);border-radius:8px;padding:5px 8px}
+  .tlmgroups{display:flex;flex-wrap:wrap;gap:6px 16px}
+  .tlmgroups label{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--muted)}
+  .tlmqr{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+  .tlmqr svg{width:132px;height:132px;background:#fff;border-radius:8px;padding:6px}
+  .tlmqr .tlmurl{word-break:break-all;font-size:12px;color:var(--txt)}
+  .tlmcard .tlmbtn{font-size:12px;padding:6px 12px}
+  .tlmcard .mbtn.danger{border-color:rgba(235,110,110,.45);color:#eb6e6e}
+  .tlmerr{color:#ff5468;font-size:12px;min-height:16px}
   .onlinebar{display:flex;align-items:center;gap:14px;text-align:left;margin-top:14px;
     padding:12px 14px;border:1px solid var(--line);border-radius:11px;background:var(--panel2)}
   .onlinebar .ol-t{font-weight:700;font-size:13px}
@@ -8665,6 +9483,7 @@ img[src*="xparrow-lite.pages.dev"]{object-fit:scale-down!important}
       <a data-sec="activity" data-label="Activity"><span>📆</span> Activity</a>
       <a data-sec="system" data-label="Your Machine"><span>🖥️</span> Your Machine</a>
       <a data-sec="stability" data-label="Stability &amp; Crashes"><span>🩺</span> Stability<i class="navlive" id="navLive" title="CSR is watching your logs"></i></a>
+      <a href="/live" target="_blank" id="navLiveView" data-label="Live view" style="display:none"><span>📡</span> Live view</a>
       <a data-sec="orgs" data-label="Orgs &amp; Profile"><span>🪪</span> Orgs &amp; Profile</a>
     </nav>
     <div class="side-toc" id="sideToc" aria-label="On this page" hidden></div>
@@ -8782,6 +9601,7 @@ img[src*="xparrow-lite.pages.dev"]{object-fit:scale-down!important}
       <div class="dcard">
         <div class="dct" data-ic="export">Export backup</div>
         <div class="dcd">Save your whole career as a single file — keep it safe, or move it to another PC.</div>
+        <label class="tlmchk" style="display:block;margin:0 0 8px;font-size:12px"><input type="checkbox" id="dmExportTlm"> <span id="dmExportTlmLbl">Include telemetry recordings</span></label>
         <button class="mbtn go" id="dmExport">Download archive</button>
       </div>
       <div class="dcard">
@@ -8801,9 +9621,9 @@ img[src*="xparrow-lite.pages.dev"]{object-fit:scale-down!important}
       </div>
       <div class="dcard">
         <div class="dct" data-ic="import">Import backup</div>
-        <div class="dcd">Load <b>.json</b> backups exported from CSR. Pick one or several.</div>
+        <div class="dcd">Load <b>.json</b> or <b>.zip</b> backups exported from CSR. Pick one or several.</div>
         <button class="mbtn ghost" id="dmImportBtn">Choose backup file(s)…</button>
-        <input type="file" id="dmFile" accept=".json,.csr,application/json" multiple style="display:none">
+        <input type="file" id="dmFile" accept=".json,.zip,.csr,application/json,application/zip" multiple style="display:none">
       </div>
     </div>
     <div class="mb dmnote">Everything merges and de-duplicates by session, so importing twice never double-counts.</div>
@@ -8817,6 +9637,40 @@ img[src*="xparrow-lite.pages.dev"]{object-fit:scale-down!important}
           is one call per blueprint. <span id="olWhen"></span></div>
       </div>
       <button class="mbtn ghost" id="olBtn">Update now</button>
+    </div>
+    <div class="tlmcard" id="tlmCard">
+      <div class="ol-t">Telemetry</div>
+      <div id="tlmChannels"></div>
+      <div class="tlmrow"><span class="tlml">Recorder</span><span id="tlmRec">—</span></div>
+      <div class="tlmrow"><label for="tlmRecord">Record telemetry</label>
+        <input type="checkbox" id="tlmRecord"></div>
+      <div class="tlmrow"><label for="tlmDetail">Detail</label>
+        <select id="tlmDetail">
+          <option value="full">Full · 1.7 MB per hour</option>
+          <option value="normal">Normal · 0.4 MB per hour</option>
+          <option value="light">Light · 0.1 MB per hour</option>
+        </select></div>
+      <div class="tlmrow"><label for="tlmKeep">Keep recordings</label>
+        <select id="tlmKeep">
+          <option value="">Forever</option>
+          <option value="365">1 year</option>
+          <option value="90">3 months</option>
+          <option value="30">1 month</option>
+        </select></div>
+      <div class="tlmrow"><span class="tlml">Groups</span><div class="tlmgroups" id="tlmGroups"></div></div>
+      <div class="tlmrow"><span id="tlmDisk">—</span>
+        <button class="mbtn ghost tlmbtn" id="tlmDeleteAll">Delete all recordings</button></div>
+      <div class="tlmrow" id="tlmUnmatched" style="display:none"></div>
+      <div class="tlmrow"><label for="tlmPhone">Phone access</label>
+        <input type="checkbox" id="tlmPhone"></div>
+      <div class="tlmrow" id="tlmPhoneBox" style="display:none">
+        <div class="tlmqr"><div id="tlmQr"></div>
+          <div><div class="tlmurl" id="tlmUrl"></div>
+            <button class="mbtn ghost tlmbtn" id="tlmNewLink" style="margin-top:8px">New link</button>
+            <div class="dmnote">Windows will ask to allow CSR on your network. Allow it on private networks.</div></div></div>
+      </div>
+      <div class="tlmerr" id="tlmErr"></div>
+      <div class="dmnote">Changes apply to the next recording.</div>
     </div>
     <div class="mb" id="dmMsg" style="min-height:18px;margin-top:4px"></div>
     <div class="mactions"><button class="mbtn ghost" id="dmClose">Close</button></div>
@@ -9544,6 +10398,183 @@ function placesHTML(v){
     barsCard('Most Visited Places','sessions · top 15','placeBars')+
     noteFold(`Logged when you land or dock, and when an inventory or shop screen opens. Flybys don’t show.`);
 }
+// ==== telemetry cards ====
+// From recordings matched to sessions (v.tlm). A stat a recording didn't have is absent:
+// its tile is left out, never shown as 0. Coverage is counted per stat.
+const tlmStats = v => (v.tlm && v.tlm.stats) || {};
+const tlmOn = v => !!(v.tlm && v.tlm.n_tlm);
+const tlmSess = n => `${fmt(n)} ${n===1?'session':'sessions'}`;
+// whole tanks without ".0", two decimals below 1
+const tlmTanks = x => {
+  if(!x) return '0 tanks';
+  if(x<0.01) return '<0.01 tanks';
+  const s = x>=1 ? (Number.isInteger(+x.toFixed(1)) ? fmt(Math.round(x)) : x.toFixed(1)) : x.toFixed(2);
+  return s+(s==='1'?' tank':' tanks');
+};
+const tlmNum = x => fmt(+x.toFixed(2));
+// tiles: {k: key or [keys], ic, label, f(values...)}. opts.keys: stats used by opts.body.
+function tlmCard(title, sub, tiles, v, opts={}){
+  const t=v.tlm, st=tlmStats(v);
+  if(!t || !t.n_tlm) return '';
+  const ks=x=>[].concat(x.k);
+  const shown=tiles.filter(x=>ks(x).every(k=>st[k]));
+  const used=(opts.keys||[]).filter(k=>st[k]);
+  const ns=shown.flatMap(x=>ks(x).map(k=>st[k].n)).concat(used.map(k=>st[k].n));
+  if(!ns.length) return '';
+  const top=Math.max(...ns);
+  const minis=shown.map(x=>{
+    const n=Math.min(...ks(x).map(k=>st[k].n));
+    return miniTile(icon(x.ic), x.f(...ks(x).map(k=>st[k].v)), x.label+(n<top?` (${tlmSess(n)})`:''));
+  }).join('');
+  return `<div class="card"${opts.id?` id="${opts.id}"`:''}><h3>${title}${sub?` <span class="u">— ${sub}</span>`:''}</h3>`+
+    (minis?`<div class="minis">${minis}</div>`:'')+(used.length&&opts.body?opts.body:'')+
+    `<div class="bsub">From ${fmt(top)} of ${fmt(t.n_sessions)} sessions with telemetry</div></div>`;
+}
+// One group per page holding that page's telemetry cards. Nothing when no card has data.
+function tlmGroup(n, ic, cards){
+  return cards ? group(n, ic, 'Telemetry', 'From your telemetry recordings', cards) : '';
+}
+function tlmPair(a, b){
+  return a&&b ? `<div class="grid2" style="margin-top:16px">${a}${b}</div>` : (a||b ? `<div style="margin-top:16px">${a||b}</div>` : '');
+}
+// split bar of durations in seconds. Minutes under 2 h, hours above.
+function tlmSplit(el, parts, small){
+  if(!el) return;
+  const total=parts.reduce((a,p)=>a+(p.value||0),0), u=total>=7200?3600:60;
+  splitbar(el, parts.map(p=>({...p, value:Math.round((p.value||0)/u*10)/10})),
+    {big:loadSecs(total), small:small+(u===60?' · minutes':' · hours')});
+}
+// running balance as a step line, points evenly spaced, dates under it
+function stepLine(el, pts){
+  if(!el) return;
+  if(pts.length<2){ el.innerHTML='<div class="empty">No balance changes yet.</div>'; return; }
+  const W=560, H=200, padL=64, padR=12, padT=14, padB=26, plotW=W-padL-padR, plotH=H-padT-padB;
+  const vals=pts.map(p=>p[1]);
+  let lo=Math.min(...vals), hi=Math.max(...vals);
+  if(hi===lo){ hi+=1; lo-=1; }
+  const r=hi-lo;
+  const yf=n=>Math.abs(n)>=1e6&&r>=1e5 ? (n/1e6).toFixed(r>=1e6?1:2)+'M'
+    : Math.abs(n)>=1e3&&r>=100 ? (n/1e3).toFixed(r>=1e3?0:1)+'k' : fmt(Math.round(n));
+  const x=i=>padL+plotW*i/(pts.length-1), y=val=>padT+plotH*(1-(val-lo)/r);
+  let s=`<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet">`;
+  for(let g=0; g<=4; g++){
+    const val=lo+r*g/4, yy=y(val).toFixed(1);
+    s+=`<line x1="${padL}" y1="${yy}" x2="${W-padR}" y2="${yy}" style="stroke:var(--grid)"/>`+
+       `<text class="axis" x="${padL-6}" y="${(+yy+3).toFixed(1)}" text-anchor="end">${yf(val)}</text>`;
+  }
+  let d=`M${x(0).toFixed(1)} ${y(vals[0]).toFixed(1)}`;
+  for(let i=1;i<pts.length;i++) d+=` H${x(i).toFixed(1)} V${y(vals[i]).toFixed(1)}`;
+  s+=`<path d="${d}" fill="none" style="stroke:var(--cyan)" stroke-width="2"/>`;
+  if(pts.length<=120) pts.forEach((p,i)=>{
+    s+=`<circle cx="${x(i).toFixed(1)}" cy="${y(p[1]).toFixed(1)}" r="2.5" style="fill:var(--cyan)"><title>${esc(ddmm(p[0].slice(0,10)))} ${esc(p[0].slice(11,16))}: ${fmt(p[1])} aUEC</title></circle>`;
+  });
+  const marks=[...new Set([0, Math.floor((pts.length-1)/2), pts.length-1])];
+  marks.forEach(i=>{
+    const anchor=i===0?'start':i===pts.length-1?'end':'middle';
+    s+=`<text class="axis" x="${x(i).toFixed(1)}" y="${H-6}" text-anchor="${anchor}">${esc(ddmm(pts[i][0].slice(0,10)))}</text>`;
+  });
+  el.innerHTML=s+'</svg>';
+}
+function tlmWallet(v){
+  return tlmCard('Wallet', 'aUEC', [
+    {k:'uec_end', ic:'credits', label:current==='all'?'Balance now':'Latest balance', f:auec},
+    {k:'uec_earned', ic:'credits', label:'Earned', f:auec},
+    {k:'uec_spent', ic:'spend', label:'Spent', f:auec},
+    {k:['uec_earned','uec_spent'], ic:'scales', label:'Net', f:(e,s)=>(e>s?'+':e<s?'−':'')+auec(Math.abs(e-s))},
+    {k:'uec_max_rise', ic:'credits', label:'Biggest rise', f:auec},
+    {k:'uec_max_drop', ic:'spend', label:'Biggest drop', f:auec},
+  ], v, {id:'tlm-wallet', keys:['uec_end'], body:`<div id="tlmWalletChart"></div>`});
+}
+function tlmWalletMount(v){ stepLine($('#tlmWalletChart'), (v.tlm||{}).wallet_series||[]); }
+// the settings a player toggles, in card order. The rest stay recorded, not shown.
+const IFCS_SHOWN=[['ifcs_coupled','Coupled'], ['ifcs_esp','ESP'], ['ifcs_g_safe','G-safe'],
+  ['ifcs_cruise_mode','Cruise'], ['ifcs_speed_limiter','Speed limiter'], ['ifcs_proximity_assist','Proximity assist'],
+  ['ifcs_gravity_compensation','Gravity compensation'], ['flight_light_amplification','Light amplification']];
+function tlmFlightCards(v){
+  const km=m=>(m>=100000 ? fmt(Math.round(m/1000)) : (m/1000).toFixed(1))+' km';
+  const rec=tlmCard('Flight records', '', [
+    {k:'top_speed', ic:'flight', label:'Top speed', f:x=>fmt(Math.round(x))+' m/s'},
+    {k:'max_g', ic:'pulse', label:'Max G', f:x=>x.toFixed(1)+' G'},
+    {k:'dist_m', ic:'space', label:'Distance flown', f:km},
+    {k:'takeoffs', ic:'flight', label:'Take-offs', f:fmt},
+    {k:'landings', ic:'planet', label:'Landings', f:fmt},
+    {k:'gear_cycles', ic:'tools', label:'Gear cycles', f:fmt},
+    {k:'t_boost', ic:'time', label:'Boost time', f:loadSecs},
+    {k:'n_boost_critical', ic:'warning', label:'Boost ran out', f:fmt},
+    {k:'h2_used', ic:'cargo', label:'Hydrogen used', f:tlmTanks},
+    {k:'qt_used', ic:'satellite', label:'Quantum fuel used', f:tlmTanks},
+  ], v, {id:'tlm-flight', keys:['t_nav','t_scm'], body:`<div id="tlmModes"></div>`});
+  const fly=tlmCard('How you fly', 'share of flight time', [], v,
+    {id:'tlm-ifcs', keys:['t_ifcs'], body:`<div class="bars" id="tlmIfcs"></div>`});
+  const wpn=tlmCard('Weapons', 'presets by time used', [], v,
+    {id:'tlm-presets', keys:['presets'], body:`<div class="bars" id="tlmPresets"></div>`});
+  return rec+tlmPair(fly, wpn);
+}
+function tlmFlightMount(v){
+  const st=tlmStats(v);
+  if(st.t_nav||st.t_scm) tlmSplit($('#tlmModes'), [
+    {label:'NAV', value:(st.t_nav||{}).v, color:'#b98bff'},
+    {label:'SCM', value:(st.t_scm||{}).v, color:'#42d0e6'}], 'flying');
+  const fi=$('#tlmIfcs');
+  if(fi && st.t_ifcs){
+    const den=(st.t_flying_ifcs||{}).v||0;
+    const t=st.t_ifcs.v;
+    hbars(fi, IFCS_SHOWN.filter(([k])=>t[k]>0).map(([k,name])=>{
+      const pct=den ? Math.min(100, Math.round(100*t[k]/den)) : 0;
+      return {label:name, value:pct, disp:pct+'%', title:loadSecs(t[k])};
+    }));
+  }
+  const pr=$('#tlmPresets');
+  if(pr && st.presets) hbars(pr, Object.entries(st.presets.v).sort((a,b)=>b[1]-a[1])
+    .map(([k,s])=>({label:k, value:s, disp:loadSecs(s), color:'#f4a92a'})));
+}
+const LIGHT_NAMES={misl:'Missile', hit:'Hit', prox:'Proximity', shld:'Shields', pwr:'Power', wpn:'Weapons',
+  thr:'Thrusters', cool:'Cooling', qdrv:'Quantum drive', radr:'Radar'};
+const LIGHT_FIRST=['misl','hit','prox'];
+function tlmCombatCards(v){
+  return tlmCard('Warnings &amp; countermeasures', 'warnings by light', [
+    {k:'cm_used', ic:'target', label:'Decoys used', f:x=>fmt(x.DECOY||0)},
+    {k:'cm_used', ic:'satellite', label:'Noise used', f:x=>fmt(x.NOISE||0)},
+  ], v, {id:'tlm-warn', keys:['warn'], body:`<div class="bars" id="tlmWarn"></div>`});
+}
+function tlmCombatMount(v){
+  const el=$('#tlmWarn'), w=(tlmStats(v).warn||{}).v;
+  if(!el || !w) return;
+  const rank=k=>{ const i=LIGHT_FIRST.indexOf(k); return i<0?99:i; };
+  hbars(el, Object.entries(w).sort((a,b)=>rank(a[0])-rank(b[0]) || b[1]-a[1])
+    .map(([k,n])=>({label:LIGHT_NAMES[k]||k, value:n, disp:fmt(n), color:'#ff9147'})));
+}
+function tlmActivityCards(v){
+  const body=tlmCard('On foot &amp; in seat', 'time split', [], v,
+    {id:'tlm-body', keys:['t_on_foot','t_eva','t_seated','t_pilot','t_gunner','t_crew'],
+     body:`<div class="grid2"><div id="tlmLoco"></div><div id="tlmCrew"></div></div>`});
+  const temp=x=>Math.round(x)+' °C';
+  const surv=tlmCard('Survival', '', [
+    {k:'n_downed', ic:'medical', label:'Times downed', f:fmt},
+    {k:'n_dead', ic:'deaths', label:'Deaths', f:fmt},
+    {k:'t_no_air', ic:'warning', label:'Out of air', f:loadSecs},
+    {k:'min_health', ic:'medical', label:'Lowest health', f:x=>fmt(Math.round(x))},
+    {k:'t_starving', ic:'time', label:'Starving', f:loadSecs},
+    {k:'t_dehydrated', ic:'time', label:'Dehydrated', f:loadSecs},
+    {k:'max_radiation', ic:'warning', label:'Peak radiation', f:tlmNum},
+    {k:'max_intox', ic:'pulse', label:'Peak intoxication', f:tlmNum},
+    {k:'max_ext_temp', ic:'day', label:'Hottest surroundings', f:temp},
+    {k:'min_ext_temp', ic:'night', label:'Coldest surroundings', f:temp},
+  ], v, {id:'tlm-survival'});
+  return tlmPair(body, surv);
+}
+function tlmActivityMount(v){
+  const st=tlmStats(v), s=k=>(st[k]||{}).v;
+  if(st.t_on_foot||st.t_eva||st.t_seated) tlmSplit($('#tlmLoco'), [
+    {label:'On foot', value:s('t_on_foot'), color:'#4ade80'},
+    {label:'EVA', value:s('t_eva'), color:'#b98bff'},
+    {label:'Seated', value:s('t_seated'), color:'#42d0e6'}], 'on foot, EVA, seated');
+  if(st.t_pilot||st.t_gunner||st.t_crew) tlmSplit($('#tlmCrew'), [
+    {label:'Pilot', value:s('t_pilot'), color:'#42d0e6'},
+    {label:'Gunner', value:s('t_gunner'), color:'#ff9147'},
+    {label:'Crew', value:s('t_crew'), color:'#f4a92a'}], 'pilot, gunner, crew');
+}
+
 function secFlight(v){
   // per-session/per-hour rates only mean something where jumps were actually logged
   const jps = (v.qt_known!==false && v.sessions) ? (v.qt/v.sessions).toFixed(1) : null;
@@ -9573,8 +10604,9 @@ function secFlight(v){
       ])+
       barsCard('Systems Visited','sessions with location activity there','sysBars')+
       noteFold(
-        `Systems come from location names in the log. Fuel and distance aren't logged.`,
-        `Stanton, Pyro and Nyx are the only live systems; a session counts for one if any location there shows up. Refuelling is a server-side transaction and the client only logs an error with no amount, so fuel used and refuel spend can't be shown. Fuel pods bought at a shop count under Economy — that's a purchase, not a refuel.`)
+        `Systems come from location names in the log. `+(tlmOn(v) ? `Fuel and distance aren't in the game log. Flight records come from telemetry.`
+          : `Fuel and distance aren't logged. Turn on telemetry in Backup &amp; transfer to record them.`),
+        `Stanton, Pyro and Nyx are the only live systems. A session counts for one if any location there shows up. Refuelling is a server-side transaction. The client only logs an error with no amount.`+(tlmOn(v) ? ` Fuel used comes from telemetry. Refuel spend isn't recorded.` : ` Fuel used and refuel spend can't be shown.`)+` Fuel pods bought at a shop count under Economy as purchases.`)
     )+
     group(3,'planet','Where You\u2019ve Been','Jurisdictions, armistice zones and hangar requests from the HUD, plus the places you landed',
       (v.hud_known ? kpiRow([
@@ -9594,8 +10626,10 @@ function secFlight(v){
       placesHTML(v)+
       noteFold(
         `From the HUD notices the game writes to the log, 4.5 onward.`,
-        `A jurisdiction is who owns the space: UEE for open Stanton space, the four corporations for their planets, Ungoverned, Rough &amp; Ready and People\u2019s Alliance for Pyro, Klescher for prison. Armistice-zone notices fire at every hangar door, so entries within ten minutes count as one visit. The calibration notice names the pilot, so a jump someone else started is a crew jump. Party time runs from accepting an invite to leaving the group; a party you host leaves no trace.`))
+        `A jurisdiction is who owns the space: UEE for open Stanton space, the four corporations for their planets, Ungoverned, Rough &amp; Ready and People\u2019s Alliance for Pyro, Klescher for prison. Armistice-zone notices fire at every hangar door, so entries within ten minutes count as one visit. The calibration notice names the pilot, so a jump someone else started is a crew jump. Party time runs from accepting an invite to leaving the group; a party you host leaves no trace.`))+
+    tlmGroup(4,'pulse',tlmFlightCards(v))
   ;
+  tlmFlightMount(v);
   const byTime = v.ships_rank==='time';
   const shipItems=(v.ships_top||[]).map(([n,c,first,last,to,aboard,seat])=>({label:n, full:n,
     value: byTime ? aboard : c, href:wikiURL(n),
@@ -9700,7 +10734,9 @@ function secCombat(v){
         [icon('deaths'), fmt(v.corpse_loots||0), 'Corpse loots (approx.)', `gear stripped off NPC bodies`],
       ])
     )+
+    tlmGroup(6,'warning',tlmCombatCards(v))+
     `${NOTE}`;
+  tlmCombatMount(v);
   hbars($('#gunBars'), toItems(guns.map(w=>[w[0],w[1]]), null, true), {art:'gun'});
   hbars($('#toolBars'), toItems(tools.map(w=>[w[0],w[1]]), null, true).map(x=>({...x,tool:true})), {art:'item'});
   splitbar($('#causeChart'), [{label:'Collision',value:dc.collision,color:'#ff9147'},{label:'Destroyed / other',value:dc.other,color:'#ff5468'}], {big:v.deaths, small:'ship deaths'});
@@ -9835,8 +10871,10 @@ function secEconomy(v){
     group(1,'spend','Spending','Where your aUEC went — every shop purchase your client sent',
       K+`<div class="grid2">`+barsCard('Top Items Bought','ranked by aUEC spent · qty shown','itemBars')+
       barsCard('What You Buy','purchases by item category','catBars')+`</div>`)+commRow+
+    tlmGroup(3,'credits',tlmWallet(v))+
     noteFold(
-      `Spend is real — the log carries the price of every purchase. Balance, earnings and sales aren't logged.`,
+      `Spend is real — the log carries the price of every purchase. `+(tlmOn(v) ? `Balance, earnings and sales aren't in the game log. Wallet is from telemetry.`
+        : `Balance, earnings and sales aren't logged. Turn on telemetry in Backup &amp; transfer to record them.`),
       `Purchases are grouped by item category rather than store; the shop codes in the log aren't reliable brand names. Fleet size is your ASOP list read at a terminal, so it includes ships bought with aUEC as well as pledges.`);
   const bought=(v.top_items||[]).map(([n,amt,q])=>({label:n, value:amt, disp:auec(amt)+' · ×'+fmt(q), href:wikiURL(n),
     ak: lart('ship', n) ? 'ship' : 'item'}));
@@ -9845,6 +10883,7 @@ function secEconomy(v){
   const topShip=bought.find(d=>d.ak==='ship'), lead=topShip||bought[0];
   if(lead) mountHero(lead.ak, lead.label, topShip?'Biggest ship purchase':'Top purchase', lead.disp, lead.href);
   hbars($('#catBars'), (v.buy_cats||[]).map(([n,c])=>({label:n, value:c, disp:fmt(c)+' buys'})));
+  tlmWalletMount(v);
 }
 
 // ---- Blueprints (4.7+) ----
@@ -10519,7 +11558,8 @@ function secActivity(v){
       `<div class="grid3" style="margin-top:16px">`+
       cardHTML('By Hour','play start time','hourChart')+
       cardHTML('By Weekday','','dowChart')+
-      barsCard('Session Length','how long you play','distBars')+`</div>`);
+      barsCard('Session Length','how long you play','distBars')+`</div>`)+
+    tlmGroup(3,'activity',tlmActivityCards(v));
   const ms=Object.keys(v.months).sort();
   const mitems=ms.map(m=>{const [y,mm]=m.split('-');return {label:MON[+mm-1]+" '"+y.slice(2), value:+(v.months[m]/3600).toFixed(1), disp:(v.months[m]/3600).toFixed(0)+' h', full:m, color:'#3fd0e6'};});
   if(mitems.length) vbars($('#monthChart'), mitems, {h:230, w:Math.max(560,mitems.length*54), rot:true, fmtY:x=>x+'h'});
@@ -10529,6 +11569,7 @@ function secActivity(v){
   vbars($('#hourChart'), v.by_hour.map((c,i)=>({label:(i%3===0?String(i):''), value:c, full:i+':00', disp:c+' sessions', color:'#b98bff'})), {h:210, maxbw:16});
   vbars($('#dowChart'), v.by_dow.map((c,i)=>({label:DOW[i], value:c, full:DOW[i], disp:c+' sessions', color:'#f4a92a'})), {h:210});
   hbars($('#distBars'), (v.session_dist||[]).map(([n,c])=>({label:n, value:c, disp:fmt(c)})));
+  tlmActivityMount(v);
 }
 
 // ---- System & Stability ----
@@ -11063,8 +12104,17 @@ function navLive(w){
   const on=!!(SERVED && w && w.on);
   d.classList.toggle('on', on);
   d.classList.toggle('hot', !!(on && w.live));
-  if(on) d.title = w.live ? 'Session live — checking every '+w.poll+'s'
-                          : 'Watching your logs — checking every '+w.poll+'s';
+  if(on) d.title = (w.live ? 'Session live — checking every '+w.poll+'s'
+                          : 'Watching your logs — checking every '+w.poll+'s')+
+                   (TLM_LINE?'\nTelemetry: '+TLM_LINE:'');
+}
+let TLM_LINE='';
+function tlmLine(t){
+  if(!t||t.state==='idle') return '';
+  if(t.state==='live') return t.file?'recording':(t.reason==='write'?"can't write the file":'live, not recording');
+  if(t.state==='waiting') return 'waiting for the game';
+  if(t.state==='off') return t.reason==='schema'?'no schema':(t.reason==='other'?'recording in another CSR window':'off in the game');
+  return '';
 }
 var LAST_WATCH=null;
 function renderWatch(w){
@@ -11118,7 +12168,8 @@ function renderWatch(w){
     `<div class="wbar"><span>Poll <b>${w.poll}s</b></span>`+
     (w.ago!=null?`<span>All channels <b>${esc(seen(w.ago))}</b></span>`:'')+
     `<span>Events raised <b>${fmt(w.raised)}</b></span>`+
-    `<span>Watching for <b>${ago(w.uptime)}</b></span></div>`;
+    `<span>Watching for <b>${ago(w.uptime)}</b></span>`+
+    (TLM_LINE?`<span>Telemetry: <b>${esc(TLM_LINE)}</b></span>`:'')+`</div>`;
 }
 // ---- inline confirmation ----
 // The button arms into its own confirm rather than opening a modal, so destructive
@@ -11802,6 +12853,9 @@ document.addEventListener('keydown',e=>{
 });
 
 document.querySelectorAll('#nav a').forEach(a=>{
+  if(!a.dataset.sec){   // plain links (Live view) open as-is
+    const ls=a.querySelector('span'); if(ls&&a.id==='navLiveView') ls.innerHTML=ICON.satellite;
+    return; }
   const s=a.querySelector('span'); if(s&&ICON[a.dataset.sec]) s.innerHTML=ICON[a.dataset.sec];  // swap emoji → HUD glyph
   a.onclick=(e)=>{ e.preventDefault();
     section=a.dataset.sec; document.querySelectorAll('#nav a').forEach(x=>x.classList.toggle('active',x===a)); render();
@@ -11987,6 +13041,7 @@ fetch('/api/status').then(r=>r.ok?r.json():Promise.reject()).then(s=>{
   // SERVED flips here, asynchronously — anything whose visibility depends on it has
   // to be told again, or it stays hidden from the one render that ran before this.
   SERVED=true; $('#refreshBtn').style.display=''; $('#dataBtn').style.display='';
+  $('#navLiveView').style.display='';
   renderBell();
   if(s&&s.sessions!=null) $('#dmCount').textContent=fmt(s.sessions)+' sessions';
   if(s&&s.online){ ONLINE=s.online; olWhen(); }
@@ -12165,6 +13220,7 @@ function pollStatus(){
     .then(s=>{ if(s&&s.online){ONLINE=s.online; olWhen();}
                if(s){CSR_CONSOLE={hidden:!!s.console_hidden,supported:!!s.console_supported,log:!!s.log_file,autostart:s.autostart};}
                if(s&&s.events) s.events.forEach(showAlert);
+               if(s) TLM_LINE=tlmLine(s.tlm);
                if(s&&s.watch) renderWatch(s.watch);
                // check in more often while Star Citizen is actually writing its log,
                // so a crash surfaces in ~5s instead of ~8s; back off when it isn't
@@ -12250,9 +13306,137 @@ $('#olBtn').onclick=()=>{
 };
 
 // ---- data / backup modal: export + import the session archive ----
-$('#dataBtn').onclick=()=>{ $('#dmMsg').textContent=''; olWhen(); modal('dataModal',true); };
-$('#dmClose').onclick=()=>modal('dataModal',false);
-$('#dmExport').onclick=()=>{ window.location='/api/export'; $('#dmMsg').innerHTML='<span style="color:var(--cyan)">Downloading your archive…</span>'; };
+$('#dataBtn').onclick=()=>{ $('#dmMsg').textContent=''; olWhen(); modal('dataModal',true); tlmOpen(true); };
+$('#dmClose').onclick=()=>{ modal('dataModal',false); tlmOpen(false); };
+// ---- telemetry card (in the Backup & transfer modal) ----
+const TLM_GROUP_LABELS=[['wallet','Wallet'],['vitals','Vitals'],['surroundings','Surroundings'],
+  ['you','You'],['events','Events'],['flight','Flight'],['ship','Ship systems'],
+  ['weapons','Weapons'],['settings','Settings'],['turret','Turret'],
+  ['force_feedback','Force feedback'],['other','Other']];
+const tlmMB=b=>(b/1048576).toFixed(b>=104857600?0:1)+' MB';
+function tlmRecText(r){
+  r=r||{};
+  if(r.state==='live'){
+    if(r.file) return 'Recording · '+tlmMB(r.bytes||0);
+    return r.reason==='write' ? "Live. Recording stopped, can't write the file." : 'Live, not recording';
+  }
+  if(r.state==='waiting') return 'Waiting for the game';
+  if(r.state==='off') return r.reason==='schema' ? 'No telemetry schema for this game build.'
+    : r.reason==='other' ? 'Recording in another CSR window.' : 'Telemetry off in the game';
+  return 'Game not running';
+}
+function tlmErr(t){ const e=$('#tlmErr'); if(e) e.textContent=t||''; }
+function tlmPost(path,body){
+  return fetch(path,{method:'POST',body:JSON.stringify(body||{})}).then(r=>r.json());
+}
+function tlmSave(change){
+  tlmErr('');
+  return tlmPost('/api/telemetry/settings',change).then(res=>{
+    if(!res.ok){ tlmErr(res.error||'Could not save.'); }
+    tlmLoad();
+  }).catch(()=>{ tlmErr('Lost contact with CSR.'); tlmLoad(); });
+}
+function tlmRenderChannels(chs){
+  const box=$('#tlmChannels'); if(!box) return;
+  box.textContent='';
+  Object.keys(chs||{}).forEach(lab=>{
+    const c=chs[lab]||{};
+    const t=c.line&&c.applied?'On in the game':(c.line?'Line added. Takes effect next launch.':'Off in the game');
+    const row=document.createElement('div'); row.className='tlmrow';
+    const n=document.createElement('span'); n.className='tlml'; n.textContent=lab;
+    const m=document.createElement('span'); m.textContent=t;
+    row.append(n,m);
+    if(!c.line){
+      const b=document.createElement('button');
+      b.className='mbtn ghost tlmbtn'; b.id='tlmEnable-'+lab; b.textContent='Turn on';
+      b.onclick=()=>confirmBtn(b,'Confirm',()=>{
+        tlmErr('');
+        tlmPost('/api/telemetry/enable',{channel:lab}).then(res=>{
+          if(!res.ok) tlmErr(res.msg||'Could not change user.cfg.');
+          tlmLoad();
+        }).catch(()=>tlmErr('Lost contact with CSR.'));
+      });
+      row.append(b);
+    }
+    box.append(row);
+  });
+}
+function tlmRender(st){
+  const s=st.settings||{};
+  tlmRenderChannels(st.channels);
+  $('#tlmRecord').checked=!!s.record;
+  $('#tlmDetail').value=s.detail||'normal';
+  $('#tlmKeep').value=s.keep_days==null?'':String(s.keep_days);
+  const on=new Set(s.groups||[]);
+  $('#tlmGroups').innerHTML=TLM_GROUP_LABELS.map(([k,l])=>
+    `<label><input type="checkbox" data-g="${k}"${on.has(k)?' checked':''}>${esc(l)}</label>`).join('');
+  $('#tlmGroups').querySelectorAll('input').forEach(i=>{
+    i.onchange=()=>{
+      const g=[...$('#tlmGroups').querySelectorAll('input:checked')].map(x=>x.dataset.g);
+      tlmSave({groups:g});
+    };
+  });
+  $('#tlmPhone').checked=!!s.phone;
+  const ph=st.phone||{};
+  $('#tlmPhoneBox').style.display=(s.phone&&ph.url)?'':'none';
+  $('#tlmQr').innerHTML=ph.qr_svg||'';
+  $('#tlmUrl').textContent=ph.url||'';
+  if(s.phone&&!ph.url) tlmErr(ph.why==='ports'?"Phone view didn't start. Ports 7890-7899 are in use."
+    :ph.why==='config'?"Phone view didn't start. Can't save the link key to csr_config.json."
+    :"Phone view didn't start.");
+  tlmLive(st);
+}
+// the parts that change while the game runs
+function tlmLive(st){
+  $('#tlmRec').textContent=tlmRecText(st.recorder);
+  $('#tlmDisk').textContent='Recordings use '+tlmMB(st.disk||0)+'.';
+  $('#dmExportTlmLbl').textContent='Include telemetry recordings ('+tlmMB(st.disk||0)+')';
+  const u=st.unmatched||[], box=$('#tlmUnmatched');
+  if(u.length){
+    const names=u.map(e=>typeof e==='string'?e:(e&&(e.file||e.name))||'').filter(Boolean);
+    box.style.display='';
+    box.textContent=u.length+' unmatched recording'+(u.length===1?'':'s')+': '+
+      names.slice(0,10).join(', ')+(names.length>10?' +'+(names.length-10)+' more':'');
+  }else box.style.display='none';
+}
+function tlmLoad(){
+  return fetch('/api/telemetry/status',{cache:'no-store'}).then(r=>r.json()).then(st=>{
+    if(st&&st.settings) tlmRender(st);
+  }).catch(()=>{});
+}
+$('#tlmRecord').onchange=e=>tlmSave({record:e.target.checked});
+$('#tlmDetail').onchange=e=>tlmSave({detail:e.target.value});
+$('#tlmKeep').onchange=e=>tlmSave({keep_days:e.target.value===''?null:+e.target.value});
+$('#tlmPhone').onchange=e=>tlmSave({phone:e.target.checked});
+$('#tlmNewLink').onclick=()=>{
+  tlmErr('');
+  tlmPost('/api/telemetry/new-link').then(res=>{ if(!res.ok) tlmErr(res.error||'Could not save.'); tlmLoad(); })
+    .catch(()=>tlmErr('Lost contact with CSR.'));
+};
+$('#tlmDeleteAll').onclick=()=>confirmBtn($('#tlmDeleteAll'),'Confirm. Deletes every recording. Career stats stay.',()=>{
+  tlmErr('');
+  tlmPost('/api/telemetry/delete-all').then(res=>{ if(!res.ok) tlmErr(res.error||'Could not delete.'); tlmLoad(); })
+    .catch(()=>tlmErr('Lost contact with CSR.'));
+});
+let tlmTimer=null;
+function tlmOpen(on){
+  clearInterval(tlmTimer);
+  if(!on) return;
+  tlmLoad();
+  tlmTimer=setInterval(()=>{
+    if(!$('#dataModal').classList.contains('on')){ clearInterval(tlmTimer); return; }
+    if($('#tlmCard .danger')) return;
+    fetch('/api/telemetry/status',{cache:'no-store'}).then(r=>r.json()).then(st=>{
+      if(st&&st.settings) tlmLive(st);
+    }).catch(()=>{});
+  },4000);
+}
+
+$('#dmExport').onclick=()=>{
+  const z=$('#dmExportTlm').checked;
+  window.location='/api/export'+(z?'?tlm=1':'');
+  $('#dmMsg').innerHTML='<span style="color:var(--cyan)">'+(z?'Preparing your backup…':'Downloading your archive…')+'</span>';
+};
 // The three card titles carried emoji: ⬇ and ⬆ rendered as plain glyphs in the text
 // colour, but 📁 came out as a full-colour emoji — one yellow icon in a row of white
 // ones. Swap all three for the HUD set so they match each other and the rest of the UI.
@@ -12263,19 +13447,26 @@ $('#dmImportBtn').onclick=()=>$('#dmFile').click();
 $('#dmFile').onchange=e=>{
   const files=[...e.target.files]; e.target.value=''; if(!files.length) return;
   modal('dataModal',false); CSRTerm.start();
-  // read every chosen backup, combine their sessions into one payload, import once
-  Promise.all(files.map(f=>f.text())).then(texts=>{
-    let sessions=[], bad=0, prefs={pins:{}, main:{}};
-    texts.forEach(t=>{ try{ const d=JSON.parse(t); if(d&&Array.isArray(d.sessions)) sessions=sessions.concat(d.sessions); else bad++;
+  const zips=files.filter(f=>/\.zip$/i.test(f.name)), jsons=files.filter(f=>!/\.zip$/i.test(f.name));
+  // zips go up one at a time as raw bytes, the JSON backups are combined and imported once
+  const sendZips=()=>zips.reduce((p,f)=>p.then(()=>fetch('/api/import-zip',{method:'POST',
+      headers:{'Content-Type':'application/zip'},body:f}).then(r=>r.json()).then(res=>{
+        if(!res.ok) throw new Error(res.error||'bad file'); })), Promise.resolve());
+  Promise.all(jsons.map(f=>f.text())).then(texts=>{
+    let sessions=[], telemetry=[], bad=0, prefs={pins:{}, main:{}};
+    texts.forEach(t=>{ try{ const d=JSON.parse(t); if(d&&Array.isArray(d.sessions)){ sessions=sessions.concat(d.sessions); if(Array.isArray(d.telemetry)) telemetry=telemetry.concat(d.telemetry); } else bad++;
       const q=d&&d.prefs; if(q){ Object.entries(q.pins||{}).forEach(([a,ks])=>{ prefs.pins[a]=[...new Set((prefs.pins[a]||[]).concat(ks||[]))]; });
         Object.entries(q.main||{}).forEach(([c,a])=>{ if(!prefs.main[c]) prefs.main[c]=a; }); } }catch(_){ bad++; } });
-    if(!sessions.length){ CSRTerm.fail(bad?'those files aren’t CSR backups':'nothing to import'); return; }
-    return fetch('/api/import',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessions, prefs})})
-      .then(r=>r.json()).then(res=>{
-        if(res.ok){ CSRTerm.finish(()=>location.reload()); }
-        else{ CSRTerm.fail('import failed: '+(res.error||'bad file')); }
-      });
-  }).catch(()=>{ CSRTerm.fail('is the CSR app still running?'); });
+    if(!sessions.length&&!zips.length){ CSRTerm.fail(bad?'those files aren’t CSR backups':'nothing to import'); return; }
+    return sendZips().then(()=>{
+      if(!sessions.length){ CSRTerm.finish(()=>location.reload()); return; }
+      return fetch('/api/import',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessions,telemetry,prefs})})
+        .then(r=>r.json()).then(res=>{
+          if(res.ok){ CSRTerm.finish(()=>location.reload()); }
+          else{ CSRTerm.fail('import failed: '+(res.error||'bad file')); }
+        });
+    });
+  }).catch(e=>{ CSRTerm.fail(e&&e.message?'import failed: '+e.message:'is the CSR app still running?'); });
 };
 // Escape hatch for the native dialog. It shares runImportFolder() with the picker, so
 // both routes go through exactly the same import — only the way the path is obtained
@@ -12483,6 +13674,12 @@ def ONBOARD_HTML():
             .replace("<!--__TERMINAL__-->", TERMINAL_HTML)
             .replace("__CSR_VERSION__", CSR_VERSION)
             .replace("__CSR_CONTACT__", CSR_CONTACT))
+
+
+def LIVE_HTML():
+    """The Kestrel K-7 slate (sc_slate) with the fonts filled in."""
+    return sc_slate.slate_html().replace(
+        "/*__FONTS__*/", sc_names.fetch_google_fonts_embed(cache_file("sc_fonts_embed.css")))
 
 
 _RESOLVERS_LOADED = False
@@ -12891,6 +14088,11 @@ def serve(out_path, port=7878, explicit_logs=None, open_browser=True,
         if TRAY["t"]:
             TRAY["t"].stop()                  # no dead icon left behind
         try:
+            recorder.stop()                   # close an open recording cleanly
+        except Exception:
+            pass
+        stop_phone_server()
+        try:
             srv.shutdown()
             srv.server_close()                # release the port before the new process
         except Exception:
@@ -12933,6 +14135,8 @@ def serve(out_path, port=7878, explicit_logs=None, open_browser=True,
         GRACE = 900                          # 15 min — long enough for a background tab
         while True:
             time.sleep(30)
+            if recorder.connected:           # the game is streaming: stay up
+                state["seen"] = time.time()
             if TRAY["t"] or not _CONSOLE_HIDDEN:  # the tray icon is the way back in
                 continue
             if time.time() - state.get("seen", 0) > GRACE:
@@ -12964,6 +14168,65 @@ def serve(out_path, port=7878, explicit_logs=None, open_browser=True,
             state["sessions"] = data["log_count"]
             return True
 
+    # Telemetry recorder: its own thread, records while the game streams. Index upkeep
+    # and the page rebuild after a recording closes run on tlm_worker, never on the
+    # recorder thread or a request thread.
+    tlm_root = sc_tlm_stats.tlm_dir(app_dir())
+    tlm_wake = threading.Event()
+
+    def tlm_skip():
+        f = recorder.status().get("file")
+        return frozenset((f, os.path.basename(f))) if f else frozenset()
+
+    def tlm_housekeeping():
+        """Index new recordings, apply retention. True when the index changed."""
+        try:
+            skip = tlm_skip()
+            before = sc_tlm_stats.load_index(tlm_root)
+            sc_tlm_stats.refresh_index(tlm_root, skip=skip)
+            sc_tlm_stats.apply_retention(tlm_root, tlm_settings().get("keep_days"),
+                                         datetime.now(), skip=skip)
+            return sc_tlm_stats.load_index(tlm_root) != before
+        except Exception as e:
+            cerr(f"telemetry index error: {e}")
+            return False
+
+    def tlm_worker():
+        while True:
+            tlm_wake.wait()
+            tlm_wake.clear()
+            if tlm_housekeeping() and (state["configured"] or state["has_work"]):
+                do_generate(quick=True)
+
+    def tlm_closed(_path):
+        # refresh_index leaves files written in the last RECENT_S alone: wait that out
+        t = threading.Timer(sc_tlm_stats.RECENT_S + 1, tlm_wake.set)
+        t.daemon = True
+        t.start()
+
+    recorder = sc_telemetry.Recorder(
+        tlm_root, get_settings=lambda: {**tlm_settings(), "csr": CSR_VERSION},
+        game_running=_sc_process_running, pick_channel=tlm_channel_now,
+        on_close=tlm_closed)
+
+    def tlm_status():
+        s = tlm_settings()
+        return {"settings": {k: v for k, v in s.items() if k != "phone_key"},
+                "recorder": recorder.status(),
+                "channels": {lab: user_cfg_state(cdir)
+                             for lab, cdir in list(_CHANNEL_DIRS.items())},
+                "disk": sc_tlm_stats.disk_usage(tlm_root),
+                "unmatched": _TLM_UNMATCHED,
+                "phone": phone_status()}
+
+    def phone_seen():
+        state["seen"] = time.time()          # a live view polling (PC or phone) counts
+
+    def phone_sync():
+        err = phone_sync_error(live=recorder.live, on_seen=phone_seen)
+        if err:
+            cerr(err)
+
     csr_banner()
     # scanning runs in the BACKGROUND so the browser can open onto the animated
     # loading terminal immediately, instead of waiting for the scan to finish.
@@ -12986,7 +14249,17 @@ def serve(out_path, port=7878, explicit_logs=None, open_browser=True,
             except Exception:
                 pass
 
+        def _refused(self, method):
+            """403 for a request another site could have sent. True when refused."""
+            if local_request_ok(method, self.headers, port):
+                return False
+            self.close_connection = True
+            self._send(403, json.dumps({"ok": False, "error": "Forbidden."}))
+            return True
+
         def do_GET(self):
+            if self._refused("GET"):
+                return
             p = self.path.split("?")[0]
             if p in ("/", "/index.html", "/CSR.html", "/sc_stats.html"):
                 if state["configured"] and state["html"]:
@@ -12996,6 +14269,8 @@ def serve(out_path, port=7878, explicit_logs=None, open_browser=True,
                     self._send(200, BOOT_HTML(), "text/html; charset=utf-8")   # scanning → terminal
                 else:
                     self._send(200, ONBOARD_HTML(), "text/html; charset=utf-8")
+            elif p == "/live":
+                self._send(200, LIVE_HTML(), "text/html; charset=utf-8")
             elif p == "/api/status":
                 state["seen"] = time.time()    # heartbeat — see the watchdog in serve()
                 self._send(200, json.dumps({
@@ -13012,23 +14287,28 @@ def serve(out_path, port=7878, explicit_logs=None, open_browser=True,
                     # session is currently writing (the page polls faster while it is)
                     "events": watch_events(),
                     "session_live": _WATCH["live"],
-                    "watch": watch_status()}))
+                    "watch": watch_status(),
+                    "tlm": recorder.status()}))
+            elif p in ("/api/telemetry/live", "/api/telemetry/status", "/api/telemetry/ship"):
+                try:
+                    body = tlm_api_get(self.path, recorder.live, tlm_status, phone_seen)
+                except Exception as e:
+                    self._send(200, json.dumps({"ok": False, "error": str(e)}))
+                    return
+                self._send(200, body) if body is not None else self._send(404, "{}")
             elif p == "/api/export":
                 # hand over the accumulated archive as a downloadable backup
+                want_zip = "tlm=1" in (self.path.split("?", 1)[1] if "?" in self.path else "")
                 try:
-                    raw = open(archive_path(), "rb").read()
-                except Exception:
-                    save_archive([])
-                    raw = open(archive_path(), "rb").read()
-                try:                               # pins and main accounts ride along
-                    d = json.loads(raw)
-                    d["prefs"] = load_prefs()
-                    raw = json.dumps(d, default=_json_default).encode("utf-8")
-                except Exception:
-                    pass
-                stamp = datetime.now().strftime("%Y-%m-%d")
-                self._send(200, raw, "application/json",
-                           extra={"Content-Disposition": f'attachment; filename="CSR-archive-{stamp}.json"'})
+                    if want_zip:
+                        self._send_zip()
+                        return
+                    raw, ctype, fname = export_payload(False, root=tlm_root)
+                except Exception as e:
+                    self._send(500, json.dumps({"ok": False, "error": str(e)}))
+                    return
+                self._send(200, raw, ctype,
+                           extra={"Content-Disposition": f'attachment; filename="{fname}"'})
             else:
                 self._send(404, "{}")
 
@@ -13046,15 +14326,61 @@ def serve(out_path, port=7878, explicit_logs=None, open_browser=True,
                     "error": "That doesn't look right — pick your StarCitizen folder (the "
                              "one containing LIVE / PTU), or a LIVE folder directly."}))
                 return
+            if remember_folder(path) is None:
+                self._send(200, json.dumps({"ok": False, "error":
+                    f"Could not save {config_path()}. Folder not saved."}))
+                return
             state["live_path"] = path
-            save_config({"live_path": path})
             self._send(200, json.dumps({"ok": True, "path": path}))
+
+        def _send_zip(self):
+            tmp, fname = export_zip_file(tlm_root)
+            try:
+                with open(tmp, "rb") as f:
+                    size = os.fstat(f.fileno()).st_size
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/zip")
+                    self.send_header("Content-Length", str(size))
+                    self.send_header("Cache-Control", "no-store")
+                    self.send_header("Content-Disposition", f'attachment; filename="{fname}"')
+                    self.end_headers()
+                    try:
+                        shutil.copyfileobj(f, self.wfile, 1024 * 1024)
+                    except Exception:
+                        pass
+            finally:
+                os.remove(tmp)
+
+        def _body_to_file(self, limit):
+            """Read the request body into a temp file. Returns its path, None when over limit."""
+            n = int(self.headers.get("Content-Length", 0) or 0)
+            if n <= 0 or n > limit:
+                self.close_connection = True
+                return None
+            fd, tmp = tempfile.mkstemp(suffix=".zip", prefix="csr-import-")
+            try:
+                with os.fdopen(fd, "wb") as out:
+                    left = n
+                    while left > 0:
+                        chunk = self.rfile.read(min(1024 * 1024, left))
+                        if not chunk:
+                            break
+                        out.write(chunk)
+                        left -= len(chunk)
+                if left:
+                    raise OSError("upload cut short")
+            except Exception:
+                os.remove(tmp)
+                raise
+            return tmp
 
         def _body(self):
             n = int(self.headers.get("Content-Length", 0) or 0)
             return self.rfile.read(n).decode("utf-8", "replace") if n else ""
 
         def do_POST(self):
+            if self._refused("POST"):
+                return
             p = self.path.split("?")[0]
             if p == "/api/refresh":
                 # ?full=1 re-parses every log; default reads only new/changed ones
@@ -13113,6 +14439,11 @@ def serve(out_path, port=7878, explicit_logs=None, open_browser=True,
                     return
                 try:
                     added, total = import_archive_file(body)
+                    try:
+                        tl = json.loads(body).get("telemetry")
+                    except Exception:
+                        tl = None
+                    n = import_telemetry(tl, {}, root=tlm_root)
                 except Exception as e:
                     self._send(200, json.dumps({"ok": False, "error": str(e)}))
                     return
@@ -13122,8 +14453,42 @@ def serve(out_path, port=7878, explicit_logs=None, open_browser=True,
                         save_prefs(merge_prefs(load_prefs(), inc))
                 except Exception:
                     pass
+                note = None
+                if n:
+                    try:
+                        sc_tlm_stats.refresh_index(tlm_root, skip=tlm_skip())
+                    except Exception as e:
+                        note = "Recordings imported, index update failed: %s" % e
                 do_generate()                      # rebuild the dashboard from the merged archive
                 self._send(200, json.dumps({"ok": True, "added": added, "total": total,
+                                            "telemetry": n, "note": note,
+                                            "log_count": state["log_count"]}))
+            elif p == "/api/import-zip":           # backup zip with recordings
+                try:
+                    tmp = self._body_to_file(IMPORT_ZIP_MAX)
+                except Exception as e:
+                    self._send(200, json.dumps({"ok": False, "error": str(e)}))
+                    return
+                if tmp is None:
+                    self._send(200, json.dumps({"ok": False, "error": "file is empty or over 2 GB"}))
+                    return
+                note = None
+                try:
+                    res = import_zip_file(tmp, root=tlm_root)
+                    try:
+                        sc_tlm_stats.refresh_index(tlm_root, skip=tlm_skip())
+                    except Exception as e:
+                        note = "Recordings imported, index update failed: %s" % e
+                except zipfile.BadZipFile:
+                    self._send(200, json.dumps({"ok": False, "error": "not a zip file"}))
+                    return
+                except Exception as e:
+                    self._send(200, json.dumps({"ok": False, "error": str(e)}))
+                    return
+                finally:
+                    os.remove(tmp)
+                do_generate()
+                self._send(200, json.dumps({"ok": True, **res, "note": note,
                                             "log_count": state["log_count"]}))
             elif p == "/api/console":
                 try:
@@ -13235,6 +14600,46 @@ def serve(out_path, port=7878, explicit_logs=None, open_browser=True,
                     _SETTINGS_CACHE.pop(chan, None)
                     do_generate(quick=True)
                 self._send(200, json.dumps({"ok": ok, "msg": msg, "which": which}))
+            elif p == "/api/telemetry/settings":
+                try:
+                    req = json.loads(self._body() or "{}")
+                except Exception:
+                    req = None
+                ok, res = validate_tlm_settings(req)
+                if not ok:
+                    self._send(200, json.dumps({"ok": False, "error": res}))
+                    return
+                saved = save_tlm_settings(res)
+                if saved is None:
+                    self._send(200, json.dumps({"ok": False, "error":
+                        f"Could not save {config_path()}. Settings not changed."}))
+                    return
+                if "keep_days" in res:
+                    tlm_wake.set()             # apply the new retention off this thread
+                if "phone" in res:
+                    phone_sync()
+                self._send(200, json.dumps(_json_safe(tlm_settings_reply(tlm_status, saved)),
+                                           default=str))
+            elif p == "/api/telemetry/new-link":
+                if new_phone_key() is None:
+                    self._send(200, json.dumps({"ok": False, "error":
+                        f"Could not save {config_path()}. Link not changed."}))
+                    return
+                self._send(200, json.dumps(_json_safe({"ok": True, **tlm_status()}),
+                                           default=str))
+            elif p == "/api/telemetry/enable":
+                try:
+                    chan = (json.loads(self._body() or "{}") or {}).get("channel")
+                except Exception:
+                    chan = None
+                cdir = _CHANNEL_DIRS.get(chan) if isinstance(chan, str) else None
+                ok, msg = enable_user_cfg(cdir)
+                self._send(200, json.dumps({"ok": ok, "msg": msg,
+                                            "state": user_cfg_state(cdir)}))
+            elif p == "/api/telemetry/delete-all":
+                n = sc_tlm_stats.delete_all_recordings(tlm_root, skip=tlm_skip())
+                self._send(200, json.dumps({"ok": True, "deleted": n,
+                                            "disk": sc_tlm_stats.disk_usage(tlm_root)}))
             else:
                 self._send(404, "{}")
 
@@ -13263,6 +14668,9 @@ def serve(out_path, port=7878, explicit_logs=None, open_browser=True,
                lambda: _power_down(False))
     threading.Thread(target=watchdog, daemon=True).start()
     start_watcher()      # tail Game.log for crashes / disconnects while you play
+    recorder.start()     # record the game's telemetry stream while it runs
+    phone_sync()         # phone view, when it's on in settings
+    threading.Thread(target=tlm_worker, name="tlm-index", daemon=True).start()
     # Hide the console straight away rather than after the scan: the browser's
     # flight-recorder terminal is already showing that progress, so leaving this
     # window up means two things reporting the same thing. Everything printed while
@@ -13286,9 +14694,13 @@ def serve(out_path, port=7878, explicit_logs=None, open_browser=True,
         # modified logs are still read, and an archive written by an older parser is
         # rejected wholesale by _reuse_map — so a CSR update still re-parses everything
         # exactly once, automatically, without anyone having to ask for a full re-scan.
+        # The telemetry index is brought up to date afterwards on tlm_worker, which
+        # rebuilds once more only if that changed anything.
         threading.Thread(
-            target=lambda: (do_generate(quick=True), ready_banner()), daemon=True).start()
+            target=lambda: (do_generate(quick=True), ready_banner(), tlm_wake.set()),
+            daemon=True).start()
     else:
+        tlm_wake.set()
         ready_banner()
     try:
         while True:
@@ -13301,6 +14713,8 @@ def serve(out_path, port=7878, explicit_logs=None, open_browser=True,
         tui_disable()
         print()
         clog(f"{_paint(_g('◼', '#'), _AMB)} terminal powered down. fly safe, Citizen.", _AMB)
+        recorder.stop()
+        stop_phone_server()
         srv.shutdown()
 
 

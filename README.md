@@ -65,7 +65,8 @@ first.
 
 ## Get started
 
-Pick whichever fits you:
+Pick whichever fits you. To record the game's live telemetry, see
+[Telemetry](#telemetry) below.
 
 ### 1. The app (recommended — no Python needed)
 **Extract the zip**, then double-click **`CSR.exe`**. Your browser loads the dashboard at
@@ -221,6 +222,28 @@ scope. On **Overview**, click any bar in *Playtime by Patch* to filter to that p
 
 Stats the game stopped recording (or never did) show **N/A** rather than a
 misleading `0` — see the CHANGELOG for which, and why.
+
+### Telemetry
+
+CSR can record the telemetry stream the game serves on your own PC: wallet, flight,
+weapons, warnings, on-foot and seat state, survival. It adds stat cards to Economy,
+Flight & Travel, Combat and Activity, and a **Live view** page in the sidebar.
+
+- **CSR records by default.** The game's own telemetry setting starts off.
+  The card's Turn on button adds it.
+- **Turn it on** in the Telemetry card of **💾 Backup & transfer**. It adds
+  `grpc.client.server.enabled = true` to your channel's user.cfg and keeps a `.csr-bak`
+  backup. It takes effect on the next game launch.
+- **Disk use** per hour of play: Full 1.7 MB, Normal 0.4 MB, Light 0.1 MB. Keep
+  recordings forever, 1 year, 3 months or 1 month.
+- **Live view** is the Kestrel K-7 slate, sized for a tablet and fine on a phone.
+  Seated: speed, fuel, G, IFCS and power, guns, countermeasures, warnings, shields and
+  hull (SC 5.0). On foot and EVA: vitals, injuries, suit, loadout, last ship. Contracts,
+  HUD notices, where you are and ships destroyed nearby come from Game.log. Keys show
+  state only. Nothing on the page sends input to the game.
+- **Phone access** is off by default. When on, the card shows a QR code and a private
+  link on port 7890-7899. It shows the live view only and works on your LAN only.
+- **CSR must be open while you play.** Nothing is recorded while it's closed.
 
 ### Playing on more than one PC
 
