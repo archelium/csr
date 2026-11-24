@@ -5,6 +5,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and CSR
 uses [Semantic Versioning](https://semver.org/) (MAJOR.MINOR.PATCH).
 
 
+## [Unreleased]
+
+### Fixed
+- **Kestrel's screen kept turning off** on tablets and phones. The keep-awake video was
+  too small for Chrome to count. It now covers the slate behind the panels and starts on
+  its own. The SCREEN key's first tap goes fullscreen, the next one lets the screen sleep.
+- The SCREEN key and bell sat away from the right end of Kestrel's top strip.
+
 ## [2.0.0-beta] — 2026-11-25
 
 Telemetry and the Kestrel K-7 Flight Slate. Beta: telemetry is new and tested on

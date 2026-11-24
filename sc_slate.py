@@ -687,8 +687,10 @@ main{overflow-x:hidden}
 .bell::after{content:"";position:absolute;inset:-8px -4px}
 .bell .bb{position:static;min-width:17px;height:17px;padding:0 4px;border-radius:9px;background:#ffb347;color:#06121a;font-size:10px;font-weight:700;line-height:17px;text-align:center;font-style:normal;letter-spacing:0}
 .bell.open{background:#123744;border-color:var(--c2)}
-#app:not(.tablet):not(.phone) .threat .bell{margin-right:190px}
-#app.phone .threat .bell,#app.portrait .threat .bell{margin-left:auto}
+/* SCREEN + bell: one group at the right end of the strip */
+.threat #scrBtn{margin-left:auto}
+.threat .clock+#scrBtn{margin-left:10px}
+.threat #bellBtn{margin-left:6px;margin-right:0}
 #bellPanel{position:absolute;top:48px;right:14px;width:390px;max-height:calc(100% - 64px);overflow:auto;z-index:50;background:rgba(6,18,26,.98);border:1px solid var(--c2);box-shadow:0 14px 44px #000;padding:10px 12px}
 #bellPanel .need{margin-bottom:6px}
 #bellPanel .bellall{display:block;width:100%;margin-top:10px;min-height:34px}
@@ -2194,7 +2196,8 @@ function bellHtml(){const n=needs.filter(x=>!x.done).length+unread;return `<butt
 const KA_MP4='data:video/mp4;base64,AAAAIGZ0eXBpc29tAAACAGlzb21pc28yYXZjMW1wNDEAAAMybW9vdgAAAGxtdmhkAAAAAAAAAAAAAAAAAAAD6AAAB9AAAQAAAQAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgAAAl10cmFrAAAAXHRraGQAAAADAAAAAAAAAAAAAAABAAAAAAAAB9AAAAAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAABAAAAAABAAAAAQAAAAAAAkZWR0cwAAABxlbHN0AAAAAAAAAAEAAAfQAAAAAAABAAAAAAHVbWRpYQAAACBtZGhkAAAAAAAAAAAAAAAAAABAAAAAgABVxAAAAAAALWhkbHIAAAAAAAAAAHZpZGUAAAAAAAAAAAAAAABWaWRlb0hhbmRsZXIAAAABgG1pbmYAAAAUdm1oZAAAAAEAAAAAAAAAAAAAACRkaW5mAAAAHGRyZWYAAAAAAAAAAQAAAAx1cmwgAAAAAQAAAUBzdGJsAAAAuHN0c2QAAAAAAAAAAQAAAKhhdmMxAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAAAABAAEABIAAAASAAAAAAAAAABFUxhdmM2MS4zMy4xMDIgbGlieDI2NAAAAAAAAAAAAAAAGP//AAAALmF2Y0MBQsAe/+EAFmdCwB7ZHsBEAAADAAQAAAMAEDxYuSABAAVoy4PLIAAAABBwYXNwAAAAAQAAAAEAAAAUYnRydAAAAAAAAAqAAAAAAAAAABhzdHRzAAAAAAAAAAEAAAAEAAAgAAAAABRzdHNzAAAAAAAAAAEAAAABAAAAHHN0c2MAAAAAAAAAAQAAAAEAAAAEAAAAAQAAACRzdHN6AAAAAAAAAAAAAAAEAAACgwAAAAoAAAAKAAAACQAAABRzdGNvAAAAAAAAAAEAAANiAAAAYXVkdGEAAABZbWV0YQAAAAAAAAAhaGRscgAAAAAAAAAAbWRpcmFwcGwAAAAAAAAAAAAAAAAsaWxzdAAAACSpdG9vAAAAHGRhdGEAAAABAAAAAExhdmY2MS45LjEwNwAAAAhmcmVlAAACqG1kYXQAAAJwBgX//2zcRem95tlIt5Ys2CDZI+7veDI2NCAtIGNvcmUgMTY0IHIzMjA0IDM3MzY5N2IgLSBILjI2NC9NUEVHLTQgQVZDIGNvZGVjIC0gQ29weWxlZnQgMjAwMy0yMDI1IC0gaHR0cDovL3d3dy52aWRlb2xhbi5vcmcveDI2NC5odG1sIC0gb3B0aW9uczogY2FiYWM9MCByZWY9MyBkZWJsb2NrPTE6MDowIGFuYWx5c2U9MHgxOjB4MTExIG1lPWhleCBzdWJtZT03IHBzeT0xIHBzeV9yZD0xLjAwOjAuMDAgbWl4ZWRfcmVmPTEgbWVfcmFuZ2U9MTYgY2hyb21hX21lPTEgdHJlbGxpcz0xIDh4OGRjdD0wIGNxbT0wIGRlYWR6b25lPTIxLDExIGZhc3RfcHNraXA9MSBjaHJvbWFfcXBfb2Zmc2V0PS0yIHRocmVhZHM9MSBsb29rYWhlYWRfdGhyZWFkcz0xIHNsaWNlZF90aHJlYWRzPTAgbnI9MCBkZWNpbWF0ZT0xIGludGVybGFjZWQ9MCBibHVyYXlfY29tcGF0PTAgY29uc3RyYWluZWRfaW50cmE9MCBiZnJhbWVzPTAgd2VpZ2h0cD0wIGtleWludD0yNTAga2V5aW50X21pbj0yIHNjZW5lY3V0PTQwIGludHJhX3JlZnJlc2g9MCByY19sb29rYWhlYWQ9NDAgcmM9Y3JmIG1idHJlZT0xIGNyZj0yMy4wIHFjb21wPTAuNjAgcXBtaW49MCBxcG1heD02OSBxcHN0ZXA9NCBpcF9yYXRpbz0xLjQwIGFxPTE6MS4wMACAAAAAC2WIhAU8mKAAP7+AAAAABkGaOAp6gAAAAAZBmlQCnqAAAAAFQZpgEvU=',KA_WEBM='data:video/webm;base64,GkXfo59ChoEBQveBAULygQRC84EIQoKEd2VibUKHgQJChYECGFOAZwEAAAAAAAIrEU2bdLpNu4tTq4QVSalmU6yBoU27i1OrhBZUrmtTrIHWTbuMU6uEElTDZ1OsggEjTbuMU6uEHFO7a1OsggIV7AEAAAAAAABZAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAVSalmsCrXsYMPQkBNgIxMYXZmNjEuOS4xMDdXQYxMYXZmNjEuOS4xMDdEiYhAn0AAAAAAABZUrmvIrgEAAAAAAAA/14EBc8WI0ljdNRy+CE6cgQAitZyDdW5kiIEAhoVWX1ZQOIOBASPjg4QdzWUA4JCwgRC6gRCagQJVsIRVuYEBElTDZ/tzc59jwIBnyJlFo4dFTkNPREVSRIeMTGF2ZjYxLjkuMTA3c3PWY8CLY8WI0ljdNRy+CE5nyKFFo4dFTkNPREVSRIeUTGF2YzYxLjMzLjEwMiBsaWJ2cHhnyKFFo4hEVVJBVElPTkSHkzAwOjAwOjAyLjAwMDAwMDAwMAAfQ7Z17eeBAKOjgQAAgBACAJ0BKhAAEAAARwiFhYiFhIgCAgAMDWAA/v+rUICjlYEB9ACxAQABEBAAGAAYWC/0AAgAAKOVgQPoALEBAAEQEAAYABhYL/QACAAAo5WBBdwAsQEAARAQABgAGFgv9AAIAAAcU7trkbuPs4EAt4r3gQHxggGj8IED';
 const SCR={on:false,lock:null,vid:null,how:''};
 const STANDALONE=navigator.standalone===true||matchMedia('(display-mode: standalone),(display-mode: fullscreen)').matches;
-function scrHtml(){const t=SCR.on?`Screen stays on (${SCR.how||'starting'}). Tap to release.`:'Fullscreen, screen stays on';
+function scrHtml(){const t=!SCR.on?'Fullscreen, screen stays on':SCR.how==='blocked'?'Screen stays on: blocked by the browser. Tap to retry.'
+  :fsCan()&&!fsEl()?`Screen stays on (${SCR.how||'starting'}). Tap for fullscreen.`:`Screen stays on (${SCR.how||'starting'}). Tap to release.`;
  return `<button class="bell scr ${SCR.on?'on':''}" id="scrBtn" type="button" title="${t}" aria-pressed="${SCR.on}"><i class="led"></i>${ic('i-screen')}</button>`}
 function scrSync(){const b=$('#scrBtn');if(b)b.outerHTML=scrHtml()}
 function fsEl(){return document.fullscreenElement||document.webkitFullscreenElement}
@@ -2202,21 +2205,31 @@ function fsCan(){const e=document.documentElement;return !!(e.requestFullscreen|
 function fsGo(){const e=document.documentElement,f=e.requestFullscreen||e.webkitRequestFullscreen;if(!f||fsEl())return;try{const r=f.call(e,{navigationUI:'hide'});if(r&&r.catch)r.catch(()=>{})}catch(x){}}
 function fsExit(){const f=document.exitFullscreen||document.webkitExitFullscreen;if(!fsEl()||!f)return;try{const r=f.call(document);if(r&&r.catch)r.catch(()=>{})}catch(x){}}
 function scrVideo(){if(!SCR.vid){const v=document.createElement('video');v.muted=true;v.loop=true;v.setAttribute('muted','');v.setAttribute('playsinline','');v.setAttribute('aria-hidden','true');
-  v.style.cssText='position:fixed;left:0;bottom:0;width:2px;height:2px;opacity:.01;pointer-events:none;z-index:-1';
+  v.style.cssText='position:fixed;inset:0;width:100vw;height:100vh;object-fit:fill;opacity:.01;pointer-events:none;z-index:-1;background:#000';
   v.innerHTML=`<source src="${KA_WEBM}" type="video/webm"><source src="${KA_MP4}" type="video/mp4">`;document.body.appendChild(v);SCR.vid=v}
  return SCR.vid.play().then(()=>{SCR.how='video'}).catch(()=>{SCR.how='blocked'})}
 function scrHold(){
  if('wakeLock' in navigator&&window.isSecureContext)return navigator.wakeLock.request('screen').then(l=>{SCR.lock=l;SCR.how='wake lock';l.addEventListener('release',()=>{SCR.lock=null})}).catch(scrVideo);
  return scrVideo()}
 function scrRelease(){if(SCR.lock){SCR.lock.release().catch(()=>{});SCR.lock=null}if(SCR.vid)SCR.vid.pause();SCR.how=''}
+function scrPref(on){try{localStorage.setItem('csr.awake',on?'1':'0')}catch(x){}}
 function scrToggle(){
- if(SCR.on){SCR.on=false;scrRelease();fsExit();scrSync();return}
- SCR.on=true;fsGo();scrSync();scrHold().then(scrSync);   // both start inside the tap: browsers refuse them later
+ // on but not fullscreen yet: the tap goes fullscreen and keeps the screen on
+ if(SCR.on&&fsCan()&&!fsEl()){fsGo();if(SCR.how!=='wake lock'&&SCR.how!=='video')scrHold().then(scrSync);scrSync();return}
+ if(SCR.on){SCR.on=false;scrPref(false);scrRelease();fsExit();scrSync();return}
+ SCR.on=true;scrPref(true);fsGo();scrSync();scrHold().then(scrSync);   // both start inside the tap: browsers refuse them later
  if(!fsCan()&&!STANDALONE){let seen=false;try{seen=localStorage.getItem('csr.a2hs')==='1';localStorage.setItem('csr.a2hs','1')}catch(x){}
   if(!seen)toast('i-screen','tip','For fullscreen: Share › Add to Home Screen')}}
 document.addEventListener('click',e=>{if(e.target.closest('#scrBtn')){e.stopPropagation();scrToggle()}},true);
 // the wake lock drops and the video pauses while the tab is hidden: pick it back up on return
 document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'&&SCR.on&&!SCR.lock)scrHold().then(scrSync)});
+['fullscreenchange','webkitfullscreenchange'].forEach(t=>document.addEventListener(t,scrSync));
+// the slate is meant to stay up: keep the screen on from the start unless it was switched off
+(function(){let off=false;try{off=localStorage.getItem('csr.awake')==='0'}catch(x){}
+ if(off)return;SCR.on=true;scrHold().then(scrSync);
+ // autoplay can be refused (battery saver, data saver): the first touch anywhere retries
+ const retry=()=>{if(SCR.on&&SCR.how==='blocked')scrHold().then(scrSync)};
+ document.addEventListener('pointerdown',retry,{capture:true,once:true})})();
 function threatBell(){const b=document.querySelector('#bellBtn');if(b)b.outerHTML=bellHtml()}
 function bellRender(){let p=document.querySelector('#bellPanel');if(!bellOpen){if(p)p.remove();return}
  if(!p){p=document.createElement('div');p.id='bellPanel';p.className='cut';app.appendChild(p)}
