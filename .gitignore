@@ -17,11 +17,14 @@ __pycache__/
 CSR.html
 sc_stats.html
 CSR-v*.zip
+CSR-v*.sha256.txt
 csr_icon.png
 
 # Per-user runtime data & caches
 CSR-data/
 csr_config.json
+# your pinned blueprints and main accounts
+csr_prefs.json
 # each user's accumulated session archive — personal play history
 csr_archive.json
 # telemetry recordings from source runs, they carry the wallet balance

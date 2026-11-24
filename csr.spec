@@ -8,9 +8,38 @@
 # and refreshed caches are written to %LOCALAPPDATA%\CSR at runtime.
 
 import os
+import re
+
+from PyInstaller.utils.win32.versioninfo import (FixedFileInfo, StringFileInfo, StringStruct,
+                                                 StringTable, VarFileInfo, VarStruct, VSVersionInfo)
+
+# Windows version info (Properties -> Details). An exe with no product, company or
+# version reads as anonymous to antivirus heuristics. The version comes from
+# sc_stats.py so the two can't drift.
+VERSION = re.search(r'^CSR_VERSION = "([^"]+)"', open("sc_stats.py", encoding="utf-8").read(), re.M).group(1)
+_nums = tuple(int(x) for x in (VERSION.split("-")[0].split(".") + ["0", "0", "0"])[:4])
+version_info = VSVersionInfo(
+    ffi=FixedFileInfo(filevers=_nums, prodvers=_nums, mask=0x3F, flags=0x0, OS=0x40004,
+                      fileType=0x1, subtype=0x0, date=(0, 0)),
+    kids=[
+        StringFileInfo([StringTable("040904B0", [
+            StringStruct("CompanyName", "archelium"),
+            StringStruct("FileDescription", "CSR — Citizen Service Record"),
+            StringStruct("FileVersion", VERSION),
+            StringStruct("InternalName", "CSR"),
+            StringStruct("LegalCopyright", "Copyright (c) 2026 archelium. MIT License."),
+            StringStruct("OriginalFilename", "CSR.exe"),
+            StringStruct("ProductName", "CSR — Citizen Service Record"),
+            StringStruct("ProductVersion", VERSION),
+            StringStruct("Comments", "Reads your Star Citizen logs into a career dashboard. "
+                                     "Fan-made, not affiliated with CIG."),
+        ])]),
+        VarFileInfo([VarStruct("Translation", [1033, 1200])]),
+    ],
+)
 
 datas = []
-for f in ("sc_ship_matrix.json", "sc_item_names.json", "sc_blueprints.json", "sc_missions.json", "sc_place_names.json", "sc_fonts_embed.css"):
+for f in ("sc_ship_matrix.json", "sc_item_names.json", "sc_blueprints.json", "sc_missions.json", "sc_place_names.json", "sc_xparrow.json", "sc_fonts_embed.css"):
     if os.path.isfile(f):
         datas.append((f, "."))
 
@@ -19,7 +48,7 @@ a = Analysis(
     pathex=[],
     binaries=[],
     datas=datas,
-    hiddenimports=["sc_names", "sc_telemetry", "sc_tlm_stats", "sc_qr"],
+    hiddenimports=["sc_names", "csr_tray", "sc_telemetry", "sc_tlm_stats", "sc_qr", "sc_slate", "sc_slate_ships", "sc_livelog"],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
@@ -41,10 +70,11 @@ exe = EXE(
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=True,
+    upx=False,             # packed exes are a common antivirus flag. Keep it off
     upx_exclude=[],
     runtime_tmpdir=None,
-    console=True,          # show the server log window; Ctrl+C stops it
+    console=False,         # lives in the tray. Output goes to CSR-data\csr.log, --console shows it
     disable_windowed_traceback=False,
     icon="csr.ico" if os.path.isfile("csr.ico") else None,
+    version=version_info,
 )

@@ -34,6 +34,16 @@ function slateModel(payload, ship){
   const big = v => { v = num(v); return v == null || v >= 1e38 ? null : v; };
   const dep = v => v == null ? null : String(v).toUpperCase();
   const mm = veh && veh.master_mode ? String(veh.master_mode.mode || '').toUpperCase() : '';
+  let master = mm.indexOf('NAV') === 0 ? 'nav' : mm === 'SCM' ? 'scm' : mm === 'STEALTH' ? 'stealth' : null;
+  // 4.10 sends no master mode. NAV switches the shields off and the quantum drive on, SCM the reverse.
+  let masterGuess = false;
+  if (!master && inSeat && veh && veh.annunciators) {
+    if (ann.qdrv !== 'off' && ann.shld === 'off') master = 'nav';
+    else if (ann.qdrv === 'off' && ann.shld !== 'off') master = 'scm';
+    masterGuess = !!master;
+  }
+  // engines report a fault while quantum travel holds them: not damage
+  if (master === 'nav' && ann.thr !== 'off') ann.thr = 'ok';
   const ifcs = {};
   Object.keys(set).forEach(k => {
     const v = set[k];
@@ -84,7 +94,7 @@ function slateModel(payload, ship){
                                  engaged: !!ins.boost.engaged} : null,
              gear: dep(fst.gear), vtol: dep(fst.vtol), wings: dep(fst.transformation),
              landed: fst.is_landed == null ? null : !!fst.is_landed,
-             master: mm.indexOf('NAV') === 0 ? 'nav' : mm === 'SCM' ? 'scm' : mm === 'STEALTH' ? 'stealth' : null,
+             master: master, masterGuess: masterGuess,
              spooled: veh && veh.master_mode ? !!veh.master_mode.spooled : null},
     ifcs: ifcs,
     power: veh && veh.power ? Object.assign({}, veh.power) : {},
@@ -687,8 +697,10 @@ main{overflow-x:hidden}
 .bell::after{content:"";position:absolute;inset:-8px -4px}
 .bell .bb{position:static;min-width:17px;height:17px;padding:0 4px;border-radius:9px;background:#ffb347;color:#06121a;font-size:10px;font-weight:700;line-height:17px;text-align:center;font-style:normal;letter-spacing:0}
 .bell.open{background:#123744;border-color:var(--c2)}
-#app:not(.tablet):not(.phone) .threat .bell{margin-right:190px}
-#app.phone .threat .bell,#app.portrait .threat .bell{margin-left:auto}
+/* SCREEN + bell: one group at the right end of the strip */
+.threat #scrBtn{margin-left:auto}
+.threat .clock+#scrBtn{margin-left:10px}
+.threat #bellBtn{margin-left:6px;margin-right:0}
 #bellPanel{position:absolute;top:48px;right:14px;width:390px;max-height:calc(100% - 64px);overflow:auto;z-index:50;background:rgba(6,18,26,.98);border:1px solid var(--c2);box-shadow:0 14px 44px #000;padding:10px 12px}
 #bellPanel .need{margin-bottom:6px}
 #bellPanel .bellall{display:block;width:100%;margin-top:10px;min-height:34px}
@@ -944,7 +956,7 @@ main{overflow-x:hidden}
 #app:not(.incombat) #page-ship .dlist{display:none!important}
 .dlist{display:flex;flex-direction:column;gap:4px;margin-top:6px}
 .dr2{border-left:3px solid var(--line);padding:3px 8px;font-size:12px;display:flex;justify-content:space-between;align-items:center;background:rgba(0,0,0,.25);color:var(--dim)}
-.dr2 b{color:var(--hi)}.dr2.maj{border-color:var(--r);color:#ff8a94}.dr2.maj b{color:#ff8a94}.dr2.min{border-color:var(--a);color:#ffcf8a}.dr2.min b{color:#ffcf8a}.dr2.ok{border-color:#1d5a3b;color:var(--g)}
+.dr2 b{color:var(--hi)}.dr2.maj{border-color:var(--r);color:#ff8a94}.dr2.maj b{color:#ff8a94}.dr2.min{border-color:var(--a);color:#ffcf8a}.dr2.min b{color:#ffcf8a}.dr2.ok{border-color:#1d5a3b;color:var(--g)}.dr2.nd{color:var(--mute);font-size:11px}.dr2.nd b{color:var(--mute);font-weight:400}
 .dr2 .gdots{display:inline-flex;margin-left:6px;vertical-align:middle}.dr2 .gdots i{width:12px;height:7px}
 
 #app.tablet,#app.tablet.feedpage,#app.feedpage,#app:not(.phone){grid-template-columns:58px 1fr}
@@ -1947,12 +1959,14 @@ function gunMarks(){const g=$('#gunmarks');if(!g)return;const G=window.DG||shipG
   return `<rect class="gm ${st}${und?' under':''}" x="${x-3.5*U}" y="${y-3.5*U}" width="${7*U}" height="${7*U}"><title>${esc(w[0])} ${w[1]} · ${st==='off'?'unpowered':st==='rdy'?'ready':'not ready'}</title></rect>`}).join('')}
 /* damaged parts only, under the ship (T annunciators, shields, hull, weapons) */
 function dlist(f,hull,bubble){const el=$('#dlist');if(!el)return;const A=window.AS||{},rows=[];
+ if(HITS.n)rows.push([Date.now()-HITS.t<4000?'maj':'min',Date.now()-HITS.t<4000?'TAKING HITS':'HITS TAKEN',HITS.n+(HITS.n===1?' burst':' bursts')]);
  const wf=Object.entries(f).sort((a,b)=>a[1]-b[1])[0];if(wf[1]!=null&&wf[1]<60)rows.push(['maj',bubble?'SHIELDS':'SHIELDS · '+{F:'front',R:'right',L:'left',B:'rear'}[wf[0]],wf[1]+'%']);
  if(hull!=null&&hull<70)rows.push([hull<35?'maj':'min','HULL',hull+'%']);
  for(const[k,n] of [['THR','THRUSTERS'],['PWR','POWER PLANT'],['COOL','COOLERS'],['QDRV','QUANTUM DRIVE'],['RADR','RADAR'],['WPN','WEAPONS']])if(A[k]==='maj'||A[k]==='min')rows.push([A[k],n,A[k]==='maj'?'critical':'warning']);
  const w=weapons||[],rd=w.filter(x=>x[2]&&x[3]).length;
  const gun=w.length?`<div class="dr2 gun"><span>GUNS <i class="gdots">${w.map(x=>`<i class="${!x[2]?'off':x[3]?'rdy':'chg'}"></i>`).join('')}</i></span><b>${rd}/${w.length} ready</b></div>`:'';
- el.innerHTML=(rows.length?rows.map(([c,n,v])=>`<div class="dr2 ${c}"><span>${c==='maj'?'▲':'●'} ${n}</span><b>${v}</b></div>`).join(''):`<div class="dr2 ok"><span>✓ All systems OK</span><b></b></div>`)+gun}
+ const nod=hull==null&&Object.values(f).every(v=>v==null)?`<div class="dr2 nd"><span>HULL · SHIELDS</span><b>not sent by this game build</b></div>`:'';
+ el.innerHTML=nod+(rows.length?rows.map(([c,n,v])=>`<div class="dr2 ${c}"><span>${c==='maj'?'▲':'●'} ${n}</span><b>${v}</b></div>`).join(''):`<div class="dr2 ok"><span>✓ All systems OK</span><b></b></div>`)+gun}
 /* instrument cluster (right column): T speed, heading, alt, VSI, g_meter, fuel, boost, IFCS, power, environment; S speed limits */
 let SNOW=0,GNOW=1;
 function hud(){const el=document.getElementById('hudsvg');if(!el||!el.getClientRects().length)return;
@@ -1965,9 +1979,9 @@ function hud(){const el=document.getElementById('hudsvg');if(!el||!el.getClientR
  const C={c:'#5bd1e6',c2:'#2b6b80',g:'#5be69a',a:'#ffb347',r:'#ff5468',v:'#b58cff',dim:'#7aa3ae',mute:'#4f6f78',hi:'#eafcff',bg:'#081820',line:'#1f4c5e'};
  const T=(x,y,t,o={})=>NS('text',{x,y,'font-size':o.s||10,fill:o.f||C.dim,'text-anchor':o.a||'middle','font-weight':o.w||400,'letter-spacing':o.ls||'.06em','font-family':o.m?'ui-monospace,Consolas,monospace':'inherit'},t);
  const glow=c=>`style="filter:drop-shadow(0 0 4px ${c})"`;
- const[SCM,BST,NAV]=SPDS(),V=SNOW,H=Math.round(((HDG%360)+360)%360),MF=MODEL.flight,BOOST=(MF.boost||{}).reserves==null?null:MF.boost.reserves/100,FV={alt:MF.alt==null?null:Math.round(MF.alt/1000),vsi:MF.vsi==null?null:Math.round(MF.vsi)};
+ const[SCM,BST,NAV]=SPDS(),V=SNOW,H=Math.round(((HDG%360)+360)%360),MF=MODEL.flight,BOOST=(MF.boost||{}).reserves==null?null:MF.boost.reserves/100,FV={alt:MF.alt==null?null:Math.round(MF.alt),vsi:MF.vsi==null?null:Math.round(MF.vsi)};
  let o=`<defs><linearGradient id="hTank" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#0a2a33"/><stop offset=".5" stop-color="#103a46"/><stop offset="1" stop-color="#0a2a33"/></linearGradient><radialGradient id="hFace"><stop offset="0" stop-color="#0b2430"/><stop offset="1" stop-color="#061219"/></radialGradient></defs>`;
- o+=T(6,14,'FLIGHT',{a:'start',s:10,ls:'.18em'})+NS('rect',{x:238,y:3,width:58,height:15,fill:'#0f2f3a',stroke:C.c})+T(267,14,STATE.master?STATE.master.toUpperCase():'—',{f:C.c,w:700,s:10});
+ o+=T(6,14,'FLIGHT',{a:'start',s:10,ls:'.18em'})+NS('rect',{x:238,y:3,width:58,height:15,fill:'#0f2f3a',stroke:C.c})+T(267,14,STATE.master?STATE.master.toUpperCase():'—',{f:C.c,w:700,s:10})+(MODEL.flight.masterGuess?`<title>From the shield and quantum drive lights</title>`:'');
  o+=NS('rect',{x:6,y:26,width:288,height:34,fill:C.bg,stroke:C.line});
  for(let dd=Math.ceil((H-60)/5)*5;dd<=H+60;dd+=5){const x=150+(dd-H)*2.3;if(x<10||x>290)continue;const d=((dd%360)+360)%360,maj=d%15===0;o+=NS('line',{x1:x,y1:60,x2:x,y2:maj?50:55,stroke:maj?C.c:C.c2});
   if(maj&&Math.abs(x-150)>22){const L={0:'N',90:'E',180:'S',270:'W'};o+=T(x,44,L[d]??String(d).padStart(3,'0'),{f:L[d]!=null?C.a:C.dim,s:10})}}
@@ -1984,13 +1998,14 @@ function hud(){const el=document.getElementById('hudsvg');if(!el||!el.getClientR
  const box=(x,y,w,l,val,unit,col,sc)=>{let s=NS('rect',{x,y,width:w,height:64,fill:C.bg,stroke:C.line})+T(x+6,y+13,l,{a:'start',s:8.5,ls:'.16em'})+T(x+w-6,y+36,val,{a:'end',f:col,s:19,w:700,m:1})+T(x+w-6,y+48,unit,{a:'end',s:8.5});
   const sx=x+6,sw=w-12,sy=y+55;s+=NS('rect',{x:sx,y:sy,width:sw,height:4,fill:'#12262c'});for(const[z0,z1,c] of sc.z)s+=NS('rect',{x:sx+sw*z0,y:sy,width:sw*(z1-z0),height:4,fill:c});return sc.v==null?s:s+`<path d="M${(sx+sw*sc.v).toFixed(1)} ${sy-2} l-4 -5 h8z" fill="${C.hi}"/>`};
  const fr=(v,a,b)=>Math.max(0,Math.min(1,(v-a)/(b-a)));
- o+=box(6,YR,92,'ALT',FV.alt==null?'—':FV.alt.toLocaleString(),FV.alt==null?'no body':'km',FV.alt==null?C.mute:C.hi,{v:FV.alt==null?null:fr(FV.alt,0,5000),z:[[0,1,'#12404d']]})
+ o+=box(6,YR,92,'ALT',FV.alt==null?'—':FV.alt.toLocaleString(),FV.alt==null?'no body':'m',FV.alt==null?C.mute:C.hi,{v:FV.alt==null?null:fr(FV.alt,0,20000),z:[[0,1,'#12404d']]})
   +box(104,YR,92,'VSI',FV.vsi==null?'—':(FV.vsi<0?'▼ ':FV.vsi>0?'▲ ':'')+Math.abs(FV.vsi),'m/s',FV.vsi==null?C.mute:FV.vsi<0?C.a:C.hi,{v:FV.vsi==null?null:fr(FV.vsi,-50,50),z:[[0,.5,'#3a2e10'],[.5,1,'#12404d']]})
   +box(202,YR,92,'G',GNOW==null?'—':GNOW.toFixed(1),MF.gMax?'of '+Math.round(MF.gMax):'',GNOW==null?C.mute:GNOW>12?C.a:C.hi,{v:GNOW==null?null:fr(GNOW,0,20),z:[[0,.6,'#12404d'],[.6,.95,'#3a2e10'],[.95,1,'#4a1018']]});
  const tank=(x,y,w,h,l,id,p0,c)=>{const p=p0==null?0:p0;let s=NS('rect',{x,y,width:w,height:h,rx:w/2,fill:'url(#hTank)',stroke:C.c2,'stroke-width':1.5});const fh=(h-8)*p,top=y+4+(h-8)-fh;
   s+=`<clipPath id="hc${id}"><rect x="${x+4}" y="${y+4}" width="${w-8}" height="${h-8}" rx="${(w-8)/2}"/></clipPath><rect x="${x}" y="${top}" width="${w}" height="${fh}" fill="${c}" opacity=".55" clip-path="url(#hc${id})"/><line x1="${x+4}" x2="${x+w-4}" y1="${top}" y2="${top}" stroke="${c}" stroke-width="2" ${glow(c)}/>`;
   for(const[q,lb] of [[1,'F'],[.75,''],[.5,'½'],[.25,''],[0,'E']]){const yy=y+4+(h-8)*(1-q);s+=NS('line',{x1:x+w,y1:yy,x2:x+w+6,y2:yy,stroke:C.c2})+(lb?T(x+w+13,yy+3.5,lb,{s:9}):'')}
-  return s+T(x+w/2,y+h+16,l,{s:9,ls:'.16em'})+T(x+w/2,y+h+31,p0==null?'—':Math.round(p*100)+'%',{f:C.hi,s:12,w:700,m:1})};
+  if(p0==null)s+=T(x+w/2,y+h/2+3,'NO',{f:C.mute,s:8.5,w:700,ls:'.12em'})+T(x+w/2,y+h/2+14,'DATA',{f:C.mute,s:8.5,w:700,ls:'.12em'});
+  return s+T(x+w/2,y+h+16,l,{s:9,ls:'.16em'})+T(x+w/2,y+h+31,p0==null?'—':Math.round(p*100)+'%',{f:p0==null?C.mute:C.hi,s:12,w:700,m:1})};
  o+=tank(22,YT,46,96,'H₂','h2',MF.h2==null?null:MF.h2/100,C.c)+tank(112,YT,46,96,'QT','qt',MF.qt==null?null:MF.qt/100,'#8fb4ff');
  {const x=210,y=YT,n=10,low=BOOST!=null&&BOOST<.2,bc=low?C.r:C.a;for(let i=0;i<n;i++){const on=i<(BOOST==null?0:Math.max(1,Math.round(BOOST*n))),yy=y+96-(i+1)*9.6;o+=`<rect x="${x}" y="${yy.toFixed(1)}" width="56" height="7.6" fill="${on?bc:'#13262c'}" stroke="${on?bc:C.line}" ${on?glow(bc):''}/>`}
   o+=T(x+28,y+112,'BOOST',{s:9,ls:'.16em'})+T(x+28,y+127,(BOOST==null?'—':Math.round(BOOST*100)+'%')+(low?' · LOW':''),{f:low?C.r:C.hi,s:12,w:700,m:1})}
@@ -2001,7 +2016,8 @@ function hud(){const el=document.getElementById('hudsvg');if(!el||!el.getClientR
  const A=window.AS||{},PW=[['PLANT','PWR','power plants'],['ENGINE','THR','engines'],['SH GEN','SHLD','shield generators'],['SH EMIT','SHLD','shield emitters'],['WEAPON','WPN','weapons'],['COOLER','COOL','coolers'],['SENSOR','RADR','sensors'],['LIFE','','life support'],['GRAV','','gravity generators']];
  o+=grid(154,YL,'POWER',PW.map(([n,k,tt])=>[n,A[k]==='maj'?'bad':A[k]==='min'?'warn':'on',tt]));
  const E=envData(),[vcl,vtx]=envVerdict(E),RT=suitRating(true);
- o+=NS('line',{x1:6,y1:YO,x2:294,y2:YO,stroke:C.line})+T(6,YO+16,'OUTSIDE',{a:'start',s:9,ls:'.18em'});
+ o+=NS('line',{x1:6,y1:YO,x2:294,y2:YO,stroke:C.line})+T(6,YO+16,'CABIN',{a:'start',s:9,ls:'.18em'})
+  +T(294,YO+16,'outside '+(MF.density==null?'—':MF.density<0.01?'vacuum':MF.density.toFixed(2)+' kg/m³'),{a:'end',s:9,f:MF.density!=null&&MF.density<0.01?C.a:C.dim});
  o+=box(6,YO+24,92,'TEMP',E.temp==null?'—':String(E.temp).replace('-','−'),(RT.tmin==null?'°C':`°C · suit ${RT.tmin}`),E.temp==null?C.mute:E.temp<RT.tmin||E.temp>RT.tmax?C.r:C.g,{v:E.temp==null?null:fr(E.temp,-100,100),z:[[0,fr(RT.tmin,-100,100),'#2a1d40'],[fr(RT.tmin,-100,100),fr(RT.tmax,-100,100),'#173d2a'],[fr(RT.tmax,-100,100),1,'#4a1018']]})
   +box(104,YO+24,92,'PRESS',E.press.toFixed(2),'atm',E.press<.5?C.r:C.hi,{v:fr(E.press,0,2),z:[[0,.25,'#4a1018'],[.25,1,'#12404d']]});
  const lb=(x,y,t,c,lit)=>`<rect x="${x}" y="${y}" width="90" height="19" fill="${lit?c+'33':'#0a161b'}" stroke="${lit?c:C.line}" ${lit?glow(c):''}/>`+T(x+45,y+13.5,t,{f:lit?c:C.mute,s:9,w:700,ls:'.12em'});
@@ -2058,7 +2074,7 @@ const IFCS=()=>{const I=MODEL.ifcs||{},m={COUPLED:'ifcs_coupled',ESP:'ifcs_esp',
 function ifcs(){const el=$('#ifcs');if(!el)return;el.innerHTML=Object.entries(IFCS()).map(([n,[en,ac]])=>`<span class="pc ${ac?'on':en?'en':''}" title="${n.toLowerCase()} · ${ac?'active':en?'on, not active':'off'}">${n}</span>`).join('')}
 /* T: instruments. altitude >= 1e38 means no reference body */
 let HDG=0;
-function instruments(){const F=MODEL.flight,sp={alt:F.alt==null?'—':Math.round(F.alt/1000).toLocaleString()+' km',agl:F.radarAlt==null?'—':Math.round(F.radarAlt).toLocaleString()+' m',atm:F.density==null?'—':F.density<0.01?'vacuum':F.density.toFixed(2),vsi:F.vsi==null?null:Math.round(F.vsi)};
+function instruments(){const F=MODEL.flight,sp={alt:F.alt==null?'—':Math.round(F.alt).toLocaleString()+' m',agl:F.radarAlt==null?'—':Math.round(F.radarAlt).toLocaleString()+' m',atm:F.density==null?'—':F.density<0.01?'vacuum':F.density.toFixed(2),vsi:F.vsi==null?null:Math.round(F.vsi)};
  if($('#alt'))$('#alt').textContent=sp.alt;if($('#agl'))$('#agl').textContent=sp.agl;if($('#atm'))$('#atm').textContent=sp.atm;
  const v=$('#vsi');if(v){v.className='vsi'+(sp.vsi==null?' na':sp.vsi<0?' dn':'');v.textContent=sp.vsi==null?'VSI —':(sp.vsi<0?'▼ ':'▲ ')+Math.abs(sp.vsi)+' m/s'}
  const sp2=$('#spool');if(sp2)sp2.textContent=STATE.master==='nav'?' · spooled':'';
@@ -2194,7 +2210,8 @@ function bellHtml(){const n=needs.filter(x=>!x.done).length+unread;return `<butt
 const KA_MP4='data:video/mp4;base64,AAAAIGZ0eXBpc29tAAACAGlzb21pc28yYXZjMW1wNDEAAAMybW9vdgAAAGxtdmhkAAAAAAAAAAAAAAAAAAAD6AAAB9AAAQAAAQAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgAAAl10cmFrAAAAXHRraGQAAAADAAAAAAAAAAAAAAABAAAAAAAAB9AAAAAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAABAAAAAABAAAAAQAAAAAAAkZWR0cwAAABxlbHN0AAAAAAAAAAEAAAfQAAAAAAABAAAAAAHVbWRpYQAAACBtZGhkAAAAAAAAAAAAAAAAAABAAAAAgABVxAAAAAAALWhkbHIAAAAAAAAAAHZpZGUAAAAAAAAAAAAAAABWaWRlb0hhbmRsZXIAAAABgG1pbmYAAAAUdm1oZAAAAAEAAAAAAAAAAAAAACRkaW5mAAAAHGRyZWYAAAAAAAAAAQAAAAx1cmwgAAAAAQAAAUBzdGJsAAAAuHN0c2QAAAAAAAAAAQAAAKhhdmMxAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAAAABAAEABIAAAASAAAAAAAAAABFUxhdmM2MS4zMy4xMDIgbGlieDI2NAAAAAAAAAAAAAAAGP//AAAALmF2Y0MBQsAe/+EAFmdCwB7ZHsBEAAADAAQAAAMAEDxYuSABAAVoy4PLIAAAABBwYXNwAAAAAQAAAAEAAAAUYnRydAAAAAAAAAqAAAAAAAAAABhzdHRzAAAAAAAAAAEAAAAEAAAgAAAAABRzdHNzAAAAAAAAAAEAAAABAAAAHHN0c2MAAAAAAAAAAQAAAAEAAAAEAAAAAQAAACRzdHN6AAAAAAAAAAAAAAAEAAACgwAAAAoAAAAKAAAACQAAABRzdGNvAAAAAAAAAAEAAANiAAAAYXVkdGEAAABZbWV0YQAAAAAAAAAhaGRscgAAAAAAAAAAbWRpcmFwcGwAAAAAAAAAAAAAAAAsaWxzdAAAACSpdG9vAAAAHGRhdGEAAAABAAAAAExhdmY2MS45LjEwNwAAAAhmcmVlAAACqG1kYXQAAAJwBgX//2zcRem95tlIt5Ys2CDZI+7veDI2NCAtIGNvcmUgMTY0IHIzMjA0IDM3MzY5N2IgLSBILjI2NC9NUEVHLTQgQVZDIGNvZGVjIC0gQ29weWxlZnQgMjAwMy0yMDI1IC0gaHR0cDovL3d3dy52aWRlb2xhbi5vcmcveDI2NC5odG1sIC0gb3B0aW9uczogY2FiYWM9MCByZWY9MyBkZWJsb2NrPTE6MDowIGFuYWx5c2U9MHgxOjB4MTExIG1lPWhleCBzdWJtZT03IHBzeT0xIHBzeV9yZD0xLjAwOjAuMDAgbWl4ZWRfcmVmPTEgbWVfcmFuZ2U9MTYgY2hyb21hX21lPTEgdHJlbGxpcz0xIDh4OGRjdD0wIGNxbT0wIGRlYWR6b25lPTIxLDExIGZhc3RfcHNraXA9MSBjaHJvbWFfcXBfb2Zmc2V0PS0yIHRocmVhZHM9MSBsb29rYWhlYWRfdGhyZWFkcz0xIHNsaWNlZF90aHJlYWRzPTAgbnI9MCBkZWNpbWF0ZT0xIGludGVybGFjZWQ9MCBibHVyYXlfY29tcGF0PTAgY29uc3RyYWluZWRfaW50cmE9MCBiZnJhbWVzPTAgd2VpZ2h0cD0wIGtleWludD0yNTAga2V5aW50X21pbj0yIHNjZW5lY3V0PTQwIGludHJhX3JlZnJlc2g9MCByY19sb29rYWhlYWQ9NDAgcmM9Y3JmIG1idHJlZT0xIGNyZj0yMy4wIHFjb21wPTAuNjAgcXBtaW49MCBxcG1heD02OSBxcHN0ZXA9NCBpcF9yYXRpbz0xLjQwIGFxPTE6MS4wMACAAAAAC2WIhAU8mKAAP7+AAAAABkGaOAp6gAAAAAZBmlQCnqAAAAAFQZpgEvU=',KA_WEBM='data:video/webm;base64,GkXfo59ChoEBQveBAULygQRC84EIQoKEd2VibUKHgQJChYECGFOAZwEAAAAAAAIrEU2bdLpNu4tTq4QVSalmU6yBoU27i1OrhBZUrmtTrIHWTbuMU6uEElTDZ1OsggEjTbuMU6uEHFO7a1OsggIV7AEAAAAAAABZAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAVSalmsCrXsYMPQkBNgIxMYXZmNjEuOS4xMDdXQYxMYXZmNjEuOS4xMDdEiYhAn0AAAAAAABZUrmvIrgEAAAAAAAA/14EBc8WI0ljdNRy+CE6cgQAitZyDdW5kiIEAhoVWX1ZQOIOBASPjg4QdzWUA4JCwgRC6gRCagQJVsIRVuYEBElTDZ/tzc59jwIBnyJlFo4dFTkNPREVSRIeMTGF2ZjYxLjkuMTA3c3PWY8CLY8WI0ljdNRy+CE5nyKFFo4dFTkNPREVSRIeUTGF2YzYxLjMzLjEwMiBsaWJ2cHhnyKFFo4hEVVJBVElPTkSHkzAwOjAwOjAyLjAwMDAwMDAwMAAfQ7Z17eeBAKOjgQAAgBACAJ0BKhAAEAAARwiFhYiFhIgCAgAMDWAA/v+rUICjlYEB9ACxAQABEBAAGAAYWC/0AAgAAKOVgQPoALEBAAEQEAAYABhYL/QACAAAo5WBBdwAsQEAARAQABgAGFgv9AAIAAAcU7trkbuPs4EAt4r3gQHxggGj8IED';
 const SCR={on:false,lock:null,vid:null,how:''};
 const STANDALONE=navigator.standalone===true||matchMedia('(display-mode: standalone),(display-mode: fullscreen)').matches;
-function scrHtml(){const t=SCR.on?`Screen stays on (${SCR.how||'starting'}). Tap to release.`:'Fullscreen, screen stays on';
+function scrHtml(){const t=!SCR.on?'Fullscreen, screen stays on':SCR.how==='blocked'?'Screen stays on: blocked by the browser. Tap to retry.'
+  :fsCan()&&!fsEl()?`Screen stays on (${SCR.how||'starting'}). Tap for fullscreen.`:`Screen stays on (${SCR.how||'starting'}). Tap to release.`;
  return `<button class="bell scr ${SCR.on?'on':''}" id="scrBtn" type="button" title="${t}" aria-pressed="${SCR.on}"><i class="led"></i>${ic('i-screen')}</button>`}
 function scrSync(){const b=$('#scrBtn');if(b)b.outerHTML=scrHtml()}
 function fsEl(){return document.fullscreenElement||document.webkitFullscreenElement}
@@ -2202,21 +2219,31 @@ function fsCan(){const e=document.documentElement;return !!(e.requestFullscreen|
 function fsGo(){const e=document.documentElement,f=e.requestFullscreen||e.webkitRequestFullscreen;if(!f||fsEl())return;try{const r=f.call(e,{navigationUI:'hide'});if(r&&r.catch)r.catch(()=>{})}catch(x){}}
 function fsExit(){const f=document.exitFullscreen||document.webkitExitFullscreen;if(!fsEl()||!f)return;try{const r=f.call(document);if(r&&r.catch)r.catch(()=>{})}catch(x){}}
 function scrVideo(){if(!SCR.vid){const v=document.createElement('video');v.muted=true;v.loop=true;v.setAttribute('muted','');v.setAttribute('playsinline','');v.setAttribute('aria-hidden','true');
-  v.style.cssText='position:fixed;left:0;bottom:0;width:2px;height:2px;opacity:.01;pointer-events:none;z-index:-1';
+  v.style.cssText='position:fixed;inset:0;width:100vw;height:100vh;object-fit:fill;opacity:.01;pointer-events:none;z-index:-1;background:#000';
   v.innerHTML=`<source src="${KA_WEBM}" type="video/webm"><source src="${KA_MP4}" type="video/mp4">`;document.body.appendChild(v);SCR.vid=v}
  return SCR.vid.play().then(()=>{SCR.how='video'}).catch(()=>{SCR.how='blocked'})}
 function scrHold(){
  if('wakeLock' in navigator&&window.isSecureContext)return navigator.wakeLock.request('screen').then(l=>{SCR.lock=l;SCR.how='wake lock';l.addEventListener('release',()=>{SCR.lock=null})}).catch(scrVideo);
  return scrVideo()}
 function scrRelease(){if(SCR.lock){SCR.lock.release().catch(()=>{});SCR.lock=null}if(SCR.vid)SCR.vid.pause();SCR.how=''}
+function scrPref(on){try{localStorage.setItem('csr.awake',on?'1':'0')}catch(x){}}
 function scrToggle(){
- if(SCR.on){SCR.on=false;scrRelease();fsExit();scrSync();return}
- SCR.on=true;fsGo();scrSync();scrHold().then(scrSync);   // both start inside the tap: browsers refuse them later
+ // on but not fullscreen yet: the tap goes fullscreen and keeps the screen on
+ if(SCR.on&&fsCan()&&!fsEl()){fsGo();if(SCR.how!=='wake lock'&&SCR.how!=='video')scrHold().then(scrSync);scrSync();return}
+ if(SCR.on){SCR.on=false;scrPref(false);scrRelease();fsExit();scrSync();return}
+ SCR.on=true;scrPref(true);fsGo();scrSync();scrHold().then(scrSync);   // both start inside the tap: browsers refuse them later
  if(!fsCan()&&!STANDALONE){let seen=false;try{seen=localStorage.getItem('csr.a2hs')==='1';localStorage.setItem('csr.a2hs','1')}catch(x){}
   if(!seen)toast('i-screen','tip','For fullscreen: Share › Add to Home Screen')}}
 document.addEventListener('click',e=>{if(e.target.closest('#scrBtn')){e.stopPropagation();scrToggle()}},true);
 // the wake lock drops and the video pauses while the tab is hidden: pick it back up on return
 document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'&&SCR.on&&!SCR.lock)scrHold().then(scrSync)});
+['fullscreenchange','webkitfullscreenchange'].forEach(t=>document.addEventListener(t,scrSync));
+// the slate is meant to stay up: keep the screen on from the start unless it was switched off
+(function(){let off=false;try{off=localStorage.getItem('csr.awake')==='0'}catch(x){}
+ if(off)return;SCR.on=true;scrHold().then(scrSync);
+ // autoplay can be refused (battery saver, data saver): the first touch anywhere retries
+ const retry=()=>{if(SCR.on&&SCR.how==='blocked')scrHold().then(scrSync)};
+ document.addEventListener('pointerdown',retry,{capture:true,once:true})})();
 function threatBell(){const b=document.querySelector('#bellBtn');if(b)b.outerHTML=bellHtml()}
 function bellRender(){let p=document.querySelector('#bellPanel');if(!bellOpen){if(p)p.remove();return}
  if(!p){p=document.createElement('div');p.id='bellPanel';p.className='cut';app.appendChild(p)}
@@ -2771,14 +2798,19 @@ function applyModel(){const M=MODEL,f=M.flight;
  sx('sDown',String(SESS.downed));sx('sDead',String(SESS.dead));sx('sResp',String(SESS.respawn));sx('sSeat',String(SESS.seat));
  const nr=$('#mainNear');if(nr){const k=killRows(2);nr.innerHTML=k.length?k.map(x=>`<div class="line unit">${esc(x.killer||'Unknown')} destroyed a ${esc(shipNameOf(x.cls))} · ${agoMin(x.t)}</div>`).join(''):'<div class="line unit">No ships destroyed nearby</div>'}
 }
-function applyWeapons(){if(MODEL.weapons&&MODEL.weapons.length)weapons=MODEL.weapons.map(w=>w.slice())}
+const GUNHOLD={};
+function applyWeapons(){if(!(MODEL.weapons&&MODEL.weapons.length))return;const now=Date.now();
+ weapons=MODEL.weapons.map((w,i)=>{w=w.slice();if(w[2]&&!w[3])GUNHOLD[i]=now;else if(w[2]&&GUNHOLD[i]&&now-GUNHOLD[i]<1500)w[3]=false;return w})}
+/* hits: the HIT light flashes while shots land. 4.10 sends no hull or shield numbers. */
+const HITS={n:0,t:0,on:false};
+function countHits(){const on=MODEL.ann&&MODEL.ann.hit==='maj';if(on&&!HITS.on){HITS.n++;HITS.t=Date.now()}HITS.on=on;if(!MODEL.ship){HITS.n=0;HITS.on=false}}
 let LASTN=0,LASTR=0,LASTK='',LASTSEQ=0,SEQOK=false;
 /* 4 polls a second while live: instruments every poll, the full redraw once a second or when the scene changes */
 async function poll(){let wait=2000,p=null;
  try{const r=await fetch(api('/api/telemetry/live'),{credentials:'same-origin',cache:'no-store'});if(r.ok)p=await r.json()}catch(e){}
  try{MODEL=slateModel(p||{},SHIPS[shipK]?SH().caps:null);MODEL.names=(p&&p.names)||{};if(p)countEvents(p.events);
   const G=MODEL.log||{},n=(G.notices||[]).length;
-  applyModel();
+  applyModel();applyWeapons();countHits();
   /* the log keeps the last 40 notices; seq counts every one, so new ones are seq - LASTSEQ (first poll is history) */
   const sq=G.seq||0;if(p&&p.log){if(SEQOK&&sq>LASTSEQ)G.notices.slice(-Math.min(3,sq-LASTSEQ,n)).forEach(x=>{unread++;toast(GICON[x.group]||'i-bell',x.group,x.text)});LASTSEQ=sq;SEQOK=true}
   wait=MODEL.live?250:2000;

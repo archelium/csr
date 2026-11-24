@@ -7,31 +7,168 @@ uses [Semantic Versioning](https://semver.org/) (MAJOR.MINOR.PATCH).
 
 ## [Unreleased]
 
+### Fixed
+- **Kestrel on 4.10:** SCM and NAV show again. 4.10 sends no master mode, so Kestrel reads
+  it from the shield and quantum drive lights.
+- The engine area no longer flashes red during quantum travel.
+- Altitude reads in metres with thousand separators.
+- A gun that runs dry shows as charging for at least 1.5 s. The game clears it in a
+  fraction of a second.
+- DEFENSE counts hits taken. Hull and shield numbers aren't in 4.10 telemetry, and
+  Kestrel now says so.
+- The QT tank reads "no data" on 4.10 instead of looking empty.
+- In a seat, the environment section is labelled Cabin. The game reports the cabin
+  there. Outside air density comes from the ship.
+
+## [2.0.0-beta] — 2026-11-25
+
+Telemetry and the Kestrel K-7 Flight Slate. Beta: telemetry is new and tested on
+LIVE 4.10 only.
+
 ### Added
+- **Kestrel K-7 Flight Slate.** A live screen for a tablet or phone beside your keyboard.
+  Seated: speed, fuel, G, IFCS and power, weapons, countermeasures, warnings, shields and
+  hull. On foot and EVA: vitals, injuries, suit and loadout. Contracts, HUD notices, your
+  location and ships destroyed nearby from Game.log. Click **Kestrel K-7** at the top of
+  the sidebar for a QR code. **Open on this PC** shows it in a browser tab. The screen
+  stays on while Kestrel is open. The SCREEN key goes fullscreen.
+- **Tablet & phone access.** Off by default. Turn it on from the Kestrel K-7 drawer or the
+  Telemetry settings for a QR code and a private link on port 7890-7899. Serves Kestrel
+  only, on your LAN only. Windows asks to allow CSR on the network the first time.
 - **Telemetry recording.** CSR records the game's own telemetry stream while you play:
   wallet, flight, weapons, warnings, on-foot and seat state, survival. The game's
-  telemetry setting starts off. Press Turn on in the Telemetry card (Backup & transfer,
-  💾). It adds `grpc.client.server.enabled = true` to your channel's user.cfg, with a
-  `.csr-bak` backup. It takes effect on the next game launch. CSR must be open while you
-  play. One CSR window records at a time.
-- **Detail and retention.** Full, Normal or Light (about 1.7, 0.4 and 0.1 MB per hour).
-  Keep recordings forever, 1 year, 3 months or 1 month. Pick which groups to record.
-- **Live view** (sidebar). The Kestrel K-7 slate: flight, weapons, warnings, shields and
-  hull when seated, vitals, injuries and loadout on foot. Contracts, notices, place and
-  ships destroyed nearby from Game.log. Tablet first, works on a phone.
-- **Phone access.** Turn it on in the Telemetry card for a QR code and a private link on
-  port 7890-7899. Live view only, LAN only. Windows asks to allow CSR on the network the
-  first time.
+  telemetry setting starts off. Click **Enable** in Backup & Transfer → Telemetry. It
+  adds `grpc.client.server.enabled = true` to your channel's user.cfg, with a `.csr-bak`
+  backup, and takes effect on the next game launch. CSR must be open while you play. One
+  CSR window records at a time.
 - **Career stats from telemetry.** Wallet on Economy. Flight records, How you fly and
   Weapons on Flight & Travel. Warnings & countermeasures on Combat. On foot & in seat and
   Survival on Activity. Cards show "From N of M sessions with telemetry".
+- **Detail and retention.** Full, Normal or Light (about 1.7, 0.4 and 0.1 MB per hour).
+  Keep recordings forever, 1 year, 3 months or 1 month. Pick which groups to record.
+- **Space limit.** Recordings stay under 1 GB by default (250 MB to 5 GB, or no limit).
+  Oldest go first. Career stats from them stay.
+- **CSR lives in the tray.** No console window. Its icon sits by the clock: click it for
+  the dashboard, right-click for Refresh logs, Start with Windows, Open log, Open data
+  folder and Quit. Crashes and disconnects show as Windows notifications.
+- **Start with Windows**, from the tray menu or the status light. CSR starts in the tray
+  at sign-in without opening a browser tab.
+- Starting CSR while it's already running opens the running one's dashboard.
+- **Pictures for 116 more blueprints**: ship components, guns, armour and flight suits.
+  Where the wiki has no picture, CSR loads one from [xparrow-lite](https://xparrow-lite.pages.dev),
+  a Star Citizen fan site, while you view the page. Nothing of theirs is stored.
 
 ### Changed
+- **Top bar menus.** Backup & Transfer, Refresh Data, Alerts and the status menu have
+  a cleaner layout, larger text and shorter wording. Alerts and status open as a sheet on
+  narrow windows.
 - **Config saves are atomic.** CSR never overwrites a csr_config.json it can't read.
 - **CSR refuses requests from other websites.** Origin and Host are checked.
-- **Idle auto-exit waits while the game is streaming.** CSR stays open when the tab is
-  closed.
+- CSR's output goes to `CSR-data\csr.log`, the run before kept as `csr.log.1`. Open it
+  from the tray or the status light. `--console` shows it in a window instead.
+- CSR keeps running with no dashboard open. It used to quit after 15 minutes.
+- `CSR.exe` carries its name, version and publisher in Windows file details
+  (right-click → Properties → Details). Antivirus tools trust an exe with details more.
 
+### Fixed
+- Refresh Data cards were titled Export backup and Import / merge.
+- The alert bell's link to a crash opens Stability's Crashes page again.
+- Tech Preview places showed their raw code, like "cluster ht a agriculture l 002 (Green
+  Dale)". They now read Green Dale.
+
+## [1.11.0] — 2026-11-24
+
+### Added
+- **Since the 4.8 wipe, and before it.** Two new scopes next to Career and the patches.
+  CSR opens on **Since 4.8 wipe**. **Before 4.8 wipe** holds everything earlier. Patches
+  go by number, previews and unversioned builds by date. Players who started after the
+  wipe see Career only, since it's the same thing.
+  Playtime by Patch fades the patches outside the chosen side of the wipe.
+- **Every page has a menu across the top.** Each section of a page is a tab with its
+  icon, its name and its headline number. Only the open tab shows, so pages are a
+  fraction of the length. The menu sticks under the top bar and CSR remembers the open
+  tab per page. Flight & Travel, Combat, Legacy Combat, Missions, Economy, Activity and
+  Your Machine all use it. Missions is split into Outcomes, Contracts and Cargo Hauling,
+  Activity into Playtime and When You Play.
+- **Blueprints pages:** Overview, Find a Blueprint, Pinned, Collection, Standing, Your
+  Library and Unlock History. Collection has a chip per category (Armour, Ship
+  Components, Ship Weapons, FPS Weapons, Magazines & Gear) with your count, and Rows or
+  Cards.
+- **Stability pages:** Overview, Crashes, Back to Menu, Lost Player, Outcomes, Servers
+  and Inventory, each with its number on the tab. The Overview has the four headline numbers, your last crash, rough sessions by
+  patch and what has crashed you. Clicking a cause opens Crashes filtered to it.
+- **Live monitoring is one line** at the top of every Stability page: game state and
+  each channel's idle time.
+- **Every blueprint has a row.** Each collection page lists its blueprints as rows, a
+  square per blueprint.
+  - **Ship components**: a row per type and size, a column per class (Military,
+    Civilian, Industrial, Stealth, Competition), the grade on each square.
+  - **FPS weapons**: a row per gun, the base gun first, then its variants.
+  - **Magazines & gear**: magazines and mining lasers by maker, clothing and decor.
+  - **Armour** adds the pieces outside a set. **Ship weapons** adds the one-size weapons.
+  - Hover a square for its name, class, grade and maker. Amber: received in the last
+    30 days. Started, Complete and Untouched tabs on every board.
+- **Cards view.** Each collection page switches between Rows and Cards: every blueprint
+  as a card with its picture, size, class, grade and maker. Owned or missing, search. A
+  missing card says how many missions drop it.
+- **Click any blueprint for its missions.** Every square, set piece, ladder dot, card,
+  search result and latest unlock opens a panel on the right: picture, owned or missing,
+  pin, the missions that drop it, the standing each needs, the drop chance and a wiki
+  link per mission. Esc closes it.
+  Missions are grouped by faction with your standing at the top of each group. Each
+  mission is one line with an Open or "rep to go" badge, and a second line with the
+  drop chance, rep, what it needs and how often you've done it.
+- **Find a blueprint.** A search at the top of Blueprints: name, maker, class or grade.
+  Each result says owned or missing and the next step: "open now" with the mission, or
+  how much rep you're short and with whom. The search box in the menu goes straight to it.
+- **Pinned blueprints.** Every blueprint has a ☆ Pin button. Pinned ones turn amber and
+  read ★ Pinned. **Pinned** in the top bar lists your pins from any page with each one's
+  next step, and counts the ones still to get. Click one for its missions. Pins are saved
+  in your browser, per account.
+- **Card pages.** Cards page through 48 at a time.
+- **Retired or unknown missions are folded** under a line you can open, below the
+  missions you can run.
+- **Blueprints with no known source are marked.** The catalogue lists every craftable
+  blueprint in the game files. 920 of 1,628 have no mission and aren't given by default.
+  Their squares are dashed, their cards say "no known source", and the totals split what
+  you're missing into "from missions" and "no known source". Some come from events: your
+  XenoThreat rewards did.
+
+### Changed
+- **Pins and your main account are saved in CSR's data folder** (`csr_prefs.json`),
+  not the browser. They survive a new browser, a different port and a reinstall, and
+  Backup & Transfer carries them. Import adds the backup's pins to yours and keeps your
+  main account. Whatever an older CSR saved in the browser moves over on first start.
+- Titles and menus are in title case. Small words (a, and, of, to, per, with…) stay
+  lowercase.
+- Page banners are shorter.
+- Phones and tablets: the top bar scrolls away and the page menu takes the top of the
+  screen. Menus that don't fit scroll sideways with a fade at the edge. Headline tiles
+  sit two to a row, and the banner shows figures only.
+- The top bar on a phone is two rows: page title with pins, alerts and status, then the
+  account picker with backup, refresh and theme. The scope line under it is one line.
+- **Crafting catalogue updated to 4.10.3**: 1,628 blueprints. The Skarnov rifle and its
+  battery and the Raider Camo Palatino pieces now match.
+
+### Fixed
+- **Grey's Market guns had no maker or logo.** The Killshot, Pulverizer, Ripper,
+  Tripledown and Boomtube carry no maker in the game data. They now show Grey's Market.
+  UltiFlex and Sakura Sun guns got their makers too, and Amon & Reese replaces the
+  wrong "Ammo Response".
+- Sakura Sun and Vanduul showed a photo where their logo should be.
+- The scope line at the top of each page had no space under it.
+- **Home inventory showed 1% after a session that loaded only part of it.** The game
+  logs your home inventory only when you move an item, and only what it has loaded by
+  then. A reading under half of the ones around it is now a partial load. The headline
+  uses the last full load and names a newer partial one under it. A **Partial loads**
+  tile counts them. The chart is one bar per session, partial loads in grey. Other
+  locations show their highest reading in the last week each was read.
+- Notes and callouts use the full width of their box.
+- Crash rows are one line. The stock "fault inside Star Citizen" sentence is gone from
+  each row. A sentence about that crash still shows after the place.
+- **Every web link opens in a new tab**, including any built without one.
+- **Stealth components showed as "Sth/2/A Umbra" under Other.** The game writes stealth
+  as "Sth". They now read Umbra, Shimmer and Veil, under ship components.
 
 ## [1.10.0] — 2026-11-23
 

@@ -615,6 +615,40 @@ def apply_retention(root, keep_days, now, skip=frozenset()):
     return n
 
 
+def apply_size_cap(root, max_bytes, skip=frozenset()):
+    """Delete the oldest recordings until all of them fit in max_bytes. The open recording
+    counts toward the total but is never deleted. Index entries stay. Returns files deleted."""
+    if not max_bytes:
+        return 0
+    sizes = {}
+    for path in recording_files(root):
+        try:
+            sizes[path] = os.path.getsize(path)
+        except OSError:
+            pass
+    total = sum(sizes.values())
+    if total <= max_bytes:
+        return 0
+    n = 0
+    with _index_lock:
+        idx = load_index(root)
+        changed = False
+        old = datetime.min
+        for path in sorted(sizes, key=lambda p: (_file_started(p, idx) or old, p)):
+            if total <= max_bytes:
+                break
+            if _skipped(path, skip):
+                continue
+            done, ch = _delete_indexed(idx, path)
+            changed = changed or ch
+            if done:
+                n += 1
+                total -= sizes[path]
+        if changed:
+            save_index(root, idx)
+    return n
+
+
 def disk_usage(root):
     total = 0
     for path in recording_files(root):

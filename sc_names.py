@@ -33,9 +33,32 @@ WEAPON_MAN = {
     "klwe": "Klaus & Werner", "behr": "Behring", "ksar": "Kastak Arms",
     "gemi": "Gemini", "apar": "Apocalypse Arms", "grin": "Greycat",
     "crlf": "CureLife", "volt": "Volt", "lbco": "Lightning Bolt Co.",
-    "gmni": "Gemini", "ndsl": "Klaus & Werner", "amrs": "Ammo Response",
-    "hdgw": "Hedeby Gunworks",
+    "gmni": "Gemini", "ndsl": "Klaus & Werner", "amrs": "Amon & Reese Co.",
+    "hdgw": "Hedeby Gunworks", "utfl": "UltiFlex", "sasu": "Sakura Sun", "vlk": "Behring",
+    "glsn": "Grey's Market",
 }
+# Grey's Market guns carry no maker in their class (none_...). Their wiki pages give the
+# maker code GLSN, which is Grey's Market. The Deadrig is listed as unknown everywhere.
+NONE_MAKER = {
+    "none_rifle_multi_01": "glsn",          # Killshot Rifle
+    "none_lmg_ballistic_01": "glsn",        # Pulverizer LMG
+    "none_smg_energy_01": "glsn",           # Ripper SMG
+    "none_pistol_ballistic_01": "glsn",     # Tripledown Pistol
+    "none_special_ballistic_01": "glsn",    # Boomtube Rocket Launcher
+}
+
+
+def weapon_maker_code(cls):
+    """The maker code of a weapon class ('behr', 'glsn'), '' when unknown."""
+    c = (cls or "").lower()
+    tok = c.split("_")[0]
+    if tok == "none":
+        for base, code in NONE_MAKER.items():
+            if c == base or c.startswith(base + "_"):
+                return code
+        return ""
+    return tok if tok in WEAPON_MAN else ""
+
 
 # Confirmed weapon/tool model names (base class -> model). Only entries we're
 # confident about; everything else uses the manufacturer + type fallback.
@@ -187,6 +210,7 @@ class ItemIndex:
         self.idx = {}
         self.guns = {}          # class -> [type, ammo class, image url] for personal weapons
         self.imgs = {}          # class -> catalogue image url, every item that has one
+        self.meta = {}          # class -> [class, grade, maker] for ship, FPS and wearable items
         self._by_name = None
         self.fetched = None
         self.ok = False
@@ -200,6 +224,7 @@ class ItemIndex:
                 if isinstance(raw, dict) and isinstance(raw.get("names"), dict):
                     self.idx, self.guns, self.fetched = raw["names"], raw.get("guns") or {}, raw.get("fetched")
                     self.imgs = raw.get("imgs") or {}
+                    self.meta = raw.get("meta") or {}
                 else:
                     self.idx, self.guns, self.fetched = raw or {}, {}, None
             except Exception:
@@ -212,7 +237,7 @@ class ItemIndex:
         return self.ok
 
     def _fetch(self):
-        names, guns, pics = {}, {}, {}
+        names, guns, pics, meta = {}, {}, {}, {}
         try:
             page, last = 1, 1
             while page <= last:
@@ -231,6 +256,12 @@ class ItemIndex:
                     img = next((u for u in imgs if "%22" not in u), imgs[0] if imgs else None)
                     if img and (cn not in pics or "%22" in pics[cn]):
                         pics[cn] = img
+                    # what the Blueprints board sorts components by: Military S2 grade A, Aegis
+                    if (i.get("classification") or "").startswith(("Ship.", "FPS.", "Char_")):
+                        mk = (i.get("manufacturer") or {}).get("name") or ""
+                        m = [i.get("class") or "", i.get("grade") or "", "" if mk.lower() == "unknown" else mk]
+                        if any(m):
+                            meta.setdefault(cn, m)
                     pw = i.get("personal_weapon") or {}
                     if pw.get("type"):
                         had = (guns.get(cn) or [None, None, None])[2]
@@ -244,10 +275,10 @@ class ItemIndex:
             return
         # items the API has dropped keep their last known name (old logs still carry them)
         names = {**{k: v for k, v in self.idx.items() if _real_name(k, v)}, **names}
-        self.idx, self.guns, self.imgs, self._by_name = names, guns, pics, None
+        self.idx, self.guns, self.imgs, self.meta, self._by_name = names, guns, pics, meta, None
         self.fetched = datetime.date.today().isoformat()
         with open(self.cache_path, "w", encoding="utf-8") as fh:
-            json.dump({"fetched": self.fetched, "names": names, "guns": guns, "imgs": pics}, fh)
+            json.dump({"fetched": self.fetched, "names": names, "guns": guns, "imgs": pics, "meta": meta}, fh)
 
     def image_for(self, name):
         """Catalogue image url for an item by the name CSR shows (skin names stripped),
@@ -277,6 +308,96 @@ class ItemIndex:
         if variants:
             return _skin_strip(min(variants, key=len))
         return None
+
+
+class XparrowIcons:
+    """Which game classes have a picture on xparrow-lite.pages.dev (a Star Citizen fan
+    site): icons for ship components and ship guns, FPS weapons and attachments (two
+    lists they publish), and armour and clothing thumbnails (no list, found by asking
+    for each class CSR has no picture of). CSR keeps the class names only. The page
+    loads the picture from their site for an item CSR has no picture of."""
+
+    BASE = "https://xparrow-lite.pages.dev/"
+    LISTS = {"s": "icons/ship/index.json", "f": "icons/index.json"}
+
+    def __init__(self, cache=None):
+        self.cache_path = cache or os.path.join(SCRIPT_DIR, "sc_xparrow.json")
+        self.ver = {}                 # "s"/"f" -> their cache-busting version
+        self.ids = {}                 # lowercased class -> (kind, id as they spell it)
+        self.ok = False
+        self.fetched = None
+
+    def _apply(self, d):
+        self.ver = {k: str(d.get(k + "_v") or "") for k in self.LISTS}
+        self.ids = {}
+        for k in ("t", "f", "s"):     # icons win over thumbnails, ship over FPS
+            for i in d.get(k) or []:
+                self.ids[str(i).lower()] = (k, str(i))
+        self.thumbs = list(d.get("t") or [])
+        self.fetched = d.get("fetched")
+        self.ok = bool(self.ids)
+
+    def load(self, force=False):
+        if not force and os.path.isfile(self.cache_path):
+            try:
+                self._apply(json.load(open(self.cache_path, encoding="utf-8")))
+                if self.ok:
+                    return True
+            except Exception:
+                pass
+        try:
+            keep = list(getattr(self, "thumbs", []))
+            if not keep and os.path.isfile(self.cache_path):      # thumbnails found on earlier runs
+                try:
+                    keep = json.load(open(self.cache_path, encoding="utf-8")).get("t") or []
+                except Exception:
+                    keep = []
+            d = {"fetched": datetime.date.today().isoformat(), "t": keep}
+            for k, path in self.LISTS.items():
+                req = urllib.request.Request(self.BASE + path, headers=_UA)
+                j = json.loads(urllib.request.urlopen(req, timeout=20, context=_SSL).read())
+                ids = j.get("ids") or []
+                d[k] = sorted(ids.keys() if isinstance(ids, dict) else ids)
+                d[k + "_v"] = j.get("v") or ""
+            if d["s"] or d["f"]:
+                json.dump(d, open(self.cache_path, "w", encoding="utf-8"))
+                self._apply(d)
+        except Exception:
+            pass
+        return self.ok
+
+    def probe_thumbs(self, classes, delay=0.5):
+        """Ask for an armour/clothing thumbnail for each class not already known, one at a
+        time, gently. Keeps the ones that exist. Returns how many were found."""
+        import time
+        known = set(self.ids)
+        found = []
+        for c in dict.fromkeys(c for c in classes if c and c.lower() not in known):
+            try:
+                req = urllib.request.Request(f"{self.BASE}thumbs/sc/{c}.webp", headers=_UA, method="HEAD")
+                with urllib.request.urlopen(req, timeout=15, context=_SSL) as r:
+                    if r.status == 200 and "image" in (r.headers.get("Content-Type") or ""):
+                        found.append(c)
+            except Exception:
+                pass
+            time.sleep(delay)
+        if found:
+            try:
+                d = json.load(open(self.cache_path, encoding="utf-8"))
+            except Exception:
+                d = {}
+            d["t"] = sorted(set(d.get("t") or []) | set(found))
+            json.dump(d, open(self.cache_path, "w", encoding="utf-8"))
+            self._apply(d)
+        return len(found)
+
+    def art(self, cls):
+        """["x", id, kind] for the page, None when they have no icon for this class."""
+        hit = self.ids.get((cls or "").lower())
+        return ["x", hit[1], hit[0]] if hit else None
+
+    def payload(self):
+        return {"base": self.BASE, "v": self.ver} if self.ok else None
 
 
 class BlueprintIndex:
