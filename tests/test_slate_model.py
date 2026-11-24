@@ -54,6 +54,19 @@ class ModelTests(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         return json.loads(r.stdout)
 
+    def test_master_mode_from_annunciators(self):
+        def snap(**ann):
+            return {"actor": {"state": {"locomotion": "SEATED", "crew_role": "PILOT"}},
+                    "vehicle": {"state": {"class_name": "DRAK_Marauder", "annunciators": ann}}}
+        nav = self.run_model(payload(snap(shld="OFF", qdrv="NOMINAL", thr="MAJOR_ON")))["model"]
+        self.assertEqual(nav["flight"]["master"], "nav")
+        self.assertEqual(nav["ann"]["thr"], "ok")              # engines held by quantum travel, not damage
+        scm = self.run_model(payload(snap(shld="NOMINAL", qdrv="OFF", thr="MINOR_ON", hit="MAJOR_FLASHING")))["model"]
+        self.assertEqual(scm["flight"]["master"], "scm")
+        self.assertEqual(scm["ann"]["thr"], "min")
+        self.assertEqual(scm["ann"]["hit"], "maj")
+        self.assertTrue(scm["threat"])
+
     def test_410_fixture_flight(self):
         snap = frame("live-4.10-takeoff", "middle")
         m = self.run_model(payload(snap, names={"klwe_laserrepeater_s3": "CF-337 Panther Repeater"}),
@@ -66,7 +79,8 @@ class ModelTests(unittest.TestCase):
         self.assertAlmostEqual(m["flight"]["speed"], 929.9, delta=60)
         self.assertIsNone(m["hull"])                           # not in LIVE 4.10
         self.assertIsNone(m["shields"]["faces"])
-        self.assertIsNone(m["flight"]["master"])
+        self.assertEqual(m["flight"]["master"], "nav")        # 4.10: from shields off + quantum drive on
+        self.assertTrue(m["flight"]["masterGuess"])
         self.assertEqual(m["ann"]["wpn"], "min")
         self.assertEqual(m["cm"]["decoy"], 48)
         self.assertEqual(m["weapons"][0][0], "CF-337 Panther Repeater")

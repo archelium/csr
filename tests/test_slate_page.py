@@ -1,6 +1,9 @@
 """The Kestrel slate page: light, no mock data, no action hooks, the parts the live model fills."""
+import json
 import os
 import re
+import shutil
+import subprocess
 import sys
 import unittest
 import unittest.mock
@@ -45,14 +48,18 @@ class PageTests(unittest.TestCase):
                   "No contracts yet", "No notices yet", "No ships destroyed nearby"):
             self.assertIn(i, self.html, i)
 
-    def test_no_party_or_demo_stops(self):
-        for s in ('id="pplParty"', 'id="navParty"', "NAMES SEEN", 'Port Tressler<span class="r">', "ARC-L4 · 42 Gm", "42 min ago",
-                  "partyRender()"):
+    def test_no_demo_stops_or_party(self):
+        for s in ('Port Tressler<span class="r">', "ARC-L4 · 42 Gm", "42 min ago", "PARTY · 3", "1 near you</span>"):
             self.assertNotIn(s, self.html, s)
+
+    def test_party_and_answers_from_the_log(self):
+        for s in ('id="pplParty"', 'id="navParty"', 'id="pplNames"', 'id="navQt"', "ANSWER IN GAME", "G.asks", "G.party",
+                  "Not in a party"):
+            self.assertIn(s, self.html, s)
 
     def test_no_mock_starting_values(self):
         for v in ('id="spd">370<', 'id="bst">8%<', 'id="o2v">63%<', 'id="o2t">14 min<', "In space · no air",
-                  "DECOYS <b>48</b>", "QT <b>100%</b>", "Marauder · top turret", "NIGHT VIS", 'id="mode">SCM<',
+                  "DECOYS <b>48</b>", "QT <b>100%</b>", "Marauder · top turret", "NIGHT VIS <b", 'id="mode">SCM<',
                   "${combat?'Ungoverned':'Armistice'}", "V/4.5", "v.o2/4.5", "STATE.master==='nav'?'NAV':'SCM'",
                   "total 61%", "quantum off"):
             self.assertNotIn(v, self.html, v)
@@ -61,15 +68,21 @@ class PageTests(unittest.TestCase):
         for m in re.finditer(r'<\w+[^>]*\bid="([^"]+)"[^>]*>([^<]+)<', sc_slate.SLATE_BODY):
             self.assertFalse(re.search(r"\d", m.group(2)), m.group(1) + ": " + m.group(2))
 
-    def test_deck_is_state_only(self):
-        for s in ("SET MODE", "<small>emote</small>", "request pad", "v_toggle_", "v_set_", "act:'"):
+    def test_deck_sends_nothing(self):
+        # the per-ship deck draws action keys (eject, self-destruct, quantum...) marked not wired; none carries an action
+        for s in ("<small>emote</small>", "v_toggle_", "v_set_", "act:'", "method:'POST'", 'method:"POST"'):
             self.assertNotIn(s, self.html, s)
+        self.assertIn("Not wired yet. Nothing is sent to the game.", self.html)
+
+    def test_deck_per_ship_keys(self):
+        for k in ("eject:{", "destr:{", "wings:{", "vtol:{", "qt:{", "seatEject('pilot')", "c.sys.selfDestruct"):
+            self.assertIn(k, sc_slate.SLATE_JS, k)
 
     def test_no_action_hooks(self):
         low = self.html.lower()
         self.assertNotIn("triggergameaction", low)
-        self.assertNotIn("self-destruct", low)
         self.assertNotIn("v_eject", low)
+        self.assertNotIn("v_self_destruct", low)
         self.assertNotIn("(mock)", low)
 
     def test_fonts_placeholder(self):
@@ -78,6 +91,25 @@ class PageTests(unittest.TestCase):
     def test_polls_live_and_ship(self):
         self.assertIn("/api/telemetry/live", self.html)
         self.assertIn("/api/telemetry/ship?c=", self.html)
+
+
+def run_js(js):
+    out = subprocess.run([shutil.which("node"), "-e", js], capture_output=True, text=True, timeout=30)
+    if out.returncode:
+        raise AssertionError(out.stderr)
+    return out.stdout.strip()
+
+
+@unittest.skipUnless(shutil.which("node"), "node not installed")
+class PlaceInTests(unittest.TestCase):
+    def test_objective_names_a_map_place(self):
+        js = sc_slate.SLATE_JS
+        i = js.index("const STARMAP=")
+        src = js[i:js.index("\n", i)] + "\n" + js[js.index("const PRANK"):js.index("function mtypeOf")]
+        texts = ["Go to a Hurston Weapons Testing Site above Aberdeen", "Go to Everus Harbor above Hurston",
+                 "Defeat Hostile Ships"]
+        got = json.loads(run_js(src + "\nconsole.log(JSON.stringify(" + json.dumps(texts) + ".map(placeIn)))"))
+        self.assertEqual(got, [["stanton", "Aberdeen"], ["stanton", "Everus Harbor"], None])
 
 
 class SwitchOverTests(unittest.TestCase):

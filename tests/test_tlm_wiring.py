@@ -320,10 +320,11 @@ class RouteTests(unittest.TestCase):
     def test_live_get_counts_as_seen(self):
         state = {"seen": 0.0}
         seen = lambda: state.__setitem__("seen", time.time())  # noqa: E731
-        with mock.patch.object(sc_stats.sc_livelog, "get_state", lambda *a, **k: {"place": None}):
+        with mock.patch.object(sc_stats.sc_livelog, "get_state", lambda *a, **k: {"place": None}),                 mock.patch.object(sc_stats, "_SLATE_LAST", {"loaded": True, "data": None, "saved": 0}):
             body = sc_stats.tlm_api_get("/api/telemetry/live", lambda: {"state": "live", "x": float("nan")},
                                         lambda: {"status": 1}, seen)
-        self.assertEqual(json.loads(body), {"state": "live", "x": None, "names": {}, "log": {"place": None}})
+        self.assertEqual(json.loads(body), {"state": "live", "x": None, "names": {}, "log": {"place": None},
+                                            "lastShip": None})
         self.assertGreater(state["seen"], time.time() - 5)
         state["seen"] = 0.0
         body = sc_stats.tlm_api_get("/api/telemetry/status", lambda: {}, lambda: {"status": 1}, seen)

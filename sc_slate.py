@@ -1,7 +1,11 @@
 """The Kestrel K-7 Flight Slate: CSR's live view page.
 
 SLATE_MODEL_JS is a pure function that turns the /api/telemetry/live payload into the
-model the page draws. It runs in Node for tests (tests/test_slate_model.py)."""
+model the page draws. It runs in Node for tests (tests/test_slate_model.py).
+
+Every element of the approved mock is accounted for in docs/superpowers/specs/2026-11-25-kestrel-k7-audit.md
+(ported / ported, not wired / not sent on 4.10 / dropped, with reasons). Action keys are drawn but send
+nothing to the game. A value the game didn't send reads "—"."""
 
 SLATE_MODEL_JS = r"""
 function annunciatorLevel(v){
@@ -34,6 +38,16 @@ function slateModel(payload, ship){
   const big = v => { v = num(v); return v == null || v >= 1e38 ? null : v; };
   const dep = v => v == null ? null : String(v).toUpperCase();
   const mm = veh && veh.master_mode ? String(veh.master_mode.mode || '').toUpperCase() : '';
+  let master = mm.indexOf('NAV') === 0 ? 'nav' : mm === 'SCM' ? 'scm' : mm === 'STEALTH' ? 'stealth' : null;
+  // 4.10 sends no master mode. NAV switches the shields off and the quantum drive on, SCM the reverse.
+  let masterGuess = false;
+  if (!master && inSeat && veh && veh.annunciators) {
+    if (ann.qdrv !== 'off' && ann.shld === 'off') master = 'nav';
+    else if (ann.qdrv === 'off' && ann.shld !== 'off') master = 'scm';
+    masterGuess = !!master;
+  }
+  // engines report a fault while quantum travel holds them: not damage
+  if (master === 'nav' && ann.thr !== 'off') ann.thr = 'ok';
   const ifcs = {};
   Object.keys(set).forEach(k => {
     const v = set[k];
@@ -51,8 +65,9 @@ function slateModel(payload, ship){
   const cm = {decoy: null, noise: null};
   (inSeat ? (wf.countermeasures || []) : []).forEach(c => {
     const t = String(c.type || '').toUpperCase();
-    if (t.indexOf('DECOY') >= 0) cm.decoy = num(c.amount) || 0;
-    if (t.indexOf('NOISE') >= 0) cm.noise = num(c.amount) || 0;
+    const n = num(c.amount);
+    if (n != null && t.indexOf('DECOY') >= 0) cm.decoy = (cm.decoy || 0) + n;
+    if (n != null && t.indexOf('NOISE') >= 0) cm.noise = (cm.noise || 0) + n;
   });
   const ev = {downed: 0, dead: 0, respawn: 0, seat: 0};
   (payload.events || []).forEach(e => {
@@ -84,7 +99,7 @@ function slateModel(payload, ship){
                                  engaged: !!ins.boost.engaged} : null,
              gear: dep(fst.gear), vtol: dep(fst.vtol), wings: dep(fst.transformation),
              landed: fst.is_landed == null ? null : !!fst.is_landed,
-             master: mm.indexOf('NAV') === 0 ? 'nav' : mm === 'SCM' ? 'scm' : mm === 'STEALTH' ? 'stealth' : null,
+             master: master, masterGuess: masterGuess,
              spooled: veh && veh.master_mode ? !!veh.master_mode.spooled : null},
     ifcs: ifcs,
     power: veh && veh.power ? Object.assign({}, veh.power) : {},
@@ -102,7 +117,7 @@ function slateModel(payload, ship){
     vitals: {hp: gauge(vit.health), o2: o2 == null ? null : Math.round(o2 <= 1.0001 ? o2 * 100 : o2),
              food: gauge(vit.hunger), water: gauge(vit.thirst), temp: gauge(vit.body_temperature),
              hr: num(vit.heart_rate), gravity: num(vit.gravity), pressure: num(vit.pressure),
-             intox: num(vit.intoxication_level) || 0},
+             intox: num(vit.intoxication_level)},
     env: {temp: num(env.external_temperature), rad: num(env.ambient_radiation_rate),
           breathable: env.breathable_atmosphere == null ? null : !!env.breathable_atmosphere},
     wallet: num(ast.uec_balance),
@@ -840,6 +855,7 @@ main{overflow-x:hidden}
 .btn small{font-size:9px;letter-spacing:.02em;color:var(--dim)}
 .btn.lit{background:linear-gradient(#1f6b52,#0e3a2c);border-color:var(--g);color:#d8ffea;box-shadow:inset 0 0 12px rgba(91,230,154,.45)}
 .btn.lit small{color:#9fe8c4}
+.btn.nw{opacity:.55}.btn.nw small{color:var(--dim)}
 .btn.guard{background:repeating-linear-gradient(45deg,#3a2a08 0 8px,#1a1404 8px 16px);border-color:var(--a);color:var(--a)}
 .btn.armed{background:linear-gradient(#6b1f2a,#3a0e14);border-color:var(--r);color:#fff;box-shadow:0 0 14px var(--r);animation:pulse .8s infinite alternate}
 @keyframes pulse{to{box-shadow:0 0 4px var(--r)}}
@@ -946,7 +962,7 @@ main{overflow-x:hidden}
 #app:not(.incombat) #page-ship .dlist{display:none!important}
 .dlist{display:flex;flex-direction:column;gap:4px;margin-top:6px}
 .dr2{border-left:3px solid var(--line);padding:3px 8px;font-size:12px;display:flex;justify-content:space-between;align-items:center;background:rgba(0,0,0,.25);color:var(--dim)}
-.dr2 b{color:var(--hi)}.dr2.maj{border-color:var(--r);color:#ff8a94}.dr2.maj b{color:#ff8a94}.dr2.min{border-color:var(--a);color:#ffcf8a}.dr2.min b{color:#ffcf8a}.dr2.ok{border-color:#1d5a3b;color:var(--g)}
+.dr2 b{color:var(--hi)}.dr2.maj{border-color:var(--r);color:#ff8a94}.dr2.maj b{color:#ff8a94}.dr2.min{border-color:var(--a);color:#ffcf8a}.dr2.min b{color:#ffcf8a}.dr2.ok{border-color:#1d5a3b;color:var(--g)}.dr2.nd{color:var(--mute);font-size:11px}.dr2.nd b{color:var(--mute);font-weight:400}
 .dr2 .gdots{display:inline-flex;margin-left:6px;vertical-align:middle}.dr2 .gdots i{width:12px;height:7px}
 
 #app.tablet,#app.tablet.feedpage,#app.feedpage,#app:not(.phone){grid-template-columns:58px 1fr}
@@ -1208,12 +1224,6 @@ body{background:#07090a!important}
 
 .deck.foot.emotes:empty{display:none}
 
-.needbox[hidden],#needFull[hidden]{display:none!important}
-#app:not(.portrait):not(.phone) #page-feed.on{grid-template-columns:minmax(0,1fr)}
-#app:not(.portrait):not(.phone) #page-feed>.panel{grid-column:1!important;grid-row:1!important}
-#app:not(.portrait):not(.phone) #page-ppl.on{grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(0,1fr) auto}
-#app:not(.portrait):not(.phone) #page-ppl .pplships{grid-column:1;grid-row:1}
-#app:not(.portrait):not(.phone) #page-ppl>.panel:last-child{grid-column:1;grid-row:2}
 
 .waitp{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);z-index:50;display:flex;flex-direction:column;gap:6px;align-items:center;padding:18px 26px;background:rgba(4,14,20,.94);border:1px solid var(--c2);border-radius:4px;color:var(--hi);font-size:13px;text-align:center}.waitp b{font-size:15px;letter-spacing:.12em;color:var(--c)}.waitp span{color:var(--dim);font-size:12px}.waitp[hidden]{display:none}
 """
@@ -1414,7 +1424,14 @@ SLATE_BODY = r"""
     </div>
    </div>
    <div class="deck seat" id="deck"></div>
-   <div class="deck foot emotes"></div>
+   <div class="deck foot emotes" id="emoteDeck">
+    <button class="btn cut nw" data-id="emote" title="Not wired yet. Nothing is sent to the game."><svg class="ic"><use href="#i-party"/></svg>WAVE<small>not wired</small></button>
+    <button class="btn cut nw" data-id="emote" title="Not wired yet. Nothing is sent to the game."><svg class="ic"><use href="#i-ready"/></svg>SALUTE<small>not wired</small></button>
+    <button class="btn cut nw" data-id="emote" title="Not wired yet. Nothing is sent to the game."><svg class="ic"><use href="#i-obj"/></svg>POINT<small>not wired</small></button>
+    <button class="btn cut nw" data-id="emote" title="Not wired yet. Nothing is sent to the game."><svg class="ic"><use href="#i-friend"/></svg>AGREE<small>not wired</small></button>
+    <button class="btn cut nw" data-id="emote" title="Not wired yet. Nothing is sent to the game."><svg class="ic"><use href="#i-zone"/></svg>SIT<small>not wired</small></button>
+    <button class="btn cut nw" data-id="emote" title="Not wired yet. Nothing is sent to the game."><svg class="ic"><use href="#i-ping"/></svg>WHISTLE<small>not wired</small></button>
+   </div>
   </section>
 
   <!-- MISSIONS -->
@@ -1450,7 +1467,10 @@ SLATE_BODY = r"""
 
   <!-- FEED -->
   <section class="page" id="page-feed">
-   <div id="needFull" hidden></div>
+   <div class="panel cut">
+    <div class="ph">ANSWER IN GAME<span class="r">closes itself when the log shows the answer</span></div>
+    <div id="needFull"></div>
+   </div>
    <div class="panel cut scrolls" style="flex:1;min-height:0;overflow:auto">
     <div class="filters" id="filters">
      <button class="on" data-f="all">ALL</button><button data-f="msn">MISSIONS</button><button data-f="soc">SOCIAL</button><button data-f="zone">ZONES</button><button data-f="cbt">COMBAT</button><button data-f="pay">MONEY</button>
@@ -1472,9 +1492,11 @@ SLATE_BODY = r"""
       <div style="font-size:18px;color:var(--hi)" id="navPlace">—</div>
       <div class="kv" style="margin-top:8px">ZONE <b id="navZone">—</b></div>
       <div class="kv">JURISDICTION <b id="navJur">—</b></div>
+      <div class="kv">QUANTUM TARGET <b id="navQt">—</b></div>
      </div>
+     <div class="panel cut list" id="navParty"></div>
           <div class="panel cut list">
-      <div class="ph">RECENT PLACES</div>
+      <div class="ph">LAST STOPS</div>
       <div id="navStops"><div class="row unit">No places yet</div></div>
      </div>
     </div>
@@ -1483,10 +1505,14 @@ SLATE_BODY = r"""
 
   <!-- PEOPLE -->
   <section class="page" id="page-ppl">
+   <div class="two" style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+    <div class="panel cut list" id="pplParty"></div>
+    <div class="panel cut list" id="pplNames"></div>
+   </div>
    <div class="panel cut list pplships scrolls" id="pplShips"></div>
    <div class="panel cut list">
-    <div class="ph">THIS SESSION<span class="r">from Vehicle Destroyed and Actor Death</span></div>
-    <div class="stiles pplsess"><div class="stile"><span class="sti"><svg class="ic"><use href="#i-kill"/></svg></span><span class="stl">SHIPS DESTROYED</span><b id="pDst">—</b></div><div class="stile"><span class="sti"><svg class="ic"><use href="#i-skull"/></svg></span><span class="stl">DEATHS</span><b id="pDead">—</b></div><div class="stile"><span class="sti"><svg class="ic"><use href="#i-downed"/></svg></span><span class="stl">DOWNED</span><b id="pDown">—</b></div></div>
+    <div class="ph">THIS SESSION<span class="r">from the game log</span></div>
+    <div class="stiles pplsess"><div class="stile"><span class="sti"><svg class="ic"><use href="#i-kill"/></svg></span><span class="stl">SHIPS YOU DESTROYED</span><b id="pDst">—</b></div><div class="stile"><span class="sti"><svg class="ic"><use href="#i-skull"/></svg></span><span class="stl">LAST KILLED BY</span><b id="pDead">—</b></div><div class="stile"><span class="sti"><svg class="ic"><use href="#i-downed"/></svg></span><span class="stl">INCAPACITATED</span><b id="pDown">—</b></div></div>
    </div>
   </section>
 
@@ -1514,14 +1540,14 @@ SLATE_BODY = r"""
    <div class="panel cut">
     <div class="ph">THIS SESSION<span class="r" id="sessT"></span></div>
     <div class="stiles sessgrid">
-     <div class="stile g"><span class="sti"><svg class="ic"><use href="#i-pay"/></svg></span><span class="stl">WALLET</span><b id="sWal">—</b></div><div class="stile "><span class="sti"><svg class="ic"><use href="#i-bank"/></svg></span><span class="stl">BALANCE</span><b id="sBal">—</b></div><div class="stile "><span class="sti"><svg class="ic"><use href="#i-route"/></svg></span><span class="stl">FLOWN</span><b id="sFlown">—</b></div><div class="stile "><span class="sti"><svg class="ic"><use href="#i-bp"/></svg></span><span class="stl">BLUEPRINTS</span><b id="sBp">—</b></div><div class="stile "><span class="sti"><svg class="ic"><use href="#i-downed"/></svg></span><span class="stl">DOWNED</span><b id="sDown">—</b></div><div class="stile "><span class="sti"><svg class="ic"><use href="#i-skull"/></svg></span><span class="stl">DEATHS</span><b id="sDead">—</b></div><div class="stile "><span class="sti"><svg class="ic"><use href="#i-respawn"/></svg></span><span class="stl">RESPAWNS</span><b id="sResp">—</b></div><div class="stile "><span class="sti"><svg class="ic"><use href="#i-seat"/></svg></span><span class="stl">SEAT CHANGES</span><b id="sSeat">—</b></div>
+     <div class="stile g"><span class="sti"><svg class="ic"><use href="#i-pay"/></svg></span><span class="stl">WALLET</span><b id="sWal">—</b></div><div class="stile "><span class="sti"><svg class="ic"><use href="#i-bank"/></svg></span><span class="stl">BALANCE</span><b id="sBal">—</b></div><div class="stile "><span class="sti"><svg class="ic"><use href="#i-route"/></svg></span><span class="stl">FLOWN</span><b id="sFlown">—</b></div><div class="stile "><span class="sti"><svg class="ic"><use href="#i-bp"/></svg></span><span class="stl">BLUEPRINTS</span><b id="sBp">—</b></div><div class="stile "><span class="sti"><svg class="ic"><use href="#i-downed"/></svg></span><span class="stl">INCAPACITATED</span><b id="sDown">—</b></div><div class="stile "><span class="sti"><svg class="ic"><use href="#i-skull"/></svg></span><span class="stl">DEATHS</span><b id="sDead">—</b></div><div class="stile "><span class="sti"><svg class="ic"><use href="#i-respawn"/></svg></span><span class="stl">RESPAWNS</span><b id="sResp" title="Not sent on 4.10">—</b></div><div class="stile "><span class="sti"><svg class="ic"><use href="#i-seat"/></svg></span><span class="stl">SEAT CHANGES</span><b id="sSeat">—</b></div>
     </div>
    </div>
   </section>
  </main>
 
  <aside class="rail" id="rail">
-  <div class="panel cut needbox" hidden><div class="ph">ANSWER IN GAME<span class="r" id="needcount"></span></div><div id="needRail"></div></div>
+  <div class="panel cut needbox"><div class="ph">ANSWER IN GAME<span class="r" id="needcount"></span></div><div id="needRail"></div></div>
   <div class="panel cut feedbox" style="flex:1;min-height:0;overflow:hidden"><div class="ph">FEED</div><div id="feedRail"></div></div>
  </aside>
 </div>
@@ -1535,9 +1561,9 @@ const app=$('#app');
 const ic=(id,cls='ic')=>`<svg class="${cls}"><use href="#${id}"/></svg>`;
 
 /* ---- state ---- */
-let combat=false, phone=false, foot=false, tablet=false, rot='land', hrNow=0, seat='pilot', lastSeat='pilot';
+let combat=false, phone=false, foot=false, tablet=false, rot='land', hrNow=null, seat='pilot', lastSeat='pilot';
 let lowVit=false;
-const VIT=()=>{const v=MODEL.vitals,e=MODEL.env,r=x=>x==null?NaN:Math.round(x);return {intox:v.intox||0,hp:r(v.hp),o2:r(v.o2),food:r(v.food),water:r(v.water),temp:v.temp==null?NaN:+v.temp.toFixed(1),hr:r(v.hr),rad:e.rad||0,air:e.breathable!==false}};
+const VIT=()=>{const v=MODEL.vitals,e=MODEL.env,r=x=>x==null?NaN:Math.round(x);return {intox:v.intox==null?NaN:v.intox,hp:r(v.hp),o2:r(v.o2),food:r(v.food),water:r(v.water),temp:v.temp==null?NaN:+v.temp.toFixed(1),hr:r(v.hr),rad:e.rad==null?NaN:e.rad,air:e.breathable==null?null:e.breathable!==false}};
 function setSeat(s){
  if(s===seat)return;
  const words={pilot:'Sat in pilot seat',gunner:'Sat in gunner seat',foot:'Left the seat',eva:'Started EVA'};
@@ -1554,7 +1580,9 @@ function gunList(){
 
 }
 /* ---- on foot / EVA: body card and suit cluster (actor telemetry + Game.log loadout) ---- */
-function footEnv(){const e=MODEL.env,v=MODEL.vitals;return {breath:e.breathable!==false,temp:e.temp==null?0:Math.round(e.temp),press:v.pressure==null?0:+v.pressure.toFixed(2),grav:v.gravity==null?0:v.gravity}}
+/* outside and suit readings; null when the game sent nothing */
+const fu=(v,d,u)=>v==null||!isFinite(v)?'—':(+v).toFixed(d)+(u||'');
+function footEnv(){const e=MODEL.env,v=MODEL.vitals;return {breath:e.breathable==null?null:e.breathable!==false,temp:e.temp==null?null:Math.round(e.temp),press:v.pressure==null?null:+v.pressure.toFixed(2),grav:v.gravity==null?null:v.gravity}}
 function bodyCard(){const el=$('#bodyCard');if(!el||!foot)return;
  const s=INJ(),L=LIVESET(),sh={h:'HEAD',t:'TORSO',la:'L ARM',ra:'R ARM',ll:'L LEG',rl:'R LEG'},word={min:'MINOR',mod:'MODERATE',sev:'SEVERE'},lc={min:'a',mod:'o',sev:'r'},cc={min:'#ffb347',mod:'#ff8a3d',sev:'#ff5468'};
  const hurt=Object.keys(sh).filter(k=>s[k]&&s[k]!=='ok'),rk={sev:0,mod:1,min:2};hurt.sort((a,b)=>rk[s[a]]-rk[s[b]]);
@@ -1563,15 +1591,16 @@ function bodyCard(){const el=$('#bodyCard');if(!el||!foot)return;
  const row=(icon,lab,name,extra='',val='',inj)=>`<div class="bslot${inj?' inj':''}"${inj?` style="--ic:${cc[inj]}"`:''}><span class="sic">${ic(icon)}</span><span class="stx"><span class="sl">${lab}${extra}</span><span class="sn">${esc(name)}</span></span>${val}</div>`;
  const armor=[['helmet','s-helmet','HELMET',['h']],['core','s-core','CORE',['t']],['arms','s-arms','ARMS',['la','ra']],['legs','s-legs','LEGS',['ll','rl']]].map(([k,icn,lab,ps])=>{const x=G(L[k]),w=worst(...ps);
   return row(icn,lab,x?x[0]:'none worn',(x&&x[2]?`<span class="cls cls${x[2]}">${x[2]}</span>`:'')+(w?`<span class="ichip" style="border-color:${cc[w]};color:${cc[w]}">${word[w]}</span>`:''),'',w)}).join('');
- const gear=Object.entries(L.w).slice(0,3).map(([slot,w])=>row('i-weapon',slot.toUpperCase(),w[0])).join('')||'<div class="unit">No weapons in the log yet</div>';
- const S=gearSlots(),cnt=(lab,v,max,warn)=>`<span class="bcnt${warn?' w':''}"><i>${lab}</i><b>${v}</b>${max!=null?`<small>/ ${max}</small>`:''}</span>`;
+ const gear=(L.hand?row('s-tool','IN HAND',L.hand[0],'','',null):'')+(Object.entries(L.w).slice(0,3).map(([slot,w])=>row('i-weapon',slot.toUpperCase(),w[0])).join('')||(L.hand?'':'<div class="unit">No weapons in the log yet</div>'));
+ const S=gearSlots(),cnt=(lab,v,max,warn)=>`<span class="bcnt${warn?' w':''}"><i>${lab}</i><b>${v==null?'—':v}</b>${max?`<small>/ ${max}</small>`:''}</span>`;
  const fig=bodySvg(s,'bfig',{fill:v=>v==='ok'?'#0f2a33':cc[v]+'88',stroke:v=>v==='ok'?'#5be69a':cc[v],sw:2,glow:true});
  const v=VIT(),R=suitRating();
  el.innerHTML=`<div class="ph">BODY<span class="r">${seat==='eva'?'EVA · outside the '+esc(SH().short):'on foot'}</span></div>
   <div class="lamps">${lamps}</div>
   <div class="bmid"><div class="bfigw">${fig}</div><div class="blist">
    <div class="bgrp"><div class="bsec">ARMOR<em>${esc(L.label)}</em></div>${armor}</div>
-   <div class="bgrp"><div class="bsec">GEAR<em>from Game.log</em></div>${gear}</div>
+   <div class="bgrp"><div class="bsec">GEAR<em>from Game.log</em></div>${gear}
+   <div class="bcnts">${cnt('MAGS',L.mag,S.mag)}${cnt('MEDPENS',L.med,S.med,L.med===0)}${cnt('OXYPENS',L.oxy,S.oxy,seat==='eva'&&L.oxy===0)}</div></div>
   </div></div>
   <div class="bfoot"><span><i>HEALTH</i><b style="color:${v.hp<40?'#ff5468':v.hp<60?'#ffb347':'#5be69a'}">${isNaN(v.hp)?'—':v.hp+'%'}</b></span><span class="r"><i>SUIT RATED</i><b>${R.tmin==null?'—':R.tmin+' to '+R.tmax+' °C'}</b></span></div>`}
 function suitHud(){const el=document.getElementById('suitsvg');if(!el||!el.getClientRects().length)return;
@@ -1602,11 +1631,11 @@ function suitHud(){const el=document.getElementById('suitsvg');if(!el||!el.getCl
  const mins=o2Mins();
  o+=T(cx,cy-36,'O₂',{s:10,ls:'.16em'})+T(cx,cy+60,V,{f:C.hi,s:34,w:700,m:1})+T(cx,cy+78,'% suit oxygen',{s:9,ls:'.16em'})+T(cx,cy+100,eva&&mins!=null?`≈ ${mins} min left at this rate`:'',{s:9,f:eva?(V<=25?C.r:C.a):C.dim});
  // outside
- const Y1=272+GP;o+=NS('line',{x1:6,y1:Y1,x2:294,y2:Y1,stroke:C.line})+T(6,Y1+16,'OUTSIDE',{a:'start',s:9,ls:'.16em'})+T(294,Y1+16,E.breath?'breathable':eva?'vacuum':'no air',{a:'end',s:9,f:E.breath?C.g:C.a});
+ const Y1=272+GP;o+=NS('line',{x1:6,y1:Y1,x2:294,y2:Y1,stroke:C.line})+T(6,Y1+16,'OUTSIDE',{a:'start',s:9,ls:'.16em'})+T(294,Y1+16,E.breath==null?'—':E.breath?'breathable':eva?'vacuum':'no air',{a:'end',s:9,f:E.breath?C.g:E.breath==null?C.mute:C.a});
  const tin=R.tmin==null||E.temp==null||E.temp>=R.tmin&&E.temp<=R.tmax,z=t=>fr(t,-250,150);
- o+=box(6,Y1+24,92,'TEMP',E.temp,'°C',tin?C.hi:C.r,{v:z(E.temp),z:[[0,z(R.tmin),'#4a1018'],[z(R.tmin),z(R.tmax),'#12404d'],[z(R.tmax),1,'#4a1018']]})
-  +box(104,Y1+24,92,'PRESS',E.press.toFixed(2),'atm',E.press<.5?C.a:C.hi,{v:fr(E.press,0,2),z:[[0,.25,'#3a2e10'],[.25,1,'#12404d']]})
-  +box(202,Y1+24,92,'GRAV',E.grav.toFixed(1),'g',C.hi,{v:fr(E.grav,0,2),z:[[0,1,'#12404d']]});
+ o+=box(6,Y1+24,92,'TEMP',E.temp==null?'—':E.temp,'°C',E.temp==null?C.mute:tin?C.hi:C.r,{v:E.temp==null?null:z(E.temp),z:[[0,z(R.tmin),'#4a1018'],[z(R.tmin),z(R.tmax),'#12404d'],[z(R.tmax),1,'#4a1018']]})
+  +box(104,Y1+24,92,'PRESS',fu(E.press,2),'atm',E.press==null?C.mute:E.press<.5?C.a:C.hi,{v:E.press==null?null:fr(E.press,0,2),z:[[0,.25,'#3a2e10'],[.25,1,'#12404d']]})
+  +box(202,Y1+24,92,'GRAV',fu(E.grav,1),'g',E.grav==null?C.mute:C.hi,{v:E.grav==null?null:fr(E.grav,0,2),z:[[0,1,'#12404d']]});
  // body
  const Y2=372+2*GP;o+=NS('line',{x1:6,y1:Y2,x2:294,y2:Y2,stroke:C.line})+T(6,Y2+16,'BODY',{a:'start',s:9,ls:'.16em'});
  const tc=p=>p<20?C.r:p<45?C.a:C.g;
@@ -1616,12 +1645,12 @@ function suitHud(){const el=document.getElementById('suitsvg');if(!el||!el.getCl
  o+=T(258,Y2+130,v.hr,{s:19,f:C.hi,w:700,m:1})+T(258,Y2+146,'bpm',{s:8.5});
  // status
  const Y3=548+3*GP;o+=NS('line',{x1:6,y1:Y3,x2:294,y2:Y3,stroke:C.line})+T(6,Y3+16,'STATUS',{a:'start',s:9,ls:'.16em'});
- const helm=!E.breath||E.press<.5||!tin;
- const L=[[E.breath?'AIR OK':'AIR NONE',E.breath?'g':'r'],[helm?'HELMET ON':'HELMET OFF',helm?(eva?'g':'a'):'o'],[tin?'TEMP OK':E.temp<R.tmin?'TOO COLD':'TOO HOT',tin?'g':'r'],
-  [v.rad>1?'RAD HIGH':'RAD OK',v.rad>1?'a':'g'],[v.intox?'INTOX '+v.intox:'SOBER',v.intox?'a':'o'],[eva?'EVA':'ON FOOT',eva?'a':'g']];
+ const helm=E.breath===false||(E.press!=null&&E.press<.5)||!tin;
+ const L=[[E.breath==null?'AIR —':E.breath?'AIR OK':'AIR NONE',E.breath==null?'o':E.breath?'g':'r'],[helm?'HELMET ON':'HELMET OFF',helm?(eva?'g':'a'):'o'],[E.temp==null||R.tmin==null?'TEMP —':tin?'TEMP OK':E.temp<R.tmin?'TOO COLD':'TOO HOT',E.temp==null||R.tmin==null?'o':tin?'g':'r'],
+  [isNaN(v.rad)?'RAD —':v.rad>1?'RAD HIGH':'RAD OK',isNaN(v.rad)?'o':v.rad>1?'a':'g'],[isNaN(v.intox)?'INTOX —':v.intox?'INTOX '+v.intox:'SOBER',isNaN(v.intox)?'o':v.intox?'a':'o'],[eva?'EVA':'ON FOOT',eva?'a':'g']];
  L.forEach((l,i)=>{o+=lamp(6+(i%3)*98,Y3+24+Math.floor(i/3)*25,90,l[0],l[1])});
- o+=box(6,Y3+80,140,'RADIATION',v.rad.toFixed(1),'REM/s',v.rad>1?C.a:C.hi,{v:fr(v.rad,0,10),z:[[0,.5,'#12404d'],[.5,.8,'#3a2e10'],[.8,1,'#4a1018']]})
-  +box(152,Y3+80,142,'INTOX',v.intox,'level',v.intox?C.a:C.hi,{v:fr(v.intox,0,5),z:[[0,.4,'#12404d'],[.4,1,'#3a2e10']]});
+ o+=box(6,Y3+80,140,'RADIATION',fu(v.rad,1),'REM/s',v.rad>1?C.a:isNaN(v.rad)?C.mute:C.hi,{v:isNaN(v.rad)?null:fr(v.rad,0,10),z:[[0,.5,'#12404d'],[.5,.8,'#3a2e10'],[.8,1,'#4a1018']]})
+  +box(152,Y3+80,142,'INTOX',isNaN(v.intox)?'—':v.intox,'level',v.intox?C.a:isNaN(v.intox)?C.mute:C.hi,{v:isNaN(v.intox)?null:fr(v.intox,0,5),z:[[0,.4,'#12404d'],[.4,1,'#3a2e10']]});
  // wallet: uec_balance from the actor state
  const Y4=724+4*GP;o+=NS('line',{x1:6,y1:Y4,x2:294,y2:Y4,stroke:C.line})+T(6,Y4+16,'WALLET',{a:'start',s:9,ls:'.16em'})+T(294,Y4+16,'live',{a:'end',s:9,f:C.g});
  o+=T(294,Y4+54,(MODEL.wallet!=null?Math.round(MODEL.wallet).toLocaleString('en-US'):'—'),{a:'end',s:26,f:C.hi,w:700,m:1})+T(6,Y4+54,'aUEC',{a:'start',s:10});
@@ -1649,8 +1678,8 @@ function vitBox(k,o={}){const v=VIT(),fr=(x,a,b)=>(x-a)/(b-a),eva=seat==='eva';
   case 'water':return vbox('WATER',v.water,'%',cOf(v.water,20,45),v.water/100,[[0,.2,ZR],[.2,.45,ZA],[.45,1,ZT]]);
   case 'temp':return vbox('BODY',v.temp,'°C',v.temp<35.5||v.temp>38.5?'#ffb347':'#eafcff',fr(v.temp,34,40),[[0,.25,ZA],[.25,.75,ZT],[.75,1,ZR]]);
   case 'hr':return vbox('HEART',v.hr,'bpm',v.hr>140?'#ff5468':v.hr>110?'#ffb347':'#eafcff',fr(v.hr,40,180),[[0,.43,ZT],[.43,.71,ZA],[.71,1,ZR]]);
-  case 'rad':return vbox('RADIATION',v.rad.toFixed(1),'REM/s',v.rad>5?'#ff5468':v.rad>1?'#ffb347':'#eafcff',v.rad/10,[[0,.1,ZT],[.1,.5,ZA],[.5,1,ZR]]);
-  case 'air':return vbox('AIR',v.air?'OK':'NONE','',v.air?'#5be69a':'#ff5468',null,[[0,1,v.air?'#1d5a3b':ZR]]);
+  case 'rad':return vbox('RADIATION',fu(v.rad,1),'REM/s',v.rad>5?'#ff5468':v.rad>1?'#ffb347':'#eafcff',v.rad/10,[[0,.1,ZT],[.1,.5,ZA],[.5,1,ZR]]);
+  case 'air':return vbox('AIR',v.air==null?'—':v.air?'OK':'NONE','',v.air==null?'#5f8a96':v.air?'#5be69a':'#ff5468',null,[[0,1,v.air?'#1d5a3b':v.air==null?ZT:ZR]]);
   case 'intox':return vbox('INTOX',v.intox,'level',v.intox?'#ffb347':'#eafcff',v.intox/5,[[0,.4,ZT],[.4,1,ZA]]);
  }}
 function rings(){
@@ -1797,6 +1826,7 @@ let filter='all';
 /* ---- threat strip ---- */
 const PART={h:'HEAD',t:'TORSO',la:'LEFT ARM',ra:'RIGHT ARM',ll:'LEFT LEG',rl:'RIGHT LEG'};
 function vitalChips(){const v=VIT(), out=[];
+ if(Date.now()<DOWNUNTIL)out.push(['r','DOWNED']);
  if(v.hp<60)out.push([v.hp<40?'r':'a','HEALTH '+v.hp+'%']);
  if(seat==='eva'&&v.o2<40)out.push([v.o2<25?'r':'a','O₂ '+v.o2+'%']);
  const inj=INJ(), rank={sev:2,mod:1}, worst=Object.entries(inj).filter(([k,l])=>rank[l]).sort((a,b)=>rank[b[1]]-rank[a[1]])[0];
@@ -1824,7 +1854,7 @@ function threat(){
  const yw=$('#youWhere'); if(yw)yw.textContent=seat==='eva'?'EVA · outside the '+(SH().short||'ship'):'on foot'+(place?' · '+place:'');
  const gw=$('#gunWhere'); if(gw)gw.textContent=SH().short+(myTurretObj()?' · '+myTurretObj().n.toLowerCase()+' turret':'');
  const lt=$('#lsTitle'); if(lt){lt.textContent=SH().short||'—';$('#lsFull').textContent=SH().full;const hideFull=!SH().full||SH().full.endsWith(SH().short)&&SH().full.length-SH().short.length<8;$('#lsFull').style.display=hideFull?'none':'';$('#lsSep').style.display=hideFull?'none':'';$('#lsWhere').textContent=seat==='eva'?'you left it':'last ship'}
- const lsr=document.querySelector('.lastship .ph .r'); if(lsr)lsr.textContent=LASTSHIP.t?'as of '+new Date(LASTSHIP.t).toTimeString().slice(0,5)+' · you left the '+(lastSeat==='gunner'?'gunner':'pilot')+' seat':'None yet';
+ const lsr=document.querySelector('.lastship .ph .r'); if(lsr)lsr.textContent=LASTSHIP.t?'as of '+new Date(LASTSHIP.t).toTimeString().slice(0,5)+(LASTSHIP.restored?'':' · you left the '+(lastSeat==='gunner'?'gunner':'pilot')+' seat'):'None yet';
  const zt=$('#zoneTxt'); if(zt){zt.textContent=zone?zone.charAt(0)+zone.slice(1).toLowerCase():'';zt.className=G.armistice?'zoneA':'zoneU'}
  const nz=$('#navZone'); if(nz){nz.textContent=zone?zone.charAt(0)+zone.slice(1).toLowerCase():'—';nz.className=G.armistice?'zoneA':'zoneU'}
  if(!phone){
@@ -1949,14 +1979,16 @@ function gunMarks(){const g=$('#gunmarks');if(!g)return;const G=window.DG||shipG
   return `<rect class="gm ${st}${und?' under':''}" x="${x-3.5*U}" y="${y-3.5*U}" width="${7*U}" height="${7*U}"><title>${esc(w[0])} ${w[1]} · ${st==='off'?'unpowered':st==='rdy'?'ready':'not ready'}</title></rect>`}).join('')}
 /* damaged parts only, under the ship (T annunciators, shields, hull, weapons) */
 function dlist(f,hull,bubble){const el=$('#dlist');if(!el)return;const A=window.AS||{},rows=[];
+ if(HITS.n)rows.push([Date.now()-HITS.t<4000?'maj':'min',Date.now()-HITS.t<4000?'TAKING HITS':'HITS TAKEN',HITS.n+(HITS.n===1?' burst':' bursts')]);
  const wf=Object.entries(f).sort((a,b)=>a[1]-b[1])[0];if(wf[1]!=null&&wf[1]<60)rows.push(['maj',bubble?'SHIELDS':'SHIELDS · '+{F:'front',R:'right',L:'left',B:'rear'}[wf[0]],wf[1]+'%']);
  if(hull!=null&&hull<70)rows.push([hull<35?'maj':'min','HULL',hull+'%']);
  for(const[k,n] of [['THR','THRUSTERS'],['PWR','POWER PLANT'],['COOL','COOLERS'],['QDRV','QUANTUM DRIVE'],['RADR','RADAR'],['WPN','WEAPONS']])if(A[k]==='maj'||A[k]==='min')rows.push([A[k],n,A[k]==='maj'?'critical':'warning']);
  const w=weapons||[],rd=w.filter(x=>x[2]&&x[3]).length;
  const gun=w.length?`<div class="dr2 gun"><span>GUNS <i class="gdots">${w.map(x=>`<i class="${!x[2]?'off':x[3]?'rdy':'chg'}"></i>`).join('')}</i></span><b>${rd}/${w.length} ready</b></div>`:'';
- el.innerHTML=(rows.length?rows.map(([c,n,v])=>`<div class="dr2 ${c}"><span>${c==='maj'?'▲':'●'} ${n}</span><b>${v}</b></div>`).join(''):`<div class="dr2 ok"><span>✓ All systems OK</span><b></b></div>`)+gun}
+ const nod=hull==null&&Object.values(f).every(v=>v==null)?`<div class="dr2 nd"><span>HULL · SHIELDS</span><b>not sent by this game build</b></div>`:'';
+ el.innerHTML=nod+(rows.length?rows.map(([c,n,v])=>`<div class="dr2 ${c}"><span>${c==='maj'?'▲':'●'} ${n}</span><b>${v}</b></div>`).join(''):`<div class="dr2 ok"><span>✓ All systems OK</span><b></b></div>`)+gun}
 /* instrument cluster (right column): T speed, heading, alt, VSI, g_meter, fuel, boost, IFCS, power, environment; S speed limits */
-let SNOW=0,GNOW=1;
+let SNOW=null,GNOW=null;
 function hud(){const el=document.getElementById('hudsvg');if(!el||!el.getClientRects().length)return;
  const bb=el.getBoundingClientRect(),HV=Math.max(742,Math.round(300*bb.height/Math.max(1,bb.width))),GP=Math.max(6,(HV-692-6)/5);
  el.setAttribute('viewBox',`0 0 300 ${HV}`);
@@ -1967,9 +1999,9 @@ function hud(){const el=document.getElementById('hudsvg');if(!el||!el.getClientR
  const C={c:'#5bd1e6',c2:'#2b6b80',g:'#5be69a',a:'#ffb347',r:'#ff5468',v:'#b58cff',dim:'#7aa3ae',mute:'#4f6f78',hi:'#eafcff',bg:'#081820',line:'#1f4c5e'};
  const T=(x,y,t,o={})=>NS('text',{x,y,'font-size':o.s||10,fill:o.f||C.dim,'text-anchor':o.a||'middle','font-weight':o.w||400,'letter-spacing':o.ls||'.06em','font-family':o.m?'ui-monospace,Consolas,monospace':'inherit'},t);
  const glow=c=>`style="filter:drop-shadow(0 0 4px ${c})"`;
- const[SCM,BST,NAV]=SPDS(),V=SNOW,H=Math.round(((HDG%360)+360)%360),MF=MODEL.flight,BOOST=(MF.boost||{}).reserves==null?null:MF.boost.reserves/100,FV={alt:MF.alt==null?null:Math.round(MF.alt/1000),vsi:MF.vsi==null?null:Math.round(MF.vsi)};
+ const[SCM,BST,NAV]=SPDS(),V=SNOW||0,H=Math.round(((HDG%360)+360)%360),MF=MODEL.flight,BOOST=(MF.boost||{}).reserves==null?null:MF.boost.reserves/100,FV={alt:MF.alt==null?null:Math.round(MF.alt),vsi:MF.vsi==null?null:Math.round(MF.vsi)};
  let o=`<defs><linearGradient id="hTank" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#0a2a33"/><stop offset=".5" stop-color="#103a46"/><stop offset="1" stop-color="#0a2a33"/></linearGradient><radialGradient id="hFace"><stop offset="0" stop-color="#0b2430"/><stop offset="1" stop-color="#061219"/></radialGradient></defs>`;
- o+=T(6,14,'FLIGHT',{a:'start',s:10,ls:'.18em'})+NS('rect',{x:238,y:3,width:58,height:15,fill:'#0f2f3a',stroke:C.c})+T(267,14,STATE.master?STATE.master.toUpperCase():'—',{f:C.c,w:700,s:10});
+ o+=T(6,14,'FLIGHT',{a:'start',s:10,ls:'.18em'})+NS('rect',{x:238,y:3,width:58,height:15,fill:'#0f2f3a',stroke:C.c})+T(267,14,STATE.master?STATE.master.toUpperCase():'—',{f:C.c,w:700,s:10})+(MODEL.flight.masterGuess?`<title>From the shield and quantum drive lights</title>`:'');
  o+=NS('rect',{x:6,y:26,width:288,height:34,fill:C.bg,stroke:C.line});
  for(let dd=Math.ceil((H-60)/5)*5;dd<=H+60;dd+=5){const x=150+(dd-H)*2.3;if(x<10||x>290)continue;const d=((dd%360)+360)%360,maj=d%15===0;o+=NS('line',{x1:x,y1:60,x2:x,y2:maj?50:55,stroke:maj?C.c:C.c2});
   if(maj&&Math.abs(x-150)>22){const L={0:'N',90:'E',180:'S',270:'W'};o+=T(x,44,L[d]??String(d).padStart(3,'0'),{f:L[d]!=null?C.a:C.dim,s:10})}}
@@ -1982,17 +2014,18 @@ function hud(){const el=document.getElementById('hudsvg');if(!el||!el.getClientR
  for(const v of ticks){const a=ang(v),mj=majors.includes(v),[x0,y0]=P(cx,cy,R-8,a),[x1,y1]=P(cx,cy,R-(mj?20:14),a);o+=NS('line',{x1:x0,y1:y0,x2:x1,y2:y1,stroke:mj?C.hi:C.c2,'stroke-width':mj?1.6:1});if(mj){const[lx,ly]=P(cx,cy,R-32,a);o+=T(lx,ly+3.5,v,{s:9,m:1})}}
  for(const[v,l,c] of [[SCM,'SCM',C.c],...(BST<NAV?[[BST,'BST',C.a]]:[]),[NAV,BST<NAV?'NAV':'BST·NAV',C.v]]){const a=ang(v),[x0,y0]=P(cx,cy,R+6,a),[x1,y1]=P(cx,cy,R-6,a),[lx,ly]=P(cx,cy,R+20,a);o+=NS('line',{x1:x0,y1:y0,x2:x1,y2:y1,stroke:c,'stroke-width':2.5})+T(lx,ly+3,l,{f:c,s:8.5,w:700})}
  {const[nx,ny]=P(cx,cy,R-4,ang(V)),[bx,by]=P(cx,cy,-14,ang(V));o+=`<line x1="${bx.toFixed(1)}" y1="${by.toFixed(1)}" x2="${nx.toFixed(1)}" y2="${ny.toFixed(1)}" stroke="${C.hi}" stroke-width="3" stroke-linecap="round" ${glow(C.c)}/>`+NS('circle',{cx,cy,r:5,fill:'#0b2430',stroke:C.c,'stroke-width':2})}
- o+=T(cx,cy+62,V,{f:C.hi,s:34,w:700,m:1})+T(cx,cy+80,'m/s',{s:9,ls:'.16em'})+T(cx,cy+104,`SCM ${SCM} · BST ${BST} · NAV ${NAV.toLocaleString()}`,{s:8.5});
+ o+=T(cx,cy+62,SNOW==null?'—':V,{f:C.hi,s:34,w:700,m:1})+T(cx,cy+80,'m/s',{s:9,ls:'.16em'})+T(cx,cy+104,`SCM ${SCM} · BST ${BST} · NAV ${NAV.toLocaleString()}`,{s:8.5});
  const box=(x,y,w,l,val,unit,col,sc)=>{let s=NS('rect',{x,y,width:w,height:64,fill:C.bg,stroke:C.line})+T(x+6,y+13,l,{a:'start',s:8.5,ls:'.16em'})+T(x+w-6,y+36,val,{a:'end',f:col,s:19,w:700,m:1})+T(x+w-6,y+48,unit,{a:'end',s:8.5});
   const sx=x+6,sw=w-12,sy=y+55;s+=NS('rect',{x:sx,y:sy,width:sw,height:4,fill:'#12262c'});for(const[z0,z1,c] of sc.z)s+=NS('rect',{x:sx+sw*z0,y:sy,width:sw*(z1-z0),height:4,fill:c});return sc.v==null?s:s+`<path d="M${(sx+sw*sc.v).toFixed(1)} ${sy-2} l-4 -5 h8z" fill="${C.hi}"/>`};
  const fr=(v,a,b)=>Math.max(0,Math.min(1,(v-a)/(b-a)));
- o+=box(6,YR,92,'ALT',FV.alt==null?'—':FV.alt.toLocaleString(),FV.alt==null?'no body':'km',FV.alt==null?C.mute:C.hi,{v:FV.alt==null?null:fr(FV.alt,0,5000),z:[[0,1,'#12404d']]})
+ o+=box(6,YR,92,'ALT',FV.alt==null?'—':FV.alt.toLocaleString(),FV.alt==null?'no body':'m',FV.alt==null?C.mute:C.hi,{v:FV.alt==null?null:fr(FV.alt,0,20000),z:[[0,1,'#12404d']]})
   +box(104,YR,92,'VSI',FV.vsi==null?'—':(FV.vsi<0?'▼ ':FV.vsi>0?'▲ ':'')+Math.abs(FV.vsi),'m/s',FV.vsi==null?C.mute:FV.vsi<0?C.a:C.hi,{v:FV.vsi==null?null:fr(FV.vsi,-50,50),z:[[0,.5,'#3a2e10'],[.5,1,'#12404d']]})
   +box(202,YR,92,'G',GNOW==null?'—':GNOW.toFixed(1),MF.gMax?'of '+Math.round(MF.gMax):'',GNOW==null?C.mute:GNOW>12?C.a:C.hi,{v:GNOW==null?null:fr(GNOW,0,20),z:[[0,.6,'#12404d'],[.6,.95,'#3a2e10'],[.95,1,'#4a1018']]});
  const tank=(x,y,w,h,l,id,p0,c)=>{const p=p0==null?0:p0;let s=NS('rect',{x,y,width:w,height:h,rx:w/2,fill:'url(#hTank)',stroke:C.c2,'stroke-width':1.5});const fh=(h-8)*p,top=y+4+(h-8)-fh;
   s+=`<clipPath id="hc${id}"><rect x="${x+4}" y="${y+4}" width="${w-8}" height="${h-8}" rx="${(w-8)/2}"/></clipPath><rect x="${x}" y="${top}" width="${w}" height="${fh}" fill="${c}" opacity=".55" clip-path="url(#hc${id})"/><line x1="${x+4}" x2="${x+w-4}" y1="${top}" y2="${top}" stroke="${c}" stroke-width="2" ${glow(c)}/>`;
   for(const[q,lb] of [[1,'F'],[.75,''],[.5,'½'],[.25,''],[0,'E']]){const yy=y+4+(h-8)*(1-q);s+=NS('line',{x1:x+w,y1:yy,x2:x+w+6,y2:yy,stroke:C.c2})+(lb?T(x+w+13,yy+3.5,lb,{s:9}):'')}
-  return s+T(x+w/2,y+h+16,l,{s:9,ls:'.16em'})+T(x+w/2,y+h+31,p0==null?'—':Math.round(p*100)+'%',{f:C.hi,s:12,w:700,m:1})};
+  if(p0==null)s+=T(x+w/2,y+h/2+3,'NO',{f:C.mute,s:8.5,w:700,ls:'.12em'})+T(x+w/2,y+h/2+14,'DATA',{f:C.mute,s:8.5,w:700,ls:'.12em'});
+  return s+T(x+w/2,y+h+16,l,{s:9,ls:'.16em'})+T(x+w/2,y+h+31,p0==null?'—':Math.round(p*100)+'%',{f:p0==null?C.mute:C.hi,s:12,w:700,m:1})};
  o+=tank(22,YT,46,96,'H₂','h2',MF.h2==null?null:MF.h2/100,C.c)+tank(112,YT,46,96,'QT','qt',MF.qt==null?null:MF.qt/100,'#8fb4ff');
  {const x=210,y=YT,n=10,low=BOOST!=null&&BOOST<.2,bc=low?C.r:C.a;for(let i=0;i<n;i++){const on=i<(BOOST==null?0:Math.max(1,Math.round(BOOST*n))),yy=y+96-(i+1)*9.6;o+=`<rect x="${x}" y="${yy.toFixed(1)}" width="56" height="7.6" fill="${on?bc:'#13262c'}" stroke="${on?bc:C.line}" ${on?glow(bc):''}/>`}
   o+=T(x+28,y+112,'BOOST',{s:9,ls:'.16em'})+T(x+28,y+127,(BOOST==null?'—':Math.round(BOOST*100)+'%')+(low?' · LOW':''),{f:low?C.r:C.hi,s:12,w:700,m:1})}
@@ -2003,11 +2036,12 @@ function hud(){const el=document.getElementById('hudsvg');if(!el||!el.getClientR
  const A=window.AS||{},PW=[['PLANT','PWR','power plants'],['ENGINE','THR','engines'],['SH GEN','SHLD','shield generators'],['SH EMIT','SHLD','shield emitters'],['WEAPON','WPN','weapons'],['COOLER','COOL','coolers'],['SENSOR','RADR','sensors'],['LIFE','','life support'],['GRAV','','gravity generators']];
  o+=grid(154,YL,'POWER',PW.map(([n,k,tt])=>[n,A[k]==='maj'?'bad':A[k]==='min'?'warn':'on',tt]));
  const E=envData(),[vcl,vtx]=envVerdict(E),RT=suitRating(true);
- o+=NS('line',{x1:6,y1:YO,x2:294,y2:YO,stroke:C.line})+T(6,YO+16,'OUTSIDE',{a:'start',s:9,ls:'.18em'});
- o+=box(6,YO+24,92,'TEMP',E.temp==null?'—':String(E.temp).replace('-','−'),(RT.tmin==null?'°C':`°C · suit ${RT.tmin}`),E.temp==null?C.mute:E.temp<RT.tmin||E.temp>RT.tmax?C.r:C.g,{v:E.temp==null?null:fr(E.temp,-100,100),z:[[0,fr(RT.tmin,-100,100),'#2a1d40'],[fr(RT.tmin,-100,100),fr(RT.tmax,-100,100),'#173d2a'],[fr(RT.tmax,-100,100),1,'#4a1018']]})
-  +box(104,YO+24,92,'PRESS',E.press.toFixed(2),'atm',E.press<.5?C.r:C.hi,{v:fr(E.press,0,2),z:[[0,.25,'#4a1018'],[.25,1,'#12404d']]});
+ o+=NS('line',{x1:6,y1:YO,x2:294,y2:YO,stroke:C.line})+T(6,YO+16,'CABIN',{a:'start',s:9,ls:'.18em'})
+  +T(294,YO+16,'outside '+(MF.density==null?'—':MF.density<0.01?'vacuum':MF.density.toFixed(2)+' kg/m³'),{a:'end',s:9,f:MF.density!=null&&MF.density<0.01?C.a:C.dim});
+ o+=box(6,YO+24,92,'TEMP',E.temp==null?'—':String(E.temp).replace('-','−'),(RT.tmin==null?'°C':`°C · suit ${RT.tmin}`),E.temp==null||RT.tmin==null?C.mute:E.temp<RT.tmin||E.temp>RT.tmax?C.r:C.g,{v:E.temp==null?null:fr(E.temp,-100,100),z:[[0,fr(RT.tmin,-100,100),'#2a1d40'],[fr(RT.tmin,-100,100),fr(RT.tmax,-100,100),'#173d2a'],[fr(RT.tmax,-100,100),1,'#4a1018']]})
+  +box(104,YO+24,92,'PRESS',fu(E.press,2),'atm',E.press==null?C.mute:E.press<.5?C.r:C.hi,{v:E.press==null?null:fr(E.press,0,2),z:[[0,.25,'#4a1018'],[.25,1,'#12404d']]});
  const lb=(x,y,t,c,lit)=>`<rect x="${x}" y="${y}" width="90" height="19" fill="${lit?c+'33':'#0a161b'}" stroke="${lit?c:C.line}" ${lit?glow(c):''}/>`+T(x+45,y+13.5,t,{f:lit?c:C.mute,s:9,w:700,ls:'.12em'});
- o+=lb(204,YO+24,E.breath?'AIR OK':'NO AIR',E.breath?C.g:C.r,true)+lb(204,YO+46,vcl==='ok'?'HELMET OFF OK':'HELMET ON',vcl==='ok'?C.g:vcl==='warn'?C.a:C.r,true)+lb(204,YO+68,E.rad>.5?'RADIATION':'RAD',E.rad>.5?C.r:C.g,E.rad>.5)+T(249,YO+102,E.grav.toFixed(1)+' g',{s:9});
+ o+=lb(204,YO+24,E.breath==null?'AIR —':E.breath?'AIR OK':'NO AIR',E.breath==null?C.mute:E.breath?C.g:C.r,E.breath!=null)+lb(204,YO+46,vcl==='ok'?'HELMET OFF OK':'HELMET ON',vcl==='ok'?C.g:vcl==='warn'?C.a:C.r,true)+lb(204,YO+68,E.rad>.5?'RADIATION':'RAD',E.rad>.5?C.r:C.g,E.rad>.5)+T(249,YO+102,fu(E.grav,1,' g'),{s:9});
  o+=`<title>${vtx}</title>`;
  el.innerHTML=o}
 /* combat view: on with a missile lock or hits (T annunciators), back to calm 1 minute after the last one.
@@ -2060,7 +2094,7 @@ const IFCS=()=>{const I=MODEL.ifcs||{},m={COUPLED:'ifcs_coupled',ESP:'ifcs_esp',
 function ifcs(){const el=$('#ifcs');if(!el)return;el.innerHTML=Object.entries(IFCS()).map(([n,[en,ac]])=>`<span class="pc ${ac?'on':en?'en':''}" title="${n.toLowerCase()} · ${ac?'active':en?'on, not active':'off'}">${n}</span>`).join('')}
 /* T: instruments. altitude >= 1e38 means no reference body */
 let HDG=0;
-function instruments(){const F=MODEL.flight,sp={alt:F.alt==null?'—':Math.round(F.alt/1000).toLocaleString()+' km',agl:F.radarAlt==null?'—':Math.round(F.radarAlt).toLocaleString()+' m',atm:F.density==null?'—':F.density<0.01?'vacuum':F.density.toFixed(2),vsi:F.vsi==null?null:Math.round(F.vsi)};
+function instruments(){const F=MODEL.flight,sp={alt:F.alt==null?'—':Math.round(F.alt).toLocaleString()+' m',agl:F.radarAlt==null?'—':Math.round(F.radarAlt).toLocaleString()+' m',atm:F.density==null?'—':F.density<0.01?'vacuum':F.density.toFixed(2),vsi:F.vsi==null?null:Math.round(F.vsi)};
  if($('#alt'))$('#alt').textContent=sp.alt;if($('#agl'))$('#agl').textContent=sp.agl;if($('#atm'))$('#atm').textContent=sp.atm;
  const v=$('#vsi');if(v){v.className='vsi'+(sp.vsi==null?' na':sp.vsi<0?' dn':'');v.textContent=sp.vsi==null?'VSI —':(sp.vsi<0?'▼ ':'▲ ')+Math.abs(sp.vsi)+' m/s'}
  const sp2=$('#spool');if(sp2)sp2.textContent=STATE.master==='nav'?' · spooled':'';
@@ -2088,19 +2122,21 @@ function shipInfo(){const S=SH(),id=$('#shipId'),st=$('#shipState');
  if(id)id.textContent=`${S.full} · spaceship`;
  if(st)st.innerHTML=[['LIGHTS',STATE.lights==null?'—':STATE.lights?'on':'off',STATE.lights],['DOORS',STATE.doors==null?'—':STATE.doors?'open':'closed',STATE.doors],['LOCK',STATE.locks==null?'—':STATE.locks?'locked':'unlocked',STATE.locks]].map(([n,v,on])=>`<span class="fs ${on?'on':''}">${n} ${v.toUpperCase()}</span>`).join('')}
 /* T: ActorEnvironment (temp, radiation, breathable) + ActorVitals (gravity, pressure) + VehicleFlightInstruments.atmospheric_density */
-function envData(){const e=MODEL.env,v=MODEL.vitals,F=MODEL.flight;return {air:e.breathable===false?'no air':'breathable',breath:e.breathable!==false,temp:e.temp==null?null:Math.round(e.temp),press:v.pressure==null?0:v.pressure,grav:v.gravity==null?0:v.gravity,rad:e.rad||0,dens:F.density==null?1:F.density}}
+function envData(){const e=MODEL.env,v=MODEL.vitals,F=MODEL.flight;return {air:e.breathable==null?'—':e.breathable===false?'no air':'breathable',breath:e.breathable==null?null:e.breathable!==false,temp:e.temp==null?null:Math.round(e.temp),press:v.pressure==null?null:v.pressure,grav:v.gravity==null?null:v.gravity,rad:e.rad==null?null:e.rad,dens:F.density==null?null:F.density}}
 function envVerdict(E){const R=suitRating(true);
- if(!E.breath||E.dens<0.05)return ['bad',E.dens<0.05?'Vacuum outside · keep your helmet on':'No breathable air · keep your helmet on'];
- if(E.press<0.5)return ['bad','Low pressure · keep your helmet on'];
- if(E.temp!=null&&E.temp<R.tmin)return ['warn',`Too cold without a helmet · ${E.temp} °C, suit ${R.tmin} °C`];
- if(E.temp!=null&&E.temp>R.tmax)return ['warn',`Too hot without a helmet · ${E.temp} °C, suit ${R.tmax} °C`];
+ if(E.breath==null&&E.dens==null&&E.press==null&&E.temp==null)return ['','No outside readings'];
+ if(E.breath===false||(E.dens!=null&&E.dens<0.05))return ['bad',E.dens!=null&&E.dens<0.05?'Vacuum outside · keep your helmet on':'No breathable air · keep your helmet on'];
+ if(E.press!=null&&E.press<0.5)return ['bad','Low pressure · keep your helmet on'];
+ if(E.temp!=null&&R.tmin!=null&&E.temp<R.tmin)return ['warn',`Too cold without a helmet · ${E.temp} °C, suit ${R.tmin} °C`];
+ if(E.temp!=null&&R.tmax!=null&&E.temp>R.tmax)return ['warn',`Too hot without a helmet · ${E.temp} °C, suit ${R.tmax} °C`];
  if(E.rad>0.5)return ['warn','Radiation outside · keep your helmet on'];
- return ['ok','Safe without a helmet']}
+ /* air and pressure are fine; temperature can only be judged against a known suit rating */
+ return R.tmin==null||E.temp==null?['ok','Breathable air · suit rating unknown']:['ok','Safe without a helmet']}
 function envCard(){const E=envData(),[cls,txt]=envVerdict(E),R=suitRating(true),v=$('#envVerdict'),g=$('#envGrid');
  if(v){v.className='envv '+cls;v.textContent=txt}
  const IJ=INJ(),TN={min:'minor',mod:'moderate',sev:'severe'},ij=Object.entries(IJ).filter(([k,l])=>TN[l]).map(([k,l])=>PART[k].toLowerCase().replace('left ','L ').replace('right ','R ')+' '+TN[l]),ie=$('#envInj');if(ie)ie.textContent=ij.length?ij.join(' · '):'no injuries';
  const V=VIT(),vv=$('#envVit');if(vv)vv.innerHTML=[['HP',V.hp],['O₂',V.o2],['FOOD',V.food],['WATER',V.water]].map(([n,x])=>`<span><span class="unit">${n}</span> <b style="color:${lvl(x)}">${x}%</b></span>`).join('');
- if(g)g.innerHTML=[['AIR',E.breath?'breathable':E.air,E.breath?'ok':'bad'],['TEMP',E.temp==null?'—':E.temp+' °C',E.temp==null?'':E.temp<R.tmin||E.temp>R.tmax?'warn':'ok'],['PRESSURE',E.press.toFixed(2)+' atm',E.press<0.5?'bad':'ok'],['GRAVITY',E.grav.toFixed(1)+' g',''],['RADIATION',E.rad.toFixed(1)+' REM/s',E.rad>0.5?'warn':''],['DENSITY',E.dens.toFixed(2),'']].map(([n,val,c])=>`<div class="ek"><span class="unit">${n}</span><b class="${c}">${val}</b></div>`).join('');
+ if(g)g.innerHTML=[['AIR',E.breath==null?'—':E.breath?'breathable':E.air,E.breath==null?'':E.breath?'ok':'bad'],['TEMP',E.temp==null?'—':E.temp+' °C',E.temp==null||R.tmin==null?'':E.temp<R.tmin||E.temp>R.tmax?'warn':'ok'],['PRESSURE',fu(E.press,2,' atm'),E.press==null?'':E.press<0.5?'bad':'ok'],['GRAVITY',fu(E.grav,1,' g'),''],['RADIATION',fu(E.rad,1,' REM/s'),E.rad>0.5?'warn':''],['DENSITY',fu(E.dens,2),'']].map(([n,val,c])=>`<div class="ek"><span class="unit">${n}</span><b class="${c}">${val}</b></div>`).join('');
  return [cls,txt,E]}
 function pips(){
  /* T: VehiclePowerState, 9 groups */
@@ -2135,28 +2171,30 @@ function fig(){
 /* ---- deck ---- */
 /* ---- control deck: built per ship and seat from ship data (scunpacked) + the 5.0 action allowlist ---- */
 /* keys show the game's state only. Live View never sends input to the game. */
-let STATE={master:'scm',gear:false,vtol:false,wings:false,doors:false,locks:false,lights:false,coupled:false,power:true,nv:false};
+let STATE={master:null,gear:null,vtol:null,wings:null,doors:null,locks:null,lights:null,coupled:null,power:null,nv:null};
+/* keys per ship and seat (S: ship data, eject from the game's seat records). tog keys light from the stream's state.
+   Action keys are drawn as designed but not wired: the page sends nothing to the game. */
 const BTN={
-
+ qt:{icon:'i-qt',l:'QUANTUM',kind:'mom',s:'spool · jump',need:c=>c.sys&&(c.sys.qd||[]).length>0},
  gear:{icon:'i-gear',l:'GEAR',kind:'tog',st:'gear',on:'down',off:'up'},
  wings:{icon:'i-wings',l:'WINGS',kind:'tog',st:'wings',on:'extended',off:'folded',need:c=>c.wings},
  vtol:{icon:'i-vtol',l:'VTOL',kind:'tog',st:'vtol',on:'on',off:'off',need:c=>c.vtol},
-
+ ping:{icon:'i-ping',l:'PING',kind:'hold',s:'hold'},
  doors:{icon:'i-doors',l:'DOORS',kind:'tog',st:'doors',on:'open',off:'closed'},
  locks:{icon:'i-lock',l:'LOCKS',kind:'tog',st:'locks',on:'locked',off:'unlocked'},
  lights:{icon:'i-lights',l:'LIGHTS',kind:'tog',st:'lights',on:'on',off:'off'},
-
-
+ atc:{icon:'i-atc',l:'ATC',kind:'mom',s:'request pad'},
+ hail:{icon:'i-hailc',l:'HAIL',kind:'mom',s:'target'},
  coupled:{icon:'i-coupled',l:'COUPLED',kind:'tog',st:'coupled',on:'on',off:'decoupled'},
  power:{icon:'i-power',l:'POWER',kind:'tog',st:'power',on:'on',off:'off'},
-
-
-
-
-
+ eject:{icon:'i-eject',l:'EJECT',kind:'guard'},
+ destr:{icon:'i-destr',l:'SELF-DESTRUCT',kind:'guard'},
+ nv:{icon:'i-eye',l:'NIGHT VISION',kind:'tog',st:'nv',on:'on',off:'off'},
+ exit:{icon:'i-exit',l:'LEAVE SEAT',kind:'mom',s:'stand up'},
+ emexit:{icon:'i-exit',l:'EMERGENCY EXIT',kind:'guard'},
 };
-const OPS={};
-let opSent=null, armed=null;
+const OPS={GUNS:'i-cross',MISSILES:'i-missile',SCAN:'i-scan',MINING:'i-mine',SALVAGE:'i-salv'};
+const NOTWIRED='Not wired yet. Nothing is sent to the game.';
 const CAPS=()=>SH().caps||{};
 const seatEject=s=>{const c=CAPS(), seats=c.seats||[];
  if(s==='pilot')return seats.some(x=>/helm|pilot/i.test(x[1]||'')&&x[3]);
@@ -2168,24 +2206,28 @@ function opList(){const c=CAPS(), S=SH(), o=[];
  if(guns)o.push('GUNS'); if(mis&&o.length<2)o.push('MISSILES');
  o.push('SCAN'); return o.slice(0,3)}
 function buildDeck(cells){
- if(seat==='gunner')return {list:[],info:'Turret aim and modes stay in game.'};
- const c=CAPS(), guards=[];
- const pri=['gear','wings','vtol','doors','locks','lights','coupled','power'].filter(id=>!BTN[id].need||BTN[id].need(c));
- const room=cells-1-guards.length;
- return {master:true,ops:[],list:[...pri.slice(0,room),...guards].map(id=>({id,...BTN[id]}))}}
-let SD=null;const sdLeft=()=>0;const mmss=n=>Math.floor(n/60)+':'+String(n%60).padStart(2,'0');function sdStart(){}function sdCancel(){}function sdRender(){}
+ if(seat==='gunner'){const ids=['nv','exit',...(seatEject('gunner')?['eject']:[]),'emexit'];return {list:ids.map(id=>({id,...BTN[id]})),info:'Turret aim and modes stay in game.'}}
+ const c=CAPS(), guards=[...(seatEject('pilot')?['eject']:[]),...(c.sys&&c.sys.selfDestruct?['destr']:[])];
+ const pri=['qt','gear','wings','vtol','ping','doors','locks','lights','atc','hail','coupled','power'].filter(id=>!BTN[id].need||BTN[id].need(c));
+ const room=cells-3-guards.length;
+ return {master:true,ops:opList(),list:[...pri.slice(0,room),...guards].map(id=>({id,...BTN[id]}))}}
 function btnHtml(b){let cls='btn cut',sub='';
-  if(b.kind==='tog'){const on=STATE[b.st];if(on)cls+=' lit';sub=on==null?'—':on?b.on:b.off}
- else sub=b.s;
- return `<button class="${cls}" data-id="${b.id}">${ic(b.icon)}<span class="bl">${b.l}</span><small>${sub}</small></button>`}
+ if(b.kind==='tog'){const on=STATE[b.st];if(on)cls+=' lit';sub=on==null?'—':on?b.on:b.off;return `<button class="${cls}" data-id="${b.id}">${ic(b.icon)}<span class="bl">${b.l}</span><small>${sub}</small></button>`}
+ cls+=(b.kind==='guard'?' guard':'')+' nw';
+ sub=b.id==='destr'?`${(CAPS().sys||{}).selfDestruct} s · not wired`:'not wired';
+ return `<button class="${cls}" data-id="${b.id}" title="${NOTWIRED}">${ic(b.icon)}<span class="bl">${b.l}</span><small>${sub}</small></button>`}
 function deckHtml(cells){const D=buildDeck(cells);let h='';
- if(D.master)h+=`<div class="btn cut split"><button class="seg ${STATE.master==='nav'?'on':''}" data-mm="nav">NAV<small>travel</small></button><button class="seg ${STATE.master==='scm'?'on':''}" data-mm="scm">SCM<small>combat</small></button></div>`;
+ if(D.master)h+=`<div class="btn cut split"><button class="seg ${STATE.master==='nav'?'on':''}" data-mm="nav">NAV<small>travel</small></button><button class="seg ${STATE.master==='scm'?'on':''}" data-mm="scm">SCM<small>combat</small></button></div>`+
+  (D.ops.length?`<div class="btn cut opm nw" title="${NOTWIRED}"><span class="opl">SET MODE · NOT WIRED</span><div class="opsegs">${D.ops.map(o=>`<button class="seg" data-op="${o}">${ic(OPS[o],'ic sm')}${o}</button>`).join('')}</div></div>`:'');
  h+=D.list.map(btnHtml).join('');
  if(D.info)h+=`<div class="deckinfo" style="grid-column:1/-1">${D.info}</div>`;
  return h}
-function bindDeck(root){}
-function deckRender(){const d=$('#deck');if(!d)return;d.innerHTML=deckHtml(12);d.classList.toggle('gdeck',seat==='gunner');const nk=d.children.length;d.style.gridTemplateColumns=`repeat(${seat==='gunner'?Math.max(1,nk):Math.max(1,Math.ceil(nk/2))},1fr)`;bindDeck(d)}
-function press(){}
+/* a tap on an action key says it isn't wired; state keys and the mode split only show the game's state */
+function bindDeck(root){root.querySelectorAll('.nw,[data-op]').forEach(el=>el.onclick=e=>{e.stopPropagation();press(el.dataset.id||el.dataset.op)})}
+function deckRender(){const d=$('#deck');if(!d)return;d.innerHTML=deckHtml(12);d.classList.toggle('gdeck',seat==='gunner');d.style.gridTemplateColumns=seat==='gunner'?`repeat(${Math.max(1,d.querySelectorAll('[data-id]').length)},1fr)`:'';bindDeck(d)}
+let PRESSED=0;
+{const ed=document.getElementById('emoteDeck');if(ed)bindDeck(ed)}
+function press(id){if(Date.now()-PRESSED<3000)return;PRESSED=Date.now();toast('i-bell','tip',NOTWIRED)}
 
 /* ---- needs + feed ---- */
 /* notifications: bell in the threat strip, recent list behind it, toasts for new ones */
@@ -2234,17 +2276,16 @@ function threatBell(){const b=document.querySelector('#bellBtn');if(b)b.outerHTM
 function bellRender(){let p=document.querySelector('#bellPanel');if(!bellOpen){if(p)p.remove();return}
  if(!p){p=document.createElement('div');p.id='bellPanel';p.className='cut';app.appendChild(p)}
  const open=needs.filter(n=>!n.done);
- p.innerHTML=`<div class="ph">RECENT</div><div class="bellfeed">${foldFeed(feed,'all').slice(0,8).map(feedRow).join('')||'<div class="unit">No notices yet</div>'}</div>
+ p.innerHTML=(open.length?`<div class="ph">ANSWER IN GAME<span class="r">${open.length} waiting</span></div>${open.map(needHtml).join('')}<div class="ph" style="margin-top:10px">RECENT</div>`:'<div class="ph">RECENT</div>')+`<div class="bellfeed">${foldFeed(feed,'all').slice(0,8).map(feedRow).join('')||'<div class="unit">No notices yet</div>'}</div>
   <button class="mapbtn bellall" id="bellAll">ALL NOTIFICATIONS ON FEED ▸</button>`;
  p.querySelector('#bellAll').onclick=e=>{e.stopPropagation();closeBell();document.querySelector('#bezel .osb[data-p="feed"]').click()};
- p.querySelectorAll('.need').forEach(el=>el.onclick=e=>{e.stopPropagation();const n=needs.find(x=>x.id==el.dataset.n);n.done='dismissed';needs_();bellRender()})}
+ p.querySelectorAll('.need').forEach(el=>el.onclick=e=>{e.stopPropagation();const n=needs.find(x=>x.id==el.dataset.n);n.done='dismissed';DISMISS.add(n.id);needs_();bellRender()})}
 function toggleBell(){bellOpen=!bellOpen;if(bellOpen){unread=0;const t=document.querySelector('#toasts');if(t)t.innerHTML=''}threatBell();bellRender()}
 function closeBell(){if(!bellOpen)return;bellOpen=false;threatBell();bellRender()}
 app.addEventListener('click',e=>{if(e.target.closest('#bellBtn')){e.stopPropagation();toggleBell();return}if(bellOpen&&!e.target.closest('#bellPanel'))closeBell()});
 /* ticker: answer-in-game first, then the newest notifications, one at a time; a new one jumps to the front */
-let TK={i:0,flash:null,until:0};
-function tickerItems(){const L=needs.filter(n=>!n.done).map(n=>({icon:NTYPE[n.type][0],grp:'',txt:NTYPE[n.type][1]+(n.what?' · '+n.what:'')+' · '+n.who,ans:true,t:n.t}));
- return L.concat(foldFeed(feed,'all').slice(0,6).map(r=>({icon:r.e[1],grp:r.e[2],txt:r.aw&&r.n>1?`Awarded ${r.sum.toLocaleString()} aUEC`:r.e[3],t:r.e[0]})))}
+/* ticker: each new notice shows once, in arrival order, then the strip goes quiet. Missed ones are in the bell and FEED. */
+let TK={flash:null,until:0,q:[]};
 function placeTicker(){let k=document.querySelector('#ticker');if(phone){if(k)k.remove();return}
  if(!k){k=document.createElement('div');k.id='ticker';k.title='notifications';app.appendChild(k);k.onclick=e=>{e.stopPropagation();toggleBell()}}
  const th=document.querySelector('#threat');if(!th||!th.offsetWidth){k.style.display='none';return}
@@ -2255,11 +2296,12 @@ function placeTicker(){let k=document.querySelector('#ticker');if(phone){if(k)k.
  if(w<180){k.style.display='none';return}
  Object.assign(k.style,{display:'',left:left+'px',width:w+'px',top:(th.offsetTop+3)+'px',height:(th.offsetHeight-6)+'px'});tickerRender(false)}
 function tickerRender(anim){const k=document.querySelector('#ticker');if(!k||k.style.display==='none')return;
- const it=TK.flash&&Date.now()<TK.until?TK.flash:(()=>{const L=tickerItems();if(!L.length)return null;TK.i%=L.length;return L[TK.i]})();
+ const it=TK.flash&&Date.now()<TK.until?TK.flash:null;
  if(!it){k.innerHTML='';return}const G=FG[it.grp]||FG.msn,col=it.ans?'#ffb347':G[1],lab=it.ans?'ANSWER IN GAME':G[0];
  k.innerHTML=`<div class="tki ${anim?'in':''} ${it===TK.flash?'new':''}" style="--tc:${col}">${ic(it.icon,'ic sm')}<span class="tl">${lab}</span><span class="tt">${esc(it.txt)}</span><span class="ta">${it.t||'now'}</span></div>`}
-function tickerFlash(it){it.t='now';TK.flash=it;TK.until=Date.now()+(it.ans?9000:5000);tickerRender(true)}
-setInterval(()=>{if(TK.flash&&Date.now()<TK.until)return;TK.flash=null;TK.i++;tickerRender(true)},4500);
+function tickerNext(){const it=TK.q.shift();TK.flash=it||null;TK.until=it?Date.now()+(it.ans?9000:5000):0;tickerRender(!!it)}
+function tickerFlash(it){it.t='now';TK.q.push(it);if(!(TK.flash&&Date.now()<TK.until))tickerNext()}
+setInterval(()=>{if(TK.flash&&Date.now()>=TK.until)tickerNext()},500);
 function placeToasts(t){t=t||document.querySelector('#toasts');if(!t)return;t.classList.remove('instrip');t.style.cssText='';if(phone)return;
  const th=document.querySelector('#threat');if(!th)return;const ck=th.querySelector('.clock'),bl=th.querySelector('#scrBtn')||th.querySelector('#bellBtn');
  const keep=[...th.children].filter(c=>c.offsetParent&&!c.classList.contains('long')&&!c.classList.contains('clock')&&c.id!=='bellBtn'&&c.id!=='scrBtn'&&!c.classList.contains('sep'));
@@ -2278,7 +2320,7 @@ function needs_(){
  $('#needRail').innerHTML=list.filter(n=>!n.done).map(needHtml).join('')||'<div class="unit">Nothing waiting.</div>';
  $('#needFull').innerHTML=list.map(needHtml).join('')+`<div class="unit" style="margin-top:6px">Accept or decline with your in-game keys. Each card closes when the game log shows the answer. Tap to dismiss.</div>`;
  $('#bdg').textContent=open;$('#bdg').style.display=open?'':'none';$('#needcount').textContent=open||'';threatBell();
- $$('.need').forEach(el=>el.onclick=()=>{const n=needs.find(x=>x.id==el.dataset.n);n.done=n.done?'':'dismissed';needs_()});
+ $$('.need').forEach(el=>el.onclick=()=>{const n=needs.find(x=>x.id==el.dataset.n);n.done=n.done?'':'dismissed';n.done?DISMISS.add(n.id):DISMISS.delete(n.id);needs_()});
 }
 /* fold noise: merge back-to-back awards, collapse runs of zone changes, hide comms channels outside SHIP */
 function foldFeed(list,f){const out=[];
@@ -2351,14 +2393,16 @@ function layout(){
 /* ---- gear: slots come from the pieces worn (scunpacked fps-items ports), ratings from the same data ---- */
 const GEARCAT={"cds_combat_light_legs_03_03_xenothreat":["FBL-8a Legs Justified","legs","L",20,-35,65,26000,2500,{"med":2,"util":2,"oxy":2,"side":1},[]],"qrt_combat_medium_backpack_01_01_15":["Testudo Backpack Earthshake","backpack","M",null,null,null,null,105000,{"util":1},[["Secondary",4],["Primary",5]],"Medium & Heavy",2],"qrt_utility_heavy_backpack_02_01_01":["Palatino Backpack Mark I","backpack","H",null,null,null,null,180000,{"util":1},[["Secondary",4],["Primary",5]],"Heavy",3],"clda_env_armor_heavy_helmet_01_01_expo":["Novikov \"Expo\" Helmet","helmet","H",25,-225,75,33600,0,{"radar":1},[]],"qrt_utility_heavy_helmet_02_01_01":["Palatino Helmet Mark I","helmet","H",40,-70,100,26800,0,{"radar":1},[]],"cds_combat_light_core_03_03_xenothreat":["FBL-8a Core Justified","core","L",20,-32,62,26000,4000,{"mag":4,"gren":2,"bp":1,"util":1},[["Primary",5]]],"qrt_combat_medium_legs_01_01_15":["Testudo Legs Earthshake","legs","M",30,-50,80,26400,4000,{"med":2,"util":2,"oxy":2,"side":1},[]],"qrt_utility_heavy_arms_02_01_01":["Palatino Arms Mark I","arms","H",40,-70,100,26800,0,{},[]],"qrt_specialist_heavy_helmet_01_01_01":["Antium Helmet","helmet","H",40,-85,115,26800,0,{"radar":1},[]],"cds_combat_light_backpack_01_02_10":["Geist Backpack Whiteout","backpack","L",null,null,null,null,54000,{"util":1},[["Secondary",4],["Primary",5]],"All",1],"rsi_odyssey_undersuit_01_01_12":["Odyssey II Undersuit Exec","undersuit","",5,-30,60,15200,0,{"mag":2,"med":1,"util":1,"oxy":1,"side":1},[["Primary",5]]],"qrt_combat_medium_arms_01_01_15":["Testudo Arms Earthshake","arms","M",30,-50,80,26400,0,{},[]],"cds_combat_light_helmet_03_03_xenothreat":["FBL-8a Helmet Justified","helmet","L",20,-35,65,26000,0,{"radar":1},[]],"qrt_utility_heavy_legs_02_01_01":["Palatino Legs Mark I","legs","H",40,-70,100,26800,8000,{"med":2,"util":2,"oxy":2,"side":1},[]],"qrt_combat_medium_helmet_01_01_15":["Testudo Helmet Earthshake","helmet","M",30,-50,80,26400,0,{"radar":1},[]],"clda_env_heavy_backpack_01_01_01":["Novikov Backpack","backpack","H",null,null,null,null,180000,{"util":1},[["Secondary",4],["Primary",5]],"Heavy",3],"qrt_utility_heavy_core_01_01_01":["Palatino Core","core","H",40,-70,100,26800,8000,{"mag":8,"gren":4,"bp":3,"util":1},[["Secondary",4],["Primary",5]]],"clda_env_armor_heavy_suit_01_01_01":["Novikov Exploration Suit","undersuit","H",25,-225,75,33600,22000,{"mag":8,"gren":4,"bp":3,"util":3,"med":2,"oxy":2,"side":1},[["Secondary",4],["Primary",5]]],"rsi_odyssey_undersuit_helmet_01_01_02":["Odyssey II Racing Helmet Red","helmet","",5,-30,60,15200,0,{"radar":1},[]],"qrt_combat_medium_core_01_01_15":["Testudo Core Earthshake","core","M",30,-50,80,26400,8000,{"mag":6,"gren":3,"bp":2,"util":1},[["Secondary",4],["Primary",5]]],"qrt_specialist_heavy_core_01_01_01":["Antium Core","core","H",40,-95,120,26800,10500,{"mag":8,"gren":4,"bp":3,"util":1},[["Secondary",4],["Primary",5]]],"cds_combat_light_arms_03_03_xenothreat":["FBL-8a Arms Justified","arms","L",20,-35,65,26000,0,{},[]]};
 function itemName(c){const N=MODEL.names||{};return N[String(c).toLowerCase()]||String(c)}
-function LIVESET(){const lo=(MODEL.log||{}).loadout||{},g=p=>{const c=lo[p];return c&&c!=='Default'?c:null};
+function LIVESET(){const lo=(MODEL.log||{}).loadout||{},g=p=>{const c=lo[p];return c&&c!=='Default'?c:null},
+ slots=re=>{const k=Object.keys(lo);return k.length?k.filter(x=>re.test(x)&&g(x)).length:null};
  const w={};Object.keys(lo).filter(k=>/^wep_stocked_\d+$/.test(k)).sort().forEach((k,i)=>{const c=g(k);if(c&&!w[i?'Secondary':'Primary'])w[i?'Secondary':'Primary']=[itemName(c),'']});
  if(g('wep_sidearm'))w.Sidearm=[itemName(g('wep_sidearm')),''];
  const pcs=['Armor_Helmet','Armor_Torso','Armor_Arms','Armor_Legs'].map(g).filter(Boolean),br=pcs.map(c=>itemName(c).split(' ')[0]);
  return {label:pcs.length?(br.every(b=>b===br[0])?br[0]+' set':'mixed armor'):'',helmet:g('Armor_Helmet'),core:g('Armor_Torso'),arms:g('Armor_Arms'),legs:g('Armor_Legs'),
-  undersuit:g('Armor_Undersuit'),backpack:g('backpack'),w,hand:null,mag:null,gren:null,med:null,oxy:null,util:null}}
+  undersuit:g('Armor_Undersuit'),backpack:g('backpack'),w,
+  hand:g('weapon_attach_hand_right')?[itemName(g('weapon_attach_hand_right')),'right hand']:g('weapon_attach_hand_left')?[itemName(g('weapon_attach_hand_left')),'left hand']:null,
+  mag:slots(/^magazine_attach_\d+$/),gren:slots(/^grenade_attach_\d+$/),med:slots(/^medPen_attach_\d+$/),oxy:slots(/^oxyPen_attach_\d+$/),util:slots(/^utility_attach_\d+$/)}}
 let outT=null;
-const OUTSIDE=[[21,'']];
 const G=k=>k?(GEARCAT[String(k).toLowerCase()]||[itemName(k),null,null,null,null,null,null,null,{},[]]):null, CLS={L:'LIGHT',M:'MEDIUM',H:'HEAVY'};
 function gearSlots(){const L=LIVESET(), core=G(L.core), legs=G(L.legs), us=G(L.undersuit), bp=G(L.backpack);
  const cp=core?core[8]:(us?us[8]:{}), cw=core?core[9]:(us?us[9]:[]), lp=legs?legs[8]:(us?us[8]:{});
@@ -2414,12 +2458,12 @@ function doll(){
  const bp=S.bp, fits=!bp||(bp[11]||0)<=S.bpMax;
  const bpTile=S.bpMax||bp?tile('s-pack','BACKPACK',bp?esc(bp[0].replace(/\s+Backpack\b/,'')):'none',bp?(bp[7]!=null?`size ${bp[11]} · ${fmtU(bp[7])} µSCU${fits?'':' · too big for this core'}`:''):`fits up to size ${S.bpMax}`,'',!bp):tile('s-pack','BACKPACK','no backpack port','',' ',true);
  const wt=S.weap.map(([slot,max])=>{const w=L.w[slot];return tile(slot==='Sidearm'?'i-weapon':'i-weapon',slot.toUpperCase(),w?esc(w[0]):'empty',w?(w[1]||''):`size ${max} slot`,'',!w)}).join('');
- const hand=tile('s-tool','IN HAND',L.hand?esc(L.hand[0]):'—',L.hand?L.hand[1]:'','',!L.hand);
+ const hand=tile('s-tool','IN HAND',L.hand?esc(L.hand[0]):'Nothing',L.hand?L.hand[1]:'','',!L.hand);
  $('#slotsR').innerHTML=bpTile+wt+hand;
  const p=(k,d)=>`<path d="${d}" fill="${s[k]==='ok'?'#0f2a33':col[s[k]]+'55'}" stroke="${s[k]==='ok'?'#5bd1e6':col[s[k]]}" stroke-width="1.6"/>`;
  $('#dollFig').innerHTML=bodySvg(s,'dollsvg',{fill:v=>v==='ok'?'#0f2a33':col[v]+'55',stroke:v=>v==='ok'?'#5bd1e6':col[v],sw:1.6,glow:true}).replace('</svg>','<text x="6" y="228" font-size="10" fill="#5f8a96">R</text><text x="108" y="228" font-size="10" fill="#5f8a96">L</text></svg>')+`<div class="dollnote">${Object.entries(s).filter(([k,v])=>v!=='ok').map(([k,v])=>`<span style="color:${col[v]}">${{la:'Left arm',ra:'Right arm',ll:'Left leg',rl:'Right leg',t:'Torso',h:'Head'}[k]} · ${word[v]}</span>`).join('<br>')||'No injuries'}</div>`;
  const c=(icon,name,n,cap)=>cap?`<div class="ctile cut ${n>cap?'over':''}">${ic(icon,'ic sm')}<span>${name}</span><b>${n} / ${cap}</b></div>`:'';
- $('#carry').innerHTML=c('s-mag','Magazines','—',S.mag)+c('s-gren','Throwables','—',S.gren)+c('v-hp','MedPens','—',S.med)+c('v-o2','OxyPens','—',S.oxy)+c('s-tool','Utility','—',S.util);
+ const nv=v=>v==null?'—':v;$('#carry').innerHTML=c('s-mag','Magazines',nv(L.mag),S.mag)+c('s-gren','Throwables',nv(L.gren),S.gren)+c('v-hp','MedPens',nv(L.med),S.med)+c('v-o2','OxyPens',nv(L.oxy),S.oxy)+c('s-tool','Utility',nv(L.util),S.util);
  const sp=$('#suitPanel'); if(sp){
   const pr=k=>k;
   sp.innerHTML=`<div class="ph">SUIT<span class="r">${esc(L.label)}</span></div>
@@ -2445,7 +2489,7 @@ function phoneRender(){applyShip();
  const loc=`<button class="phrow" data-go="nav">${ic('t-nav','ic sm')}<span><b>${esc((MODEL.log||{}).place||'—')}</b> ${(MODEL.log||{}).armistice===true?'<span class="zoneA">Armistice</span>':''}</span><span class="unit" style="margin-left:auto">▸</span></button>`;
  const pm=PM(), po=pm?curObj(pm):null;
  const msn=!pm?`<button class="phrow" data-go="msn">${ic('i-obj','ic sm')}<span class="unit">No contracts yet</span></button>`:`<button class="phrow" data-go="msn">${ic('i-obj','ic sm')}<span class="mnum s">${pm.n}</span><span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(po[0])}</span>${po[2]?`<span class="unit" style="margin-left:auto">${po[2].replace(/ /g,'')}</span>`:''}<span class="unit">${MISSIONS.length} active</span></button>`;
- const EV=foot?null:envCard(), env=EV?`<button class="phrow env ${EV[0]}" data-go="you">${ic('v-air','ic sm')}<span><b>${EV[1].split(' · ')[0]}</b></span><span class="unit" style="margin-left:auto">${EV[2].temp==null?'space':EV[2].temp+' °C'} · ${EV[2].grav.toFixed(1)} g</span></button>`:'';
+ const EV=foot?null:envCard(), env=EV?`<button class="phrow env ${EV[0]}" data-go="you">${ic('v-air','ic sm')}<span><b>${EV[1].split(' · ')[0]}</b></span><span class="unit" style="margin-left:auto">${EV[2].temp==null?'space':EV[2].temp+' °C'} · ${fu(EV[2].grav,1,' g')}</span></button>`:'';
  const wait=open?`<button class="phrow wait" data-go="feed">${ic('i-party','ic sm')}<span><b>${open} waiting</b> · ${needs.filter(n=>!n.done).map(n=>NTYPE[n.type][1].split(' ')[0]).join(', ')}</span><span class="unit" style="margin-left:auto">▸</span></button>`:'';
  const pfight=combat&&!pinMap&&(seat==='pilot'||seat==='gunner');
  const mapstrip=pfight?`<div class="phdmg"><div class="phdh"><span>DAMAGE</span><button class="mapbtn" id="phMapPin">MAP</button></div>${phDmgRows(tot,hull).map(r=>`<button class="phdr ${r[0]}" data-go="sys"><span class="phdn">${r[0]==='maj'?'▲':'●'} ${r[1]}</span><span class="phdd">${r[2]}</span>${r[3]!=null?`<span class="phbar"><i style="width:${r[3]}%"></i></span>`:''}</button>`).join('')}<div class="dguns ph" data-guns>${gunsInner()}</div><div class="phdok">${Object.values(MODEL.ann||{}).filter(l=>l==='ok').length} systems OK</div></div>`
@@ -2463,13 +2507,13 @@ function phoneRender(){applyShip();
   deckIds=[];
  }
  const pdeck=(seat==='pilot'||seat==='gunner')?deckHtml(8):''; const pcols=seat==='gunner'?(pdeck.match(/data-id=/g)||[]).length:4;
- const emotes='';
+ const emotes=(seat==='foot'||seat==='eva')?`<div class="phdeck">${['WAVE','SALUTE','POINT','AGREE'].map(e=>`<button class="btn cut nw" data-id="emote" title="${NOTWIRED}">${ic('i-party')}${e}<small>not wired</small></button>`).join('')}</div>`:'';
  el.classList.toggle('mapbig',phMapBig&&!pfight);
  const tight=short&&pfight; el.classList.toggle('tight',tight);
  el.innerHTML=glance+mapstrip+loc+env+(tight?'':msn)+wait+(pdeck?`<div class="phdeck" style="grid-template-columns:repeat(${pcols},1fr)">${pdeck}</div>`:'')+emotes;
  const pp=el.querySelector('#phMapPin'); if(pp)pp.onclick=()=>{pinMap=true;render()}; const pb2=el.querySelector('#phDmgBack'); if(pb2)pb2.onclick=()=>{pinMap=false;render()};
  el.querySelectorAll('[data-go]').forEach(x=>x.onclick=()=>document.querySelector(`#bezel .osb[data-p="${x.dataset.go}"]`).click());
- const pd=el.querySelector('.phdeck'); if(pd&&pdeck)bindDeck(pd);
+ el.querySelectorAll('.phdeck').forEach(bindDeck);
  fig();
 }
 $('#moreBtn').onclick=()=>{let sh=$('#moreSheet');if(sh){sh.remove();return}sh=document.createElement('div');sh.id='moreSheet';sh.className='panel cut';
@@ -2484,14 +2528,14 @@ function scTime(){const d=new Date(),z=n=>String(n).padStart(2,'0');return `${d.
 function tick(){const pc=$('#pclk');if(pc)pc.textContent=new Date().toTimeString().slice(0,5);const c=$('#clk');if(!c)return;c.textContent=c.classList.contains('sct')?scTime():new Date().toTimeString().slice(0,8)}
 function liveTick(){
  tick();
- $('#spd')&&($('#spd').textContent=SNOW);speedo(SNOW);
+ $('#spd')&&($('#spd').textContent=SNOW==null?'—':SNOW);speedo(SNOW||0);
  $('#g')&&($('#g').textContent=GNOW==null?'—':GNOW.toFixed(1));$('#gmax')&&($('#gmax').textContent=MODEL.flight.gMax?' / '+MODEL.flight.gMax.toFixed(1):'');
  instruments();hud();suitHud();
  $$('[data-guns]').forEach(e=>{if(!e.closest('.zclone'))e.innerHTML=gunsInner()});gunMarks();
  rings();
- $('#hr')&&($('#hr').textContent=hrNow+' bpm');$('#hrb')&&($('#hrb').style.width=Math.min(100,Math.max(0,hrNow-30))+'%');
+ $('#hr')&&($('#hr').textContent=hrNow==null?'—':hrNow+' bpm');$('#hrb')&&($('#hrb').style.width=hrNow==null?'0':Math.min(100,Math.max(0,hrNow-30))+'%');
  $$('.hrx').forEach(e=>e.textContent=hrNow?hrNow+' bpm':'—');
- const pb=document.querySelector('.phspd .big'); if(phone&&seat==='pilot'&&pb)pb.textContent=SNOW;
+ const pb=document.querySelector('.phspd .big'); if(phone&&seat==='pilot'&&pb)pb.textContent=SNOW==null?'—':SNOW;
 }
 
 
@@ -2587,18 +2631,35 @@ let KILLS=[];
 function silo(k,w,h){const S=SHAPE[k];if(!S)return ic('t-ship','ic');const sc=Math.min((w-6)/S[0],(h-6)/S[1]);
  return `<svg class="silo" viewBox="0 0 ${w} ${h}"><polygon points="${S[2].map(([x,y])=>`${(w/2+y*sc).toFixed(1)},${(h/2+x*sc).toFixed(1)}`).join(' ')}"/></svg>`}
 function baseCls(c){return String(c||'').replace(/_\d+$/,'').replace(/_(PU_)?AI(_.*)?$/i,'')}
-function pplShips(){const e=$('#pplShips');if(!e)return;const K=((MODEL.log||{}).kills||[]).slice().reverse();
- const n={dst:0,dis:0,crash:0};K.forEach(r=>{if(r.reason==='Collision')n.crash++;else if(r.level>=2)n.dst++;else n.dis++});
+const isShipId=n=>/^[A-Z]{3,4}_\w+_\d{6,}$/.test(n||'');
+function pplShips(){const e=$('#pplShips');if(!e)return;const G=MODEL.log||{},K=(G.kills||[]).slice().reverse();
+ const n={you:0,other:0,crash:0};K.forEach(r=>{if(r.reason==='Collision')n.crash++;else if(r.by_me)n.you++;else n.other++});
  const ago=m=>m<60?m+' min':Math.floor(m/60)+' h '+(m%60)+' min';
  e.innerHTML=`<div class="ph">SHIPS DESTROYED NEARBY<span class="r">this session · ${K.length}</span></div>`+(K.length?
-  `<div class="ktal"><span class="other">DESTROYED<b>${n.dst}</b></span><span class="party">DISABLED<b>${n.dis}</b></span><span class="crash">CRASHED<b>${n.crash}</b></span></div>
-  <div class="kills">${K.map(r=>{const b=baseCls(r.cls);loadShip(b);const npc=/(^|_)AI(_|$)/i.test(r.cls||''),crash=r.reason==='Collision',lv=r.level>=2?2:1,m=Math.max(0,Math.round((Date.now()/1000-r.t)/60));
+  `<div class="ktal"><span class="you">BY YOU<b>${n.you}</b></span><span class="other">OTHERS<b>${n.other}</b></span><span class="crash">CRASHED<b>${n.crash}</b></span></div>
+  <div class="kills">${K.map(r=>{const b=baseCls(r.cls);loadShip(b);const npc=/(^|_)AI(_|$)/i.test(r.cls||''),crash=r.reason==='Collision',lv=r.level>=2?2:1,m=Math.max(0,Math.round((Date.now()/1000-r.t)/60)),w=r.by_me?'you':'other',by=r.by_me?'you':isShipId(r.killer)?shipNameOf(baseCls(r.killer)):(r.killer||'unknown');
    return `<div class="krow ${lv===2?'dst':'dis'}${m>10?' old':''}"><span class="sil">${silo(b,64,42)}</span>
     <span class="kn"><b>${esc(shipNameOf(b))}</b><small>${npc?'NPC':'player ship'} · ${crash?'collision':'combat'}</small></span>
     <span class="kst">${lv===2?'DESTROYED':'DISABLED'}</span>
-    <span class="kby other">${crash?'crashed':`${ic('i-kill','ic sm')}<b>${esc(/^[A-Z]{3,4}_\w+_\d{6,}$/.test(r.killer||'')?shipNameOf(baseCls(r.killer)):(r.killer||'unknown'))}</b>`}</span>
+    <span class="kby ${w}">${crash?'crashed':`${ic('i-kill','ic sm')}<b>${esc(by)}</b>`}</span>
     <span class="kt">${ago(m)}</span></div>`}).join('')}</div>`:'<div class="row unit">No ships destroyed nearby</div>');
- const st=(id,v)=>{const x=$('#'+id);if(x)x.textContent=v};st('pDst',String(n.dst));st('pDead',String(SESS.dead));st('pDown',String(SESS.downed))}
+ const st=(id,v)=>{const x=$('#'+id);if(x)x.textContent=v},D=G.deaths||[];
+ st('pDst',G.kills?String(n.you):'—');st('pDead',D.length?(D[D.length-1].killer||'—'):'—');st('pDown',String(SESS.downed));
+ partyCards();namesSeen()}
+/* party from the log's party notices: names, leader, how many members are streamed in near you (no positions) */
+function partyCards(){const G=MODEL.log||{},P=G.party||{},M=P.members||[],ld=P.leader,me=G.me;
+ PARTY=M.map(x=>({n:x,lead:x===ld}));PARTYNEAR=M.length?(P.near||0):0;
+ const meLead=ld&&me&&ld.toLowerCase()===me.toLowerCase();
+ const head=`<div class="ph">PARTY${M.length?' · '+(M.length+1):''}<span class="r" style="color:var(--g)">${PARTYNEAR?PARTYNEAR+' near you':''}</span></div>`;
+ const body=M.length||meLead?M.map(x=>`<div class="row"><span class="dot c"></span>${esc(x)}${x===ld?' <span class="tag">leader</span>':''}</div>`).join('')+
+  `<div class="row"><span class="dot c"></span>You${meLead?' <span class="tag">leader</span>':''}</div><div class="row unit">Who is near isn't logged, only how many.</div>`:'<div class="row unit">Not in a party</div>';
+ for(const id of ['pplParty','navParty']){const x=$('#'+id);if(x)x.innerHTML=head+body}}
+/* other players' names: only the log's Vehicle Destroyed lines name them */
+function namesSeen(){const e=$('#pplNames');if(!e)return;const seen=new Map();
+ ((MODEL.log||{}).kills||[]).slice().reverse().forEach(k=>{const x=k.killer;if(!x||k.by_me||isShipId(x)||/^(unknown|PU_)/i.test(x)||seen.has(x))return;seen.set(x,k)});
+ e.innerHTML='<div class="ph">NAMES SEEN NEARBY<span class="r">from ships destroyed near you</span></div>'+
+  ([...seen.values()].slice(0,8).map(k=>`<div class="row"><span class="dot a"></span>${esc(k.killer)}<span class="r">destroyed a ${esc(shipNameOf(baseCls(k.cls)))} · ${agoMin(k.t)}</span></div>`).join('')||'<div class="row unit">No names yet</div>')+
+  '<div class="row unit">Other players only show up here when a ship near you is destroyed.</div>'}
 function drawMap(){
  const sv=$('#mapSys'), lv=$('#mapLoc'); if(!sv)return;
  sv.innerHTML=drawSystem(mapView); lv.innerHTML=drawLocal(mapView); sv.setAttribute('viewBox','80 0 440 420'); lv.setAttribute('viewBox','80 0 440 420');
@@ -2643,14 +2704,14 @@ function curObj(m){return m.obj.find(o=>o[1]===1)||m.obj[0]}
 function pin(n){pinned=n;const m=PM();if(!m){render();return}if(m.place){OBJ.sys=m.place[0];OBJ.name=m.place[1]}else{OBJ.sys=null;OBJ.name=''}render()}
 function numMark(x,y,n){return `<g class="mpin" data-pin="${n}" style="cursor:pointer" transform="translate(${x.toFixed(1)} ${y.toFixed(1)})"><circle r="8" fill="#0a1a22" stroke="#c8913f" stroke-width="1.5"/><text y="3.5" font-size="10" fill="#ffcf8a" text-anchor="middle">${n}</text></g>`}
 /* one short metric per type, for lists and the MAIN card */
-function mMetric(m){if(m.live)return [m.time,null];const sc=m.drops?m.drops.reduce((a,x)=>[a[0]+x[1],a[1]+x[2]],[0,0]):null;
+function mMetric(m){if(m.live&&!m.drops&&m.type!=='bounty'&&m.type!=='combat')return [m.time,null];const sc=m.drops?m.drops.reduce((a,x)=>[a[0]+x[1],a[1]+x[2]],[0,0]):null;
  if(m.type==='haul'||m.type==='mining')return [`${sc[0]}/${sc[1]} SCU`,sc[0]/sc[1]];
  if(m.type==='delivery')return [`${m.boxes[0]}/${m.boxes[1]} boxes`,m.boxes[0]/m.boxes[1]];
  if(m.type==='bounty'||m.type==='combat')return [`${m.kills} kill${m.kills===1?'':'s'}`,null];
  const i=m.obj.findIndex(o=>o[1]===1);return [`step ${i<0?m.obj.length:i+1}/${m.obj.length}`,(i<0?m.obj.length:i)/m.obj.length]}
 const objHtml=o=>`<div class="obj ${o[1]===2?'done':o[1]===1?'cur':''} ${o[3]?'opt':''}"><span class="box"></span>${o[3]?'<span class="optl">OPTIONAL</span> ':''}${esc(o[0])}${o[2]?`<span class="tag" style="margin-left:auto">${o[2]}</span>`:''}</div>`;
 /* the type-specific block: only what the log gives for that type */
-function progHtml(m){if(m.live)return '';
+function progHtml(m){if(m.live&&!m.drops&&m.type!=='bounty'&&m.type!=='combat')return '';
  if(m.drops){const by={};m.drops.forEach(x=>(by[x[3]]=by[x[3]]||[]).push(x));
   return `<div class="mprog"><div class="mph">CARGO · from the log's delivery lines</div>`+Object.entries(by).map(([to,xs])=>`<div class="mdest">${ic('i-obj','ic sm')}${esc(to)}</div>`+xs.map(([c,a,b])=>`<div class="mdrop ${a>=b?'done':''}"><span>${esc(c)}</span><span class="mbar"><i style="width:${Math.round(100*a/b)}%"></i></span><b>${a}/${b} SCU</b></div>`).join('')).join('')+`</div>`}
  if(m.type==='delivery')return `<div class="mprog"><div class="mph">PACKAGES</div><div class="mdrop"><span>Delivered</span><span class="mbar"><i style="width:${Math.round(100*m.boxes[0]/m.boxes[1])}%"></i></span><b>${m.boxes[0]}/${m.boxes[1]}</b></div></div>`;
@@ -2677,14 +2738,14 @@ function msnRender(){
  const pp=$('#msnPinned'); if(pp)pp.innerHTML=`<div class="ph">PINNED<span class="r">${m.shared?'shared by '+esc(m.shared)+' · ':''}${m.time}</span></div>
    <div style="font-size:20px;color:var(--hi);margin-bottom:4px">${esc(m.title)}</div>
    <div class="mchips">${chips(m)}</div>
-   <div class="unit" style="margin:4px 0 10px">${m.live?(m.time==='now'?'accepted just now':'accepted '+m.time+' ago'):esc(m.giver)+' · '+esc(mWhere(m))}</div>
+   <div class="unit" style="margin:4px 0 10px">${m.live?(m.giver?esc(m.giver)+' · ':'')+(m.time==='now'?'accepted just now':'accepted '+m.time+' ago')+(m.place?' · '+esc(mWhere(m)):''):esc(m.giver)+' · '+esc(mWhere(m))}</div>
    <div class="mdet"><div>${m.obj.map(objHtml).join('')}</div>${progHtml(m)}</div>
    `;
  const ml=$('#msnList'); if(ml){ml.innerHTML=`<div class="ph">ACTIVE CONTRACTS · ${MISSIONS.length}<span class="r">tap to pin · in-game tracking isn't logged</span></div>`+
    MISSIONS.map(x=>{const mt=mMetric(x);return `<button class="mrow ${x.n===pinned?'on':''}" data-pin="${x.n}"><span class="mnum">${x.n}</span><span class="mtx"><b>${ic(MTYPE[x.type][1],'ic sm')} ${esc(x.title)}</b><span>${esc(curObj(x)[0])}</span></span><span class="mmet">${mt[1]!=null?`<span class="mbar"><i style="width:${Math.round(100*mt[1])}%"></i></span>`:''}${mt[0]}</span><span class="mwh">${esc(mWhere(x))}</span><span class="mpinb">${x.n===pinned?'PINNED':'PIN'}</span></button>`}).join('');}
  }
  const mh=$('#msnHist'); if(mh)mh.innerHTML=`<div class="ph">THIS SESSION</div>`+
-   MHIST.map(([t,ty,res,pay,rep])=>`<div class="row"><span class="dot ${res==='Complete'?'':res==='Failed'?'r':'m'}"></span>${ic(MTYPE[ty][1],'ic sm')} ${esc(t)}<span class="r">${res==='Complete'?(pay?'+'+pay.toLocaleString()+' aUEC':'complete'):res.toLowerCase()}${rep?` · ${rep>0?'+':''}${rep} rep`:''}</span></div>`).join('');
+   MHIST.map(([t,ty,res,pay,rep])=>`<div class="row"><span class="dot ${res==='Complete'?'':res==='Failed'?'r':'m'}"></span>${ic(MTYPE[ty][1],'ic sm')} ${esc(t)}<span class="r">${res==='Complete'?(pay?'+'+pay.toLocaleString()+' aUEC':'complete'):res.toLowerCase()}${rep?` · ${rep>0?'+':''}${rep} rep`:''}</span></div>`).join('')+(MHIST.length?'':'<div class="row unit">No contracts finished yet</div>');
 }
 document.addEventListener('click',e=>{const p=e.target.closest('[data-pin]');if(p&&!p.closest('.zclone')){e.stopPropagation();pin(+p.dataset.pin)}},true);
 
@@ -2711,7 +2772,16 @@ const KEY=new URLSearchParams(location.search).get('k');
 function api(p){const u=new URL(p,location.href);if(KEY)u.searchParams.set('k',KEY);return u}
 function shipNameOf(c){const x=ALLSHIPS.find(a=>a.class===c)||(SHIPS[c]&&SHIPS[c].caps);return x&&x.name?x.name:String(c||'').replace(/_\d+$/,'').replace(/^[A-Z]{3,4}_/,'').replace(/_/g,' ')}
 function killRows(n){return(((MODEL.log||{}).kills)||[]).slice(-n).reverse()}
+/* the map place an objective names ("Go to … above Aberdeen"): the most specific starmap name wins (station over moon over planet), then the last one.
+   Positions aren't logged, so the marker sits on the named body. */
+const PRANK={station:3,lstation:3,city:3,gate:3,moon:2,planet:1};
+function placeIn(txt){if(!txt)return null;let best=null;
+ for(const[sy,rows] of Object.entries(STARMAP))for(const r of rows){if(r[1]==='star')continue;const re=new RegExp('\\b'+r[0].replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+'\\b');const m=re.exec(txt);
+  const k=PRANK[r[1]]||0;if(m&&(!best||k>best.k||k===best.k&&(m.index>best.i||m.index===best.i&&r[0].length>best.n.length)))best={i:m.index,k,sy,n:r[0]}}
+ return best?[best.sy,best.n]:null}
+const MTMAP={Bounty:'bounty',Combat:'combat',Hauling:'haul',Mining:'mining',Delivery:'delivery','FPS / Ground':'fps',Salvage:'recover','Medical / Rescue':'recover',Training:'training'};
 function mtypeOf(n){n=String(n||'');return /bounty/i.test(n)?'bounty':/haul|cargo/i.test(n)?'haul':/deliver/i.test(n)?'delivery':/mining|mine /i.test(n)?'mining':/salvage|recover/i.test(n)?'recover':/eliminate|defend|kill|patrol/i.test(n)?'combat':'contract'}
+let LASTHP=null,DMGUNTIL=0,DOWNUNTIL=0;const ASKSEEN=new Set(),DISMISS=new Set();let ASKSOK=false;
 let PLACES=[],MAPSET=false,O2H=[],CMMAX={decoy:0,noise:0};
 function zoneLabel(){const G=MODEL.log||{};return G.armistice===true?'Armistice':G.jurisdiction?String(G.jurisdiction):G.armistice===false?'No armistice':''}
 /* minutes of suit O2 left, from the drop over the last 90 s on EVA; null until it is measurable */
@@ -2720,7 +2790,7 @@ function o2Mins(){if(O2H.length<2)return null;const a=O2H[0],b=O2H[O2H.length-1]
 const T0=Date.now();let WAL0=null,FLOWN=0,LASTT=0;const SESS={downed:0,dead:0,respawn:0,seat:0},SEEN=new Set();
 /* the recorder keeps the last 50 events: count each one once, by time and type */
 function countEvents(evs){(evs||[]).forEach(e=>{const k=e.t+'|'+e.type;if(SEEN.has(k))return;SEEN.add(k);const t=String(e.type||'');
- if(t.indexOf('DOWNED')>=0)SESS.downed++;else if(t.indexOf('RESPAWN')>=0)SESS.respawn++;else if(t.indexOf('DEAD')>=0)SESS.dead++;else if(t.indexOf('ENTER_SEAT')>=0)SESS.seat++})}
+ if(t.indexOf('DOWNED')>=0){SESS.downed++;if(Date.now()-e.t*1000<60000)DOWNUNTIL=Math.max(DOWNUNTIL,e.t*1000+60000)}else if(t.indexOf('RESPAWN')>=0)SESS.respawn++;else if(t.indexOf('DEAD')>=0)SESS.dead++;else if(t.indexOf('ENTER_SEAT')>=0)SESS.seat++})}
 function phDmgRows(tot,hull){const r=[];if(tot!=null)r.push([tot<30?'maj':'min','SHIELDS',tot+'%',tot]);if(hull!=null)r.push([hull<35?'maj':'min','HULL',hull+'%',hull]);
  Object.entries(MODEL.ann||{}).forEach(([k,l])=>{if(l==='maj'||l==='min')r.push([l,k.toUpperCase(),l==='maj'?'fault':'warning',null])});return r}
 function agoMin(t){const m=Math.max(0,Math.round((Date.now()/1000-t)/60));return m<1?'now':m+' min'}
@@ -2739,9 +2809,11 @@ function applyModel(){const M=MODEL,f=M.flight;
  const s=M.seat==='crew'?'gunner':(M.seat||'pilot');
  if(s!==seat){if((seat==='pilot'||seat==='gunner')&&LASTSHIP.seen)LASTSHIP.t=Date.now();lastSeat=seat;seat=s}
  foot=seat==='foot'||seat==='eva';
- combat=!!M.threat;
+ /* on foot: health falling = taking damage (8 s), the ship's lights drive combat otherwise */
+ {const hp=M.vitals.hp;if(foot&&hp!=null&&LASTHP!=null&&hp<LASTHP-0.5)DMGUNTIL=Date.now()+8000;LASTHP=hp}
+ combat=!!M.threat||(foot&&Date.now()<DMGUNTIL);
  if(M.ship&&M.ship.cls){shipK=M.ship.cls;loadShip(shipK)}
- SNOW=Math.round(f.speed||0);GNOW=f.g;if(f.heading!=null)HDG=f.heading;
+ SNOW=f.speed==null?null:Math.round(f.speed);GNOW=f.g;if(f.heading!=null)HDG=f.heading;
  CM={decoy:M.cm.decoy,noise:M.cm.noise};FIREGROUP=M.preset||'';WSET={gimbals:!!M.gimbalsLocked,stagger:!!M.staggered};
  /* null = the game didn't send it: the key shows — */
  const dp=v=>v==null?null:/DEPLOY/.test(v)&&!/RETRACT/.test(v), sv=v=>v==null?null:!!v, sp=M.ship||{};
@@ -2750,21 +2822,38 @@ function applyModel(){const M=MODEL,f=M.flight;
   coupled:M.ifcs.ifcs_coupled?!!M.ifcs.ifcs_coupled.active:null,power:(M.power||{}).powerplants==null?null:M.power.powerplants!==false});
  const md=$('#mode');if(md)md.textContent=f.master?f.master.toUpperCase():'—';
  const P=M.power||{};PGON={pw:P.powerplants!==false,en:P.engines!==false,sh:P.shield_generators!==false,wp:P.weapons!==false};
- hrNow=Math.round(M.vitals.hr||0);if(M.env.temp!=null)outT=Math.round(M.env.temp);
+ hrNow=M.vitals.hr==null?null:Math.round(M.vitals.hr);if(M.env.temp!=null)outT=Math.round(M.env.temp);
  const G=M.log||{};
  feed=(G.notices||[]).slice().reverse().map(n=>[new Date(n.t*1000).toTimeString().slice(0,5),GICON[n.group]||'i-bell',n.group,n.text,false,'','']);
  if(G.place){const sy=Object.keys(STARMAP).find(s=>STARMAP[s].some(r=>r[0]===G.place));
   if(sy){HERE.sys=sy;if(!MAPSET){mapView=sy;MAPSET=true}}HERE.name=G.place;
   if(!PLACES.length||PLACES[0].n!==G.place){PLACES.unshift({n:G.place,t:Date.now()});PLACES.length=Math.min(PLACES.length,8)}}
- const ns=$('#navStops');if(ns)ns.innerHTML=PLACES.length?PLACES.map((p,i)=>`<div class="row">${esc(p.n)}<span class="r">${i?agoMin(p.t/1000)+' ago':'here'}</span></div>`).join(''):'<div class="row unit">No places yet</div>';
- MHIST=(G.contracts||[]).filter(c=>c.status!=='active').reverse().map(c=>[c.name,mtypeOf(c.name),c.status==='complete'?'Complete':'Failed',0,0]);
- MISSIONS=(G.contracts||[]).filter(c=>c.status==='active').map((c,i)=>({n:i+1,live:true,type:mtypeOf(c.name),title:c.name,
-  obj:[[c.objective||'No objective logged',1,'',false]],place:null,placeName:'',giver:'',party:'—',time:agoMin(c.t),kills:0}));
+ const PL=(G.places||[]).slice().reverse(),ns=$('#navStops');if(ns)ns.innerHTML=PL.length?PL.map((p,i)=>`<div class="row">${esc(p.name)}<span class="r">${!i&&p.name===G.place?'here':agoMin(p.t)+' ago'}</span></div>`).join(''):'<div class="row unit">No places yet</div>';
+ {const Q=G.qt||{},q=$('#navQt');if(q)q.textContent=Q.target?Q.target+(Q.fuel!=null?' · fuel '+Math.round(Q.fuel):''):'—'}
+ MHIST=(G.contracts||[]).filter(c=>c.status!=='active').reverse().map(c=>[c.name,MTMAP[(c.info||{}).type]||mtypeOf(c.name),c.status==='complete'?'Complete':c.status.charAt(0).toUpperCase()+c.status.slice(1),0,c.status==='complete'?(c.rep||0):0]);
+ {const now=Date.now();needs.length=0;
+  (G.asks||[]).forEach(a=>{const key=a.t+'|'+a.kind+'|'+(a.who||'')+'|'+(a.what||''),age=now-a.t*1000;
+   if(!NTYPE[a.kind]||(a.open?age>30*60000:age>2*60000))return;
+   needs.push({id:key,type:a.kind,who:a.who||'',what:a.what||'',t:new Date(a.t*1000).toTimeString().slice(0,5),done:!a.open?'answered':DISMISS.has(key)?'dismissed':''});
+   if(ASKSOK&&a.open&&!ASKSEEN.has(key))toast(NTYPE[a.kind][0],'',NTYPE[a.kind][1]+(a.who?' · '+a.who:'')+(a.what?' · '+a.what:''),true);ASKSEEN.add(key)});
+  ASKSOK=true}
+ MISSIONS=(G.contracts||[]).filter(c=>c.status==='active').map((c,i)=>{const inf=c.info||{};
+  const ob=(c.objectives||[]).map(o=>[o.text,o.state==='complete'?2:o.state==='active'?1:0,o.state==='withdrawn'||o.state==='failed'?o.state:'',!!o.optional]);
+  const cur=(ob.find(o=>o[1]===1)||[])[0]||c.objective;
+  return {n:i+1,live:true,type:MTMAP[inf.type]||mtypeOf(c.name),title:c.name,obj:ob.length?ob:[[c.objective||'No objective logged',1,'',false]],
+   place:placeIn(cur)||placeIn(c.name),placeName:'',giver:inf.giver||'',rank:inf.standing||'',rep:c.rep||inf.rep||0,bp:!!(c.bp||inf.bp),party:'—',time:agoMin(c.t),
+   kills:(G.kills||[]).filter(k=>k.by_me&&k.t>=c.t).length,drops:(c.drops||[]).length?c.drops.map(d=>[d.cargo,d.a,d.b,d.to]):null}});
+ {const pm=PM();if(pm&&pm.place){OBJ.sys=pm.place[0];OBJ.name=pm.place[1]}else{OBJ.sys=null;OBJ.name=''}}
  const sx=(id,v)=>{const e=$('#'+id);if(e)e.textContent=v};
  sx('navPlace',G.place||'—');sx('mapPlace',G.place||'');sx('h2t',f.h2==null?'—':Math.round(f.h2)+'%');
  const hb=$('#h2');if(hb)hb.style.width=(f.h2||0)+'%';sx('navJur',G.jurisdiction||'—');sx('navZone',G.armistice===true?'Armistice':G.armistice===false?'Outside armistice':'—');
  /* last ship: the values seen while seated, kept once you leave the seat */
- if(M.ship){const SFl=M.shields||{};Object.assign(LASTSHIP,{seen:true,hull:M.hull,sh:SFl.bubble!=null?Math.round(SFl.bubble):SFl.faces?Math.round(SFl.faces.reduce((a,b)=>a+b,0)/SFl.faces.length):null,h2:f.h2==null?null:Math.round(f.h2),qt:f.qt==null?null:Math.round(f.qt)})}
+ /* off the seat: CSR keeps the last vehicle frame (payload lastShip), so a reload on foot still knows the ship */
+ if(!M.ship&&M.lastShip&&M.lastShip.vehicle&&!LASTSHIP.seen){const lm=slateModel({state:'live',snapshot:{vehicle:M.lastShip.vehicle,actor:{state:{locomotion:'SEATED'}}}});
+  if(lm.ship&&lm.ship.cls){if(!shipK){shipK=lm.ship.cls;loadShip(shipK)}const SFo=lm.shields||{};
+   Object.assign(LASTSHIP,{seen:true,restored:true,t:LASTSHIP.t||Math.round((M.lastShip.t||0)*1000),hull:lm.hull,sh:SFo.bubble!=null?Math.round(SFo.bubble):SFo.faces?Math.round(SFo.faces.reduce((a,b)=>a+b,0)/SFo.faces.length):null,
+    h2:lm.flight.h2==null?null:Math.round(lm.flight.h2),qt:lm.flight.qt==null?null:Math.round(lm.flight.qt)})}}
+ if(M.ship){const SFl=M.shields||{};Object.assign(LASTSHIP,{seen:true,restored:false,hull:M.hull,sh:SFl.bubble!=null?Math.round(SFl.bubble):SFl.faces?Math.round(SFl.faces.reduce((a,b)=>a+b,0)/SFl.faces.length):null,h2:f.h2==null?null:Math.round(f.h2),qt:f.qt==null?null:Math.round(f.qt)})}
  const pctv=v=>v==null?'—':Math.round(v)+'%',bar=(id,p)=>{const e=$('#'+id);if(e)e.style.width=(p==null?0:Math.max(0,Math.min(100,p)))+'%'};
  sx('qtt',pctv(f.qt));bar('qtb',f.qt);const br=(f.boost||{}).reserves;sx('bst',pctv(br));bar('bstb',br);
  ['decoy','noise'].forEach(k=>{if(M.cm[k]!=null)CMMAX[k]=Math.max(CMMAX[k],M.cm[k])});
@@ -2780,24 +2869,29 @@ function applyModel(){const M=MODEL,f=M.flight;
  const dW=M.wallet!=null&&WAL0!=null?Math.round(M.wallet-WAL0):null,big=n=>n>=1e6?(n/1e6).toFixed(1)+' M':n.toLocaleString('en-US');
  sx('sessT','since '+new Date(T0).toTimeString().slice(0,5));
  sx('sWal',dW==null?'—':(dW>0?'+':dW<0?'−':'')+Math.abs(dW).toLocaleString('en-US'));sx('sBal',M.wallet==null?'—':big(Math.round(M.wallet)));
- sx('sFlown',FLOWN>=1000?(FLOWN/1000).toFixed(1)+' km':Math.round(FLOWN)+' m');sx('sBp',String(G.blueprints||0));
- sx('sDown',String(SESS.downed));sx('sDead',String(SESS.dead));sx('sResp',String(SESS.respawn));sx('sSeat',String(SESS.seat));
- const nr=$('#mainNear');if(nr){const k=killRows(2);nr.innerHTML=k.length?k.map(x=>`<div class="line unit">${esc(x.killer||'Unknown')} destroyed a ${esc(shipNameOf(x.cls))} · ${agoMin(x.t)}</div>`).join(''):'<div class="line unit">No ships destroyed nearby</div>'}
+ sx('sFlown',FLOWN>=1000?(FLOWN/1000).toFixed(1)+' km':Math.round(FLOWN)+' m');sx('sBp',G.blueprints==null?'—':String(G.blueprints));
+ sx('sDown',String(SESS.downed));sx('sDead',String(SESS.dead));sx('sResp',SESS.respawn?String(SESS.respawn):'—');sx('sSeat',String(SESS.seat));
+ const nr=$('#mainNear');if(nr){const k=killRows(2);nr.innerHTML=k.length?k.map(x=>`<div class="line unit">${x.by_me?'You':esc(isShipId(x.killer)?shipNameOf(baseCls(x.killer)):(x.killer||'Unknown'))} destroyed a ${esc(shipNameOf(baseCls(x.cls)))} · ${agoMin(x.t)}</div>`).join(''):'<div class="line unit">No ships destroyed nearby</div>'}
 }
-function applyWeapons(){if(MODEL.weapons&&MODEL.weapons.length)weapons=MODEL.weapons.map(w=>w.slice())}
+const GUNHOLD={};
+function applyWeapons(){if(!(MODEL.weapons&&MODEL.weapons.length))return;const now=Date.now();
+ weapons=MODEL.weapons.map((w,i)=>{w=w.slice();if(w[2]&&!w[3])GUNHOLD[i]=now;else if(w[2]&&GUNHOLD[i]&&now-GUNHOLD[i]<1500)w[3]=false;return w})}
+/* hits: the HIT light flashes while shots land. 4.10 sends no hull or shield numbers. */
+const HITS={n:0,t:0,on:false};
+function countHits(){const on=MODEL.ann&&MODEL.ann.hit==='maj';if(on&&!HITS.on){HITS.n++;HITS.t=Date.now()}HITS.on=on;if(!MODEL.ship){HITS.n=0;HITS.on=false}}
 let LASTN=0,LASTR=0,LASTK='',LASTSEQ=0,SEQOK=false;
 /* 4 polls a second while live: instruments every poll, the full redraw once a second or when the scene changes */
 async function poll(){let wait=2000,p=null;
  try{const r=await fetch(api('/api/telemetry/live'),{credentials:'same-origin',cache:'no-store'});if(r.ok)p=await r.json()}catch(e){}
- try{MODEL=slateModel(p||{},SHIPS[shipK]?SH().caps:null);MODEL.names=(p&&p.names)||{};if(p)countEvents(p.events);
+ try{MODEL=slateModel(p||{},SHIPS[shipK]?SH().caps:null);MODEL.names=(p&&p.names)||{};MODEL.lastShip=(p&&p.lastShip)||null;if(p)countEvents(p.events);
   const G=MODEL.log||{},n=(G.notices||[]).length;
-  applyModel();
+  applyModel();applyWeapons();countHits();
   /* the log keeps the last 40 notices; seq counts every one, so new ones are seq - LASTSEQ (first poll is history) */
   const sq=G.seq||0;if(p&&p.log){if(SEQOK&&sq>LASTSEQ)G.notices.slice(-Math.min(3,sq-LASTSEQ,n)).forEach(x=>{unread++;toast(GICON[x.group]||'i-bell',x.group,x.text)});LASTSEQ=sq;SEQOK=true}
   wait=MODEL.live?250:2000;
   const wp=$('#waitPanel');if(wp){wp.hidden=MODEL.live;wp.querySelector('b').textContent=MODEL.wait}
   const k=[MODEL.live,seat,shipK,combat,!!SHIPS[shipK],n,(G.contracts||[]).length,(G.kills||[]).length,G.place].join('|');
-  if(k!==LASTK||Date.now()-LASTR>=1000){LASTK=k;LASTR=Date.now();render()}else if(MODEL.live)liveTick()}catch(e){console.error(e)}
+  if(k!==LASTK||Date.now()-LASTR>=1000){LASTK=k;LASTR=Date.now();render()}else if(MODEL.live)liveTick()}catch(e){console.error(e);(window.SLATE_ERRORS=window.SLATE_ERRORS||[]).push(String(e&&e.stack||e).slice(0,300))}
  setTimeout(poll,wait)}
 const _render=render;render=function(){_render();applyWeapons()};
 addEventListener('resize',()=>{layout();render()});

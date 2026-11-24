@@ -146,9 +146,20 @@
           // a value the stream didn't give must read —, never NaN / undefined / null
           for (const t of (document.querySelector('#app').innerText.match(/[^\n]*\b(NaN|undefined|null)\b[^\n]*/g) || []))
             raw.push({ type: 'bad value', where: tab, txt: t.trim().slice(0, 60), key });
+          // with no game data (run it on slate_dev --state waiting) no reading may show a number
+          if (o.nodata) {
+            const w = document.createTreeWalker(document.querySelector('#app'), NodeFilter.SHOW_TEXT); let n;
+            while ((n = w.nextNode())) {
+              const e = n.parentElement; if (!e || !e.getClientRects().length || e.closest('#waitPanel,.clock,#ticker')) continue;
+              const ctx = (n.nodeValue + ' ' + (e.nextElementSibling ? e.nextElementSibling.textContent : '')).trim();
+              if (/^-?\d+(\.\d+)?\s*(%|°C?|atm|g|bpm|m\/s|km|REM\/s|Gm)\b/.test(ctx) || /^\d+(\.\d+)?$/.test(n.nodeValue.trim()) && /^(%|°C|atm|g|bpm|m\/s|km|REM\/s)$/.test((e.nextElementSibling || {}).textContent || ''))
+                raw.push({ type: 'number without data', where: tab, txt: ctx.slice(0, 40), key });
+            }
+          }
         }
       }
     } finally { noAnim.remove(); if (typeof CV !== 'undefined') { CV.on = false; CV.manual = false } document.querySelector('#bezel .osb').click() }
+    for (const e of (window.SLATE_ERRORS || [])) raw.push({ type: 'js error', where: 'poll', txt: e.slice(0, 120), key: 'page' });
     const g = {};
     for (const i of raw) { if (o.skip && o.skip.includes(i.type)) continue; const t = g[i.type] = g[i.type] || {}; const kk = i.where + ' :: ' + i.txt; const e = t[kk] = t[kk] || { n: 0, ex: [] }; e.n++; if (e.ex.length < 2) e.ex.push(i.key) }
     const rep = {};
