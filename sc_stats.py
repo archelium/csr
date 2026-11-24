@@ -3254,6 +3254,9 @@ def _place_label(code):
     m = re.match(r"(?i)pyro(\d[a-z]?)_Outpost_col_(?:xs|s|m)_(.+)$", code)
     if m:
         return f"Pyro {m.group(1)} outpost {m.group(2).replace('_', ' ')}", "Outpost"
+    m = re.match(r"(?i)(?:cluster|location|sector)_ht_\w*?_([a-z]+-\d+)$", code)
+    if m:   # one of the named-in-brackets codes that came without its name
+        return f"Unnamed site {m.group(1)}", "Outpost"
     m = re.match(r"(?:Stanton\d[a-z]?|Pyro\d[a-z]?|Nyx|AsteroidClusterBase_Pyro|AsteroidClusterBase_Nyx)_(.+)$", code)
     rest = m.group(1) if m else code
     kind = "Other"
@@ -3293,6 +3296,12 @@ def place_name(code, patch=None):
     the route log or the wiki, else are built from the code. Kind is City, Station,
     Rest stop, Jump point, Outpost, Facility, Wikelo or Other. `patch` matters for codes
     CIG reused: RR_JP_StantonMagnus is the Nyx Gateway from 4.4."""
+    # newer location codes carry their own name: "cluster_ht_a_agriculture_l_002 (Green Dale)"
+    m = re.match(r"^(.+?)\s*\(([^()]+)\)\s*$", code)
+    if m:
+        base = m.group(1)
+        kind = "Other" if base.lower().startswith("sector_") else "Outpost"
+        return m.group(2).strip(), _place_system(base), kind
     low = code.lower()
     ren = _PLACE_RENAMED.get(low)
     if ren and (patch is None or _patch_key(patch) >= ren[0]):

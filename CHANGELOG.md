@@ -27,6 +27,8 @@ uses [Semantic Versioning](https://semver.org/) (MAJOR.MINOR.PATCH).
 
 ### Fixed
 - The alert bell's link to a crash opens Stability's Crashes page again.
+- Tech Preview places showed their raw code, like "cluster ht a agriculture l 002 (Green
+  Dale)". They now read Green Dale.
 
 ## [1.11.0] — 2026-11-24
 
