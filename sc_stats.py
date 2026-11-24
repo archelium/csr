@@ -52,6 +52,8 @@ from datetime import datetime, timedelta, timezone
 
 import sc_names
 import sc_qr
+import sc_livelog
+import sc_slate_ships
 import sc_telemetry
 import sc_tlm_stats
 
@@ -689,7 +691,7 @@ class _PhoneHandler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         parts = urllib.parse.urlsplit(self.path)
         path = parts.path
-        if path not in ("/live", "/api/telemetry/live"):
+        if path not in ("/live", "/api/telemetry/live", "/api/telemetry/ship"):
             self._send(404, "Not found.", "text/plain; charset=utf-8")
             return
         if not self._key_ok(urllib.parse.parse_qs(parts.query)):
@@ -702,11 +704,18 @@ class _PhoneHandler(http.server.BaseHTTPRequestHandler):
             self._send(200, LIVE_HTML(), "text/html; charset=utf-8",
                        extra={"Set-Cookie": cookie})
             return
+        if path == "/api/telemetry/ship":
+            body = tlm_api_get(self.path, None, None, None)
+            if body is None:
+                self._send(404, "{}")
+            else:
+                self._send(200, body)
+            return
         on_seen = _PHONE["on_seen"]
         if on_seen:
             on_seen()
         try:
-            body = json.dumps(_json_safe(_PHONE["live"]()), default=str)
+            body = json.dumps(_json_safe(live_payload(_PHONE["live"])), default=str)
         except Exception as e:
             self._send(200, json.dumps({"ok": False, "error": str(e)}))
             return
@@ -843,12 +852,35 @@ def local_request_ok(method, headers, port):
     return True
 
 
+def _slate_log_path():
+    """The Game.log of the channel being played, or None."""
+    ch = tlm_channel_now()
+    return os.path.join(ch[1], "Game.log") if ch else None
+
+
+def live_payload(live):
+    """The live view's poll: telemetry state plus the live Game.log state (None when the
+    log can't be read)."""
+    data = dict(live())
+    try:
+        data["log"] = sc_livelog.get_state(_slate_log_path, lambda code: place_name(code)[0])
+    except Exception:
+        data["log"] = None
+    return data
+
+
 def tlm_api_get(path, live, status, on_seen):
-    """JSON body for GET /api/telemetry/live and /api/telemetry/status. A live poll
-    counts as a page watching CSR."""
-    if path.endswith("/live"):
+    """JSON body for GET /api/telemetry/live, /api/telemetry/status and
+    /api/telemetry/ship?c=CLASS (None when the ship is unknown). A live poll counts as
+    a page watching CSR."""
+    parts = urllib.parse.urlsplit(path)
+    if parts.path.endswith("/ship"):
+        cls = urllib.parse.parse_qs(parts.query).get("c", [None])[0]
+        ship = sc_slate_ships.ship_payload(cls)
+        return None if ship is None else json.dumps(ship)
+    if parts.path.endswith("/live"):
         on_seen()
-        data = live()
+        data = live_payload(live)
     else:
         data = status()
     return json.dumps(_json_safe(data), default=str)
@@ -13278,13 +13310,13 @@ def serve(out_path, port=7878, explicit_logs=None, open_browser=True,
                     "session_live": _WATCH["live"],
                     "watch": watch_status(),
                     "tlm": recorder.status()}))
-            elif p in ("/api/telemetry/live", "/api/telemetry/status"):
+            elif p in ("/api/telemetry/live", "/api/telemetry/status", "/api/telemetry/ship"):
                 try:
-                    body = tlm_api_get(p, recorder.live, tlm_status, phone_seen)
+                    body = tlm_api_get(self.path, recorder.live, tlm_status, phone_seen)
                 except Exception as e:
                     self._send(200, json.dumps({"ok": False, "error": str(e)}))
                     return
-                self._send(200, body)
+                self._send(200, body) if body is not None else self._send(404, "{}")
             elif p == "/api/export":
                 # hand over the accumulated archive as a downloadable backup
                 want_zip = "tlm=1" in (self.path.split("?", 1)[1] if "?" in self.path else "")
