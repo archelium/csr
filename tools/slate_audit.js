@@ -141,7 +141,11 @@
         for (const tab of tabs) {
           if (cv && tab !== 'ship') continue;
           const b = document.querySelector(`#bezel .osb[data-p="${tab}"]`); if (b) b.click();
-          raw.push(...checkPage(`${innerWidth}x${innerHeight} | ${seat}${cv ? ' cview' : ''} | ${tab}`, { phone, tab, touch: !!o.touch }));
+          const key = `${innerWidth}x${innerHeight} | ${seat}${cv ? ' cview' : ''} | ${tab}`;
+          raw.push(...checkPage(key, { phone, tab, touch: !!o.touch }));
+          // a value the stream didn't give must read —, never NaN / undefined / null
+          for (const t of (document.querySelector('#app').innerText.match(/[^\n]*\b(NaN|undefined|null)\b[^\n]*/g) || []))
+            raw.push({ type: 'bad value', where: tab, txt: t.trim().slice(0, 60), key });
         }
       }
     } finally { noAnim.remove(); if (typeof CV !== 'undefined') { CV.on = false; CV.manual = false } document.querySelector('#bezel .osb').click() }

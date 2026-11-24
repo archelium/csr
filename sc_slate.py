@@ -63,7 +63,7 @@ function slateModel(payload, ship){
     else if (t.indexOf('ENTER_SEAT') >= 0) ev.seat++;
   });
   const emptyLog = {place: null, jurisdiction: null, armistice: null, notices: [], contracts: [], kills: [],
-                    injuries: {}, loadout: {}, blueprints: 0};
+                    injuries: {}, loadout: {}, blueprints: 0, seq: 0};
   const doors = veh && veh.doors ? veh.doors : null;
   const o2 = gauge(vit.oxygen);
   return {
@@ -1323,29 +1323,28 @@ SLATE_BODY = r"""
       <div class="shiplegend"><span><i style="background:#ffb347"></i>WARNING</span><span><i style="background:#ff5468"></i>CRITICAL</span><span class="lgs"><i class="lg rdy"></i>READY</span><span class="lgs"><i class="lg chg"></i>NOT READY</span><span class="lgs"><i class="lg off"></i>OFF</span><span class="lgb"><i class="lg tme"></i>YOUR TURRET</span><span class="lgb"><i class="lg tcr"></i>CREWED</span></div>
      </div>
      <div class="panel cut gunneronly">
-      <div class="ph">TURRET · GUNNER<span class="r" id="gunWhere">Marauder · top turret</span></div>
+      <div class="ph">TURRET · GUNNER<span class="r" id="gunWhere"></span></div>
       <div class="wl" id="gunlist"></div>
       <div class="fbars" style="margin-top:6px">
-       <div><div class="kv">DECOYS <b>48</b></div><div class="bar"><i style="width:80%"></i></div></div>
-       <div><div class="kv">NOISE <b>5</b></div><div class="bar a"><i style="width:50%"></i></div></div>
-       <div><div class="kv">NIGHT VIS <b id="nvt">off</b></div><div class="bar"><i id="nvb" style="width:0%"></i></div></div>
+       <div><div class="kv">DECOYS <b id="gDec">—</b></div><div class="bar"><i id="gDecb" style="width:0"></i></div></div>
+       <div><div class="kv">NOISE <b id="gNoi">—</b></div><div class="bar a"><i id="gNoib" style="width:0"></i></div></div>
       </div>
      </div>
      <div class="panel cut flight pilotonly"><svg id="hudsvg" viewBox="0 0 300 772" preserveAspectRatio="xMidYMid meet"></svg>
-      <div class="ph">FLIGHT<span class="r"><span id="mode">SCM</span><span class="unit" id="spool"></span></span></div>
+      <div class="ph">FLIGHT<span class="r"><span id="mode">—</span><span class="unit" id="spool"></span></span></div>
       <div class="spdo"><svg id="spdo" viewBox="0 0 220 136" preserveAspectRatio="xMidYMid meet"></svg>
-       <div class="spdc"><span class="big" id="spd">370</span><span class="unit">m/s</span><div class="vsi na" id="vsi">VSI —</div></div></div>
+       <div class="spdc"><span class="big" id="spd">—</span><span class="unit">m/s</span><div class="vsi na" id="vsi">VSI —</div></div></div>
       <div class="spdl" id="spdl"></div>
       <div class="fstate" id="fstate"></div>
       <div class="hdg" id="hdg"></div>
       <div class="fgrid">
        <div class="kv">ALT <b id="alt">—</b></div><div class="kv">G <b><span id="g">—</span><span class="unit" id="gmax"></span></b></div>
-       <div class="kv">GROUND <b id="agl">—</b></div><div class="kv">AIR <b id="atm">vacuum</b></div>
+       <div class="kv">GROUND <b id="agl">—</b></div><div class="kv">AIR <b id="atm">—</b></div>
       </div>
       <div class="fbars">
        <div><div class="kv">H₂ <b id="h2t">—</b></div><div class="bar"><i id="h2" style="width:0"></i></div></div>
-       <div><div class="kv">QT <b>100%</b></div><div class="bar"><i style="width:100%"></i></div></div>
-       <div><div class="kv">BOOST <b id="bst">8%</b></div><div class="bar a"><i id="bstb" style="width:8%"></i></div></div>
+       <div><div class="kv">QT <b id="qtt">—</b></div><div class="bar"><i id="qtb" style="width:0"></i></div></div>
+       <div><div class="kv">BOOST <b id="bst">—</b></div><div class="bar a"><i id="bstb" style="width:0"></i></div></div>
       </div>
       <div class="ph sub">IFCS<span class="r unit">lit = active · outline = on</span></div>
       <div class="pchips" id="ifcs"></div>
@@ -1371,9 +1370,9 @@ SLATE_BODY = r"""
       <div class="o2ring" id="o2ring"></div>
       <div>
        <div class="unit">OXYGEN · EVA</div>
-       <div class="o2big" id="o2v">63%</div>
-       <div class="o2left">about <b id="o2t">14 min</b> left at this rate</div>
-       <div class="unit" style="margin-top:4px">In space · no air · 0.0 g</div>
+       <div class="o2big" id="o2v">—</div>
+       <div class="o2left">about <b id="o2t">—</b> left at this rate</div>
+       <div class="unit" style="margin-top:4px" id="o2env"></div>
       </div>
      </div>
      <div class="panel cut loadcard">
@@ -1485,7 +1484,7 @@ SLATE_BODY = r"""
    <div class="panel cut list pplships scrolls" id="pplShips"></div>
    <div class="panel cut list">
     <div class="ph">THIS SESSION<span class="r">from Vehicle Destroyed and Actor Death</span></div>
-    <div class="stiles pplsess"><div class="stile"><span class="sti"><svg class="ic"><use href="#i-kill"/></svg></span><span class="stl">SHIPS DESTROYED</span><b id="pDst">0</b></div><div class="stile"><span class="sti"><svg class="ic"><use href="#i-skull"/></svg></span><span class="stl">DEATHS</span><b id="pDead">0</b></div><div class="stile"><span class="sti"><svg class="ic"><use href="#i-downed"/></svg></span><span class="stl">DOWNED</span><b id="pDown">0</b></div></div>
+    <div class="stiles pplsess"><div class="stile"><span class="sti"><svg class="ic"><use href="#i-kill"/></svg></span><span class="stl">SHIPS DESTROYED</span><b id="pDst">—</b></div><div class="stile"><span class="sti"><svg class="ic"><use href="#i-skull"/></svg></span><span class="stl">DEATHS</span><b id="pDead">—</b></div><div class="stile"><span class="sti"><svg class="ic"><use href="#i-downed"/></svg></span><span class="stl">DOWNED</span><b id="pDown">—</b></div></div>
    </div>
   </section>
 
@@ -1550,7 +1549,7 @@ function gunList(){
  const g=weapons;
  const grp={};g.forEach(w=>{const k=w[0]+'|'+w[1];(grp[k]=grp[k]||{n:w[0],s:w[1],c:0,r:0}).c++;if(w[3])grp[k].r++});
  $('#gunlist').innerHTML=Object.values(grp).map(x=>`<div class="row" style="display:flex;gap:8px;align-items:center;padding:5px 0;border-bottom:1px solid rgba(31,76,94,.4)"><span class="dot ${x.r===x.c?'':'a'}"></span>${x.c>1?x.c+' × ':''}${x.n} <span class="tag">${x.s}</span><span class="unit" style="margin-left:auto">${x.r===x.c?(x.c>1?'all ready':'ready'):x.r+' ready · '+(x.c-x.r)+' charging'}</span></div>`).join('');
- const nv=STATE.nv; $('#nvt').textContent=nv?'on':'off'; $('#nvb').style.width=nv?'100%':'0%';
+
 }
 /* ---- on foot / EVA: body card and suit cluster (actor telemetry + Game.log loadout) ---- */
 function footEnv(){const e=MODEL.env,v=MODEL.vitals;return {breath:e.breathable!==false,temp:e.temp==null?0:Math.round(e.temp),press:v.pressure==null?0:+v.pressure.toFixed(2),grav:v.gravity==null?0:v.gravity}}
@@ -1598,8 +1597,8 @@ function suitHud(){const el=document.getElementById('suitsvg');if(!el||!el.getCl
  for(let p=0;p<=100;p+=5){const a=ang(p),mj=p%25===0,[x0,y0]=P(cx,cy,R0-8,a),[x1,y1]=P(cx,cy,R0-(mj?20:14),a);o+=NS('line',{x1:x0,y1:y0,x2:x1,y2:y1,stroke:mj?C.hi:C.c2,'stroke-width':mj?1.6:1});if(mj){const[lx,ly]=P(cx,cy,R0-32,a);o+=T(lx,ly+3.5,p,{s:9,m:1})}}
  for(const[p,l,c] of [[10,'CRIT',C.r],[25,'LOW',C.a]]){const a=ang(p),[x0,y0]=P(cx,cy,R0+6,a),[x1,y1]=P(cx,cy,R0-6,a),[lx,ly]=P(cx,cy,R0+20,a);o+=NS('line',{x1:x0,y1:y0,x2:x1,y2:y1,stroke:c,'stroke-width':2.5})+T(lx,ly+3,l,{f:c,s:8.5,w:700})}
  {const[nx,ny]=P(cx,cy,R0-4,ang(V)),[bx,by]=P(cx,cy,-14,ang(V));o+=`<line x1="${bx.toFixed(1)}" y1="${by.toFixed(1)}" x2="${nx.toFixed(1)}" y2="${ny.toFixed(1)}" stroke="${C.hi}" stroke-width="3" stroke-linecap="round" ${glow(C.c)}/>`+NS('circle',{cx,cy,r:5,fill:'#0b2430',stroke:C.c,'stroke-width':2})}
- const mins=Math.max(1,Math.round(V/4.5));
- o+=T(cx,cy-36,'O₂',{s:10,ls:'.16em'})+T(cx,cy+60,V,{f:C.hi,s:34,w:700,m:1})+T(cx,cy+78,'% suit oxygen',{s:9,ls:'.16em'})+T(cx,cy+100,eva?`≈ ${mins} min left at this rate`:'',{s:9,f:eva?(V<=25?C.r:C.a):C.dim});
+ const mins=o2Mins();
+ o+=T(cx,cy-36,'O₂',{s:10,ls:'.16em'})+T(cx,cy+60,V,{f:C.hi,s:34,w:700,m:1})+T(cx,cy+78,'% suit oxygen',{s:9,ls:'.16em'})+T(cx,cy+100,eva&&mins!=null?`≈ ${mins} min left at this rate`:'',{s:9,f:eva?(V<=25?C.r:C.a):C.dim});
  // outside
  const Y1=272+GP;o+=NS('line',{x1:6,y1:Y1,x2:294,y2:Y1,stroke:C.line})+T(6,Y1+16,'OUTSIDE',{a:'start',s:9,ls:'.16em'})+T(294,Y1+16,E.breath?'breathable':eva?'vacuum':'no air',{a:'end',s:9,f:E.breath?C.g:C.a});
  const tin=R.tmin==null||E.temp==null||E.temp>=R.tmin&&E.temp<=R.tmax,z=t=>fr(t,-250,150);
@@ -1630,20 +1629,20 @@ function o2(){
  if(seat!=='eva')return; const p=63, C=2*Math.PI*44, off=C*(1-p/100);
  $('#o2ring').innerHTML=`<svg viewBox="0 0 100 100" width="120" height="120"><circle cx="50" cy="50" r="44" fill="none" stroke="#0f2a33" stroke-width="8"/><circle cx="50" cy="50" r="44" fill="none" stroke="#ffb347" stroke-width="8" stroke-linecap="round" stroke-dasharray="${C}" stroke-dashoffset="${off}" transform="rotate(-90 50 50)"/><g transform="translate(32 32)"><svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#ffb347" stroke-width="1.6" stroke-linecap="round"><use href="#v-o2"/></svg></g></svg>`;
 }
-function ring(id,label,pct,val,col,extra=''){
- const C=2*Math.PI*22, off=C*(1-Math.max(0,Math.min(1,pct)));
+function ring(id,label,pct,val,col,extra=''){if(/NaN/.test(String(val)))val='—';
+ const C=2*Math.PI*22, off=C*(1-(isFinite(pct)?Math.max(0,Math.min(1,pct)):0));
  return `<div class="ring"><svg class="g" viewBox="0 0 56 56"><circle class="trk" cx="28" cy="28" r="22"/><circle class="arc" cx="28" cy="28" r="22" stroke="${col}" stroke-dasharray="${C}" stroke-dashoffset="${off}"/><g transform="translate(16 16)"><svg class="ico ${extra}" width="24" height="24" viewBox="0 0 24 24" stroke="${col}"><use href="#${id}"/></svg></g></svg><div class="val">${val}</div><div class="lab">${label}</div></div>`;
 }
 const lvl=p=>p<30?'#ff5468':p<55?'#ffb347':'#5be69a';
 /* vitals as readout + scale boxes, the FLIGHT cluster's box in HTML */
 const ZR='#4a1018',ZA='#3a2e10',ZT='#12404d';
-function vbox(lab,val,unit,col,frac,zones,cls=''){const z=zones.map(([a,b,c])=>`<em style="left:${a*100}%;width:${(b-a)*100}%;background:${c}"></em>`).join('');
+function vbox(lab,val,unit,col,frac,zones,cls=''){if(val==null||/NaN/.test(String(val))){val='—';frac=null}const z=zones.map(([a,b,c])=>`<em style="left:${a*100}%;width:${(b-a)*100}%;background:${c}"></em>`).join('');
  return `<div class="vbox ${cls}"><span class="vl">${lab}</span><span class="vv"><b style="color:${col}">${val}</b><small>${unit}</small></span><i class="vs">${z}${frac==null?'':`<u style="left:${Math.max(0,Math.min(1,frac))*100}%"></u>`}</i></div>`}
 function vitBox(k,o={}){const v=VIT(),fr=(x,a,b)=>(x-a)/(b-a),eva=seat==='eva';
  const cOf=(p,lo,mid)=>p<lo?'#ff5468':p<mid?'#ffb347':'#eafcff';
  switch(k){
   case 'hp':return vbox('HEALTH',v.hp,'%',cOf(v.hp,40,60),v.hp/100,[[0,.4,ZR],[.4,.6,ZA],[.6,1,ZT]]);
-  case 'o2':{const m=Math.max(1,Math.round(v.o2/4.5));return vbox('O₂',v.o2,eva?`% · ${m} min`:'%',v.o2<=10?'#ff5468':v.o2<=25||eva?'#ffb347':'#eafcff',v.o2/100,[[0,.1,ZR],[.1,.25,ZA],[.25,1,ZT]],o.cls)}
+  case 'o2':{const m=o2Mins();return vbox('O₂',v.o2,eva&&m!=null?`% · ${m} min`:'%',v.o2<=10?'#ff5468':v.o2<=25||eva?'#ffb347':'#eafcff',v.o2/100,[[0,.1,ZR],[.1,.25,ZA],[.25,1,ZT]],o.cls)}
   case 'food':return vbox('FOOD',v.food,'%',cOf(v.food,20,45),v.food/100,[[0,.2,ZR],[.2,.45,ZA],[.45,1,ZT]]);
   case 'water':return vbox('WATER',v.water,'%',cOf(v.water,20,45),v.water/100,[[0,.2,ZR],[.2,.45,ZA],[.45,1,ZT]]);
   case 'temp':return vbox('BODY',v.temp,'°C',v.temp<35.5||v.temp>38.5?'#ffb347':'#eafcff',fr(v.temp,34,40),[[0,.25,ZA],[.25,.75,ZT],[.75,1,ZR]]);
@@ -1968,7 +1967,7 @@ function hud(){const el=document.getElementById('hudsvg');if(!el||!el.getClientR
  const glow=c=>`style="filter:drop-shadow(0 0 4px ${c})"`;
  const[SCM,BST,NAV]=SPDS(),V=SNOW,H=Math.round(((HDG%360)+360)%360),MF=MODEL.flight,BOOST=(MF.boost||{}).reserves==null?null:MF.boost.reserves/100,FV={alt:MF.alt==null?null:Math.round(MF.alt/1000),vsi:MF.vsi==null?null:Math.round(MF.vsi)};
  let o=`<defs><linearGradient id="hTank" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#0a2a33"/><stop offset=".5" stop-color="#103a46"/><stop offset="1" stop-color="#0a2a33"/></linearGradient><radialGradient id="hFace"><stop offset="0" stop-color="#0b2430"/><stop offset="1" stop-color="#061219"/></radialGradient></defs>`;
- o+=T(6,14,'FLIGHT',{a:'start',s:10,ls:'.18em'})+NS('rect',{x:238,y:3,width:58,height:15,fill:'#0f2f3a',stroke:C.c})+T(267,14,STATE.master==='nav'?'NAV':'SCM',{f:C.c,w:700,s:10});
+ o+=T(6,14,'FLIGHT',{a:'start',s:10,ls:'.18em'})+NS('rect',{x:238,y:3,width:58,height:15,fill:'#0f2f3a',stroke:C.c})+T(267,14,STATE.master?STATE.master.toUpperCase():'—',{f:C.c,w:700,s:10});
  o+=NS('rect',{x:6,y:26,width:288,height:34,fill:C.bg,stroke:C.line});
  for(let dd=Math.ceil((H-60)/5)*5;dd<=H+60;dd+=5){const x=150+(dd-H)*2.3;if(x<10||x>290)continue;const d=((dd%360)+360)%360,maj=d%15===0;o+=NS('line',{x1:x,y1:60,x2:x,y2:maj?50:55,stroke:maj?C.c:C.c2});
   if(maj&&Math.abs(x-150)>22){const L={0:'N',90:'E',180:'S',270:'W'};o+=T(x,44,L[d]??String(d).padStart(3,'0'),{f:L[d]!=null?C.a:C.dim,s:10})}}
@@ -2003,7 +2002,7 @@ function hud(){const el=document.getElementById('hudsvg');if(!el||!el.getClientR
  o+=grid(154,YL,'POWER',PW.map(([n,k,tt])=>[n,A[k]==='maj'?'bad':A[k]==='min'?'warn':'on',tt]));
  const E=envData(),[vcl,vtx]=envVerdict(E),RT=suitRating(true);
  o+=NS('line',{x1:6,y1:YO,x2:294,y2:YO,stroke:C.line})+T(6,YO+16,'OUTSIDE',{a:'start',s:9,ls:'.18em'});
- o+=box(6,YO+24,92,'TEMP',E.temp==null?'—':String(E.temp).replace('-','−'),`°C · suit ${RT.tmin}`,E.temp==null?C.mute:E.temp<RT.tmin||E.temp>RT.tmax?C.r:C.g,{v:E.temp==null?null:fr(E.temp,-100,100),z:[[0,fr(RT.tmin,-100,100),'#2a1d40'],[fr(RT.tmin,-100,100),fr(RT.tmax,-100,100),'#173d2a'],[fr(RT.tmax,-100,100),1,'#4a1018']]})
+ o+=box(6,YO+24,92,'TEMP',E.temp==null?'—':String(E.temp).replace('-','−'),(RT.tmin==null?'°C':`°C · suit ${RT.tmin}`),E.temp==null?C.mute:E.temp<RT.tmin||E.temp>RT.tmax?C.r:C.g,{v:E.temp==null?null:fr(E.temp,-100,100),z:[[0,fr(RT.tmin,-100,100),'#2a1d40'],[fr(RT.tmin,-100,100),fr(RT.tmax,-100,100),'#173d2a'],[fr(RT.tmax,-100,100),1,'#4a1018']]})
   +box(104,YO+24,92,'PRESS',E.press.toFixed(2),'atm',E.press<.5?C.r:C.hi,{v:fr(E.press,0,2),z:[[0,.25,'#4a1018'],[.25,1,'#12404d']]});
  const lb=(x,y,t,c,lit)=>`<rect x="${x}" y="${y}" width="90" height="19" fill="${lit?c+'33':'#0a161b'}" stroke="${lit?c:C.line}" ${lit?glow(c):''}/>`+T(x+45,y+13.5,t,{f:lit?c:C.mute,s:9,w:700,ls:'.12em'});
  o+=lb(204,YO+24,E.breath?'AIR OK':'NO AIR',E.breath?C.g:C.r,true)+lb(204,YO+46,vcl==='ok'?'HELMET OFF OK':'HELMET ON',vcl==='ok'?C.g:vcl==='warn'?C.a:C.r,true)+lb(204,YO+68,E.rad>.5?'RADIATION':'RAD',E.rad>.5?C.r:C.g,E.rad>.5)+T(249,YO+102,E.grav.toFixed(1)+' g',{s:9});
@@ -2600,7 +2599,7 @@ function drawMap(){
  if(mapView===HERE.sys&&hereE){
   rows+=MISSIONS.map(m=>{const d=mDist(m);return `<div class="dr dm ${m.n===pinned?'on':''}" data-pin="${m.n}"><span class="mnum s">${m.n}</span><span class="dmn">${esc(m.place?shortPlace(m.place[1]):'no location')}</span><b>${d!=null?d+' Gm':m.place?SYSN[m.place[0]][0]+SYSN[m.place[0]].slice(1).toLowerCase():'—'}</b></div>`}).join('')+`<div class="dh" style="margin-top:8px">PLANETS</div>`;
   rows+=(STARMAP[mapView]).filter(r=>r[1]==='planet').map(r=>[r,gm(r,hereE)]).sort((x,y)=>x[1]-y[1]).map(([r,g])=>`<div class="dr"><span class="sw" style="background:${PCOL[r[0]]||'#7a8a96'}"></span>${esc(r[0])}<b>${Math.round(g)} Gm</b></div>`).join('');
-  rows+=`<div class="dr dzone"><span class="zoneU" id="zoneTxt">${combat?'Ungoverned':'Armistice'}</span><span class="mute">&nbsp;· ${esc(HERE.name)}</span></div>`;
+  rows+=`<div class="dr dzone"><span class="${(MODEL.log||{}).armistice?'zoneA':'zoneU'}" id="zoneTxt">${esc(zoneLabel())}</span><span class="mute">&nbsp;· ${esc(HERE.name)}</span></div>`;
  }else{
   rows=MISSIONS.filter(m=>m.place&&m.place[0]===mapView).map(m=>`<div class="dr dm ${m.n===pinned?'on':''}" data-pin="${m.n}"><span class="mnum s">${m.n}</span><span class="dmn">${esc(shortPlace(m.place[1]))}</span></div>`).join('')+`<div class="dr mute">You are in ${SYSN[HERE.sys][0]+SYSN[HERE.sys].slice(1).toLowerCase()}</div>`+(STARMAP[mapView]).filter(r=>r[1]==='gate').map(r=>`<div class="dr"><span class="sw" style="background:#b58cff"></span>${esc(r[0])}</div>`).join('');
  }
@@ -2687,19 +2686,7 @@ function damage(){
  else{hdr.innerHTML=hdr.dataset.orig+(combat&&pinMap?'':'');
   if(combat&&pinMap){const r=hdr.querySelector('.r');r.innerHTML='<button class="mapbtn" id="dmgBack">DAMAGE</button>';$('#dmgBack').onclick=()=>{pinMap=false;render()}}
   hdr.querySelectorAll('.mapmodes button').forEach(b=>b.onclick=()=>{hdr.querySelectorAll('.mapmodes button').forEach(x=>x.classList.toggle('on',x===b));$('#mapSys').style.display=b.dataset.z==='sys'?'':'none';$('#mapLoc').style.display=b.dataset.z==='loc'?'':'none'})}
- if(!fight){el.innerHTML='';return}
- const f={F:18,R:84,L:79,B:62}, worstFace=Object.entries(f).sort((a,b)=>a[1]-b[1])[0];
- const faceName={F:'front',R:'right',L:'left',B:'rear'};
- const rows=[
-  ...(((SH().caps||{}).sys||{}).faces==='Quadrant'?[['maj','i-shield','SHIELDS',faceName[worstFace[0]]+' face · total 61%',worstFace[1],worstFace[1]+'%']]:[['maj','i-shield','SHIELDS','bubble',61,'61%']]),
-  ['min','s-core','HULL','below 70%',62,'62%'],
-  ['min','i-gear','THRUSTERS','warning light',null,'—'],
- ];
- const MAXR=4, shown=rows.slice(0,MAXR), more=rows.length-shown.length;
- el.innerHTML=shown.map(r=>`<div class="drow ${r[0]}" data-go="sys"><div class="dic">${ic(r[1])}</div><div class="dtx"><span class="dnl"><span class="dn">${r[2]}</span><span class="dsev">${r[0]==='maj'?'CRITICAL':'WARNING'}</span></span><span class="dd">${r[3]}</span></div><div class="dval"><b>${r[5]}</b>${r[4]!=null?`<div class="dbar"><i style="width:${r[4]}%"></i></div>`:''}</div></div>`).join('')+
-  (more?`<div class="dmore" data-go="sys">+${more} more on SYS ▸</div>`:'')+
-  `<div class="dguns" data-guns>${gunsInner()}</div>
-   <div class="dfoot"><span class="dok">${ic('i-ready','ic sm')} Power · cooling · weapons · radar OK <span class="unit">· quantum off</span></span><span class="dloc">${ic('t-nav','ic sm')} ${esc((MODEL.log||{}).place||'')}</span></div>`;
+ el.innerHTML='';
 }
 let render=function(){applyShip();ann();cviewSync();document.body.classList.toggle('bigship',bigShip);threat();ann();damage();msnRender();drawMap();defense();pips();deckRender();needs_();feed_();rings();sys();fig();gunList();o2();loadout();phoneRender();bodyCard();lastShipSil();suitHud();trimDist();fitThreat();placeTicker();};
 
@@ -2712,7 +2699,11 @@ function api(p){const u=new URL(p,location.href);if(KEY)u.searchParams.set('k',K
 function shipNameOf(c){const x=ALLSHIPS.find(a=>a.class===c)||(SHIPS[c]&&SHIPS[c].caps);return x&&x.name?x.name:String(c||'').replace(/_\d+$/,'').replace(/^[A-Z]{3,4}_/,'').replace(/_/g,' ')}
 function killRows(n){return(((MODEL.log||{}).kills)||[]).slice(-n).reverse()}
 function mtypeOf(n){n=String(n||'');return /bounty/i.test(n)?'bounty':/haul|cargo/i.test(n)?'haul':/deliver/i.test(n)?'delivery':/mining|mine /i.test(n)?'mining':/salvage|recover/i.test(n)?'recover':/eliminate|defend|kill|patrol/i.test(n)?'combat':'contract'}
-let PLACES=[],MAPSET=false;
+let PLACES=[],MAPSET=false,O2H=[],CMMAX={decoy:0,noise:0};
+function zoneLabel(){const G=MODEL.log||{};return G.armistice===true?'Armistice':G.jurisdiction?String(G.jurisdiction):G.armistice===false?'No armistice':''}
+/* minutes of suit O2 left, from the drop over the last 90 s on EVA; null until it is measurable */
+function o2Mins(){if(O2H.length<2)return null;const a=O2H[0],b=O2H[O2H.length-1],drop=a[1]-b[1],min=(b[0]-a[0])/60000;
+ if(drop<=0.2||min<0.25)return null;return Math.max(0,Math.round(b[1]/(drop/min)))}
 const T0=Date.now();let WAL0=null,FLOWN=0,LASTT=0;const SESS={downed:0,dead:0,respawn:0,seat:0},SEEN=new Set();
 /* the recorder keeps the last 50 events: count each one once, by time and type */
 function countEvents(evs){(evs||[]).forEach(e=>{const k=e.t+'|'+e.type;if(SEEN.has(k))return;SEEN.add(k);const t=String(e.type||'');
@@ -2761,6 +2752,14 @@ function applyModel(){const M=MODEL,f=M.flight;
  const hb=$('#h2');if(hb)hb.style.width=(f.h2||0)+'%';sx('navJur',G.jurisdiction||'—');sx('navZone',G.armistice===true?'Armistice':G.armistice===false?'Outside armistice':'—');
  /* last ship: the values seen while seated, kept once you leave the seat */
  if(M.ship){const SFl=M.shields||{};Object.assign(LASTSHIP,{seen:true,hull:M.hull,sh:SFl.bubble!=null?Math.round(SFl.bubble):SFl.faces?Math.round(SFl.faces.reduce((a,b)=>a+b,0)/SFl.faces.length):null,h2:f.h2==null?null:Math.round(f.h2),qt:f.qt==null?null:Math.round(f.qt)})}
+ const pctv=v=>v==null?'—':Math.round(v)+'%',bar=(id,p)=>{const e=$('#'+id);if(e)e.style.width=(p==null?0:Math.max(0,Math.min(100,p)))+'%'};
+ sx('qtt',pctv(f.qt));bar('qtb',f.qt);const br=(f.boost||{}).reserves;sx('bst',pctv(br));bar('bstb',br);
+ ['decoy','noise'].forEach(k=>{if(M.cm[k]!=null)CMMAX[k]=Math.max(CMMAX[k],M.cm[k])});
+ sx('gDec',M.cm.decoy==null?'—':String(M.cm.decoy));bar('gDecb',M.cm.decoy==null||!CMMAX.decoy?null:100*M.cm.decoy/CMMAX.decoy);
+ sx('gNoi',M.cm.noise==null?'—':String(M.cm.noise));bar('gNoib',M.cm.noise==null||!CMMAX.noise?null:100*M.cm.noise/CMMAX.noise);
+ const vo=M.vitals.o2;if(seat==='eva'&&vo!=null){O2H.push([Date.now(),vo]);while(O2H.length&&Date.now()-O2H[0][0]>90000)O2H.shift()}else O2H=[];
+ sx('o2v',pctv(vo));const om=o2Mins();sx('o2t',om==null?'—':om+' min');
+ sx('o2env',[seat==='eva'?'EVA':'',M.env.breathable===false?'no air':M.env.breathable?'air':'',M.vitals.gravity!=null?M.vitals.gravity.toFixed(1)+' g':''].filter(Boolean).join(' · '));
  const pc=v=>v==null?'—':v+'%';sx('lsHull',pc(LASTSHIP.hull));sx('lsSh',pc(LASTSHIP.sh));sx('lsH2',pc(LASTSHIP.h2));sx('lsQt',pc(LASTSHIP.qt));
  /* this session: since the page opened */
  const now=Date.now();if(M.live&&M.ship&&LASTT)FLOWN+=(f.speed||0)*Math.min(5,(now-LASTT)/1000);LASTT=now;
@@ -2773,14 +2772,15 @@ function applyModel(){const M=MODEL,f=M.flight;
  const nr=$('#mainNear');if(nr){const k=killRows(2);nr.innerHTML=k.length?k.map(x=>`<div class="line unit">${esc(x.killer||'Unknown')} destroyed a ${esc(shipNameOf(x.cls))} · ${agoMin(x.t)}</div>`).join(''):'<div class="line unit">No ships destroyed nearby</div>'}
 }
 function applyWeapons(){if(MODEL.weapons&&MODEL.weapons.length)weapons=MODEL.weapons.map(w=>w.slice())}
-let LASTN=0,LASTR=0,LASTK='';
+let LASTN=0,LASTR=0,LASTK='',LASTSEQ=0,SEQOK=false;
 /* 4 polls a second while live: instruments every poll, the full redraw once a second or when the scene changes */
 async function poll(){let wait=2000,p=null;
  try{const r=await fetch(api('/api/telemetry/live'),{credentials:'same-origin',cache:'no-store'});if(r.ok)p=await r.json()}catch(e){}
  try{MODEL=slateModel(p||{},SHIPS[shipK]?SH().caps:null);MODEL.names=(p&&p.names)||{};if(p)countEvents(p.events);
   const G=MODEL.log||{},n=(G.notices||[]).length;
   applyModel();
-  if(n>LASTN&&LASTN){const last=G.notices[n-1];unread++;toast(GICON[last.group]||'i-bell',last.group,last.text)}LASTN=n;
+  /* the log keeps the last 40 notices; seq counts every one, so new ones are seq - LASTSEQ (first poll is history) */
+  const sq=G.seq||0;if(p&&p.log){if(SEQOK&&sq>LASTSEQ)G.notices.slice(-Math.min(3,sq-LASTSEQ,n)).forEach(x=>{unread++;toast(GICON[x.group]||'i-bell',x.group,x.text)});LASTSEQ=sq;SEQOK=true}
   wait=MODEL.live?250:2000;
   const wp=$('#waitPanel');if(wp){wp.hidden=MODEL.live;wp.querySelector('b').textContent=MODEL.wait}
   const k=[MODEL.live,seat,shipK,combat,!!SHIPS[shipK],n,(G.contracts||[]).length,(G.kills||[]).length,G.place].join('|');

@@ -35,7 +35,7 @@ class StateTests(unittest.TestCase):
     def test_empty_state_keys(self):
         st = self.s.state()
         self.assertEqual(set(st), {"place", "jurisdiction", "armistice", "notices", "contracts", "kills",
-                                   "injuries", "loadout", "blueprints"})
+                                   "injuries", "loadout", "blueprints", "seq"})
         self.assertEqual(st["notices"], [])
         self.assertEqual(st["blueprints"], 0)
 
@@ -92,6 +92,28 @@ class StateTests(unittest.TestCase):
     def test_blueprint(self):
         self.s.feed(TS + 'Added notification "Received Blueprint: P4-AR Rifle: " [7]', 1)
         self.assertEqual(self.s.state()["blueprints"], 1)
+
+    def test_blueprint_lines_of_one_receipt_count_once(self):
+        name = 'Atzkav "Mirage" Sniper Rifle'
+        for form in (f'Added notification "Received Blueprint: {name}: " [9] to queue.',
+                     f'<UpdateNotificationItem> Notification "Received Blueprint: {name}: " [9], Action: Next',
+                     f'<UpdateNotificationItem> Notification "Received Blueprint: {name}: " [9], Action: Remove'):
+            self.s.feed(TS + form, 1)
+        self.s.feed(TS + 'Added notification "Received Blueprint: P4-AR Rifle: " [10] to queue.', 1)
+        self.assertEqual(self.s.state()["blueprints"], 2)
+        self.s.reset()
+        self.s.feed(TS + f'Added notification "Received Blueprint: {name}: " [9] to queue.', 1)
+        self.assertEqual(self.s.state()["blueprints"], 1)
+
+    def test_notice_seq_keeps_counting_past_the_cap(self):
+        self.assertEqual(self.s.state()["seq"], 0)
+        for i in range(45):
+            self.s.feed(notif(f"Welcome {i}"), 2)
+        st = self.s.state()
+        self.assertEqual(len(st["notices"]), 40)
+        self.assertEqual(st["seq"], 45)
+        self.s.reset()
+        self.assertEqual(self.s.state()["seq"], 0)
 
     def test_notice_groups_and_cap(self):
         texts = {"Moderate Injury Detected - Left Leg - Tier 2": "alert", "Contract Accepted: X": "msn",
