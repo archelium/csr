@@ -1,0 +1,201 @@
+#### FILE sc/game/telemetry/v1/types.proto bytes 7869
+package sc.game.telemetry.v1
+message Availability
+   1 enabled: bool
+   2 active: bool
+message Gauge
+   1 current: float
+   2 max: float
+message VehicleDoorState
+   1 open_state: VehicleDoorState.DoorOpenState
+   2 lock_state: VehicleDoorState.DoorLockState
+  enum DoorOpenState: DOOR_OPEN_STATE_UNSPECIFIED=0, DOOR_OPEN_STATE_OPENED=1, DOOR_OPEN_STATE_CLOSED=2
+  enum DoorLockState: DOOR_LOCK_STATE_UNSPECIFIED=0, DOOR_LOCK_STATE_UNLOCKED=1, DOOR_LOCK_STATE_LOCKED=2
+message VehicleFlightSettings
+   1 ifcs_coupled: Availability
+   2 ifcs_esp: Availability
+   3 ifcs_gravity_compensation: Availability
+   4 ifcs_g_safe: Availability
+   5 ifcs_cruise_mode: Availability
+   6 ifcs_spacebreak_enables_boost: bool
+   7 ifcs_speed_limiter: Availability
+   8 ifcs_proximity_assist: Availability
+   9 ifcs_proximity_assist_landing: Availability
+  10 ifcs_stability: Availability
+  11 ifcs_core: Availability
+  12 advanced_hud_enabled_scm: bool
+  13 advanced_hud_enabled_nav: bool
+  14 advanced_hud_labels: bool
+  15 course_prediction: bool
+  16 ifcs_wind_compensation: Availability
+  17 ifcs_g_safe_disabled_by_boost: bool
+  18 ifcs_command_behaviour: Availability
+  19 flight_light_amplification: bool
+message VehicleFlightState
+   1 is_landed: bool
+   2 gear: VehicleComponentDeploymentState optional
+   3 vtol: VehicleComponentDeploymentState optional
+   4 transformation: VehicleComponentDeploymentState optional
+message VehicleFlight
+   1 state: VehicleFlightState
+   2 settings: VehicleFlightSettings
+   3 instruments: VehicleFlightInstruments
+message VehicleFlightInstruments
+   1 speed: float
+   2 hydrogen_fuel: float
+   3 quantum_fuel: float
+   4 g_meter: Gauge optional
+   5 boost: VehicleThrusterBoost
+   6 altitude: float
+   7 radar_altitude: float
+   8 vertical_speed_indicator: float
+   9 atmospheric_density: float
+  10 heading: float
+message VehicleThrusterBoost
+   1 engaged: bool
+   2 output: float
+   3 reserves: float
+   4 critical: bool
+message VehiclePowerState
+   1 powerplants: bool
+   2 engines: bool
+   3 weapons: bool
+   4 coolers: bool
+   5 life_support: bool
+   6 gravity_generators: bool
+   7 sensors: bool
+   8 shield_generators: bool
+   9 shield_emitters: bool
+message VehicleAnnunciator
+   1 pwr: VehicleAnnunciator.AnnunciatorState
+   2 wpn: VehicleAnnunciator.AnnunciatorState
+   3 thr: VehicleAnnunciator.AnnunciatorState
+   4 shld: VehicleAnnunciator.AnnunciatorState
+   5 cool: VehicleAnnunciator.AnnunciatorState
+   6 qdrv: VehicleAnnunciator.AnnunciatorState
+   7 radr: VehicleAnnunciator.AnnunciatorState
+   8 prox: VehicleAnnunciator.AnnunciatorState
+   9 hit: VehicleAnnunciator.AnnunciatorState
+  10 misl: VehicleAnnunciator.AnnunciatorState
+  enum AnnunciatorState: ANNUNCIATOR_STATE_UNSPECIFIED=0, ANNUNCIATOR_STATE_NOMINAL=1, ANNUNCIATOR_STATE_OFF=2, ANNUNCIATOR_STATE_MINOR_FLASHING=3, ANNUNCIATOR_STATE_MINOR_ON=4, ANNUNCIATOR_STATE_MAJOR_FLASHING=5, ANNUNCIATOR_STATE_MAJOR_ON=6
+message VehicleShields
+   1 level: float
+   2 faces: repeated float
+message VehicleMasterModeState
+   1 mode: VehicleMasterMode
+   2 spooled: bool
+message VehicleState
+   1 name: string
+   2 class_name: string
+   3 manufacturer: string
+   4 type: VehicleType
+   5 lights_enabled: bool
+   6 doors: VehicleDoorState optional
+   7 annunciators: VehicleAnnunciator optional
+   8 flight: VehicleFlight optional
+   9 power: VehiclePowerState optional
+  10 shields: VehicleShields optional
+  11 health: float
+  12 master_mode: VehicleMasterModeState optional
+message VehicleFrame
+   2 state: VehicleState
+message WeaponsSettings
+   1 fallback_convergence_distance: bool
+   2 magnified_ui: bool
+   3 precision_lines: bool
+   4 staggered_fire: bool
+   5 use_lag_pips: bool
+   6 use_single_pips: bool
+   7 use_fading_pips: bool
+   8 gimbals_locked: bool
+message WeaponState
+   1 name: string
+   2 is_powered: bool
+   3 ready_to_fire: bool
+   4 contained_in_preset: bool
+message Countermeasures
+   1 type: Countermeasures.CountermeasureType
+   2 amount: uint32
+  enum CountermeasureType: COUNTERMEASURE_TYPE_UNSPECIFIED=0, COUNTERMEASURE_TYPE_DECOY=1, COUNTERMEASURE_TYPE_NOISE=2
+message WeaponsFrame
+   1 settings: WeaponsSettings
+   2 preset_index: uint32
+   3 preset_name: string
+   4 weapons: repeated WeaponState
+   5 countermeasures: repeated Countermeasures
+message GameEvent
+   1 type: GameEvent.GameEventType
+  enum GameEventType: GAME_EVENT_TYPE_UNSPECIFIED=0, GAME_EVENT_TYPE_ACTOR_SPAWN=1, GAME_EVENT_TYPE_ACTOR_DEAD=2, GAME_EVENT_TYPE_ACTOR_ENTER_SEAT=3, GAME_EVENT_TYPE_ACTOR_LEAVE_SEAT=4, GAME_EVENT_TYPE_ACTOR_RESPAWN=5, GAME_EVENT_TYPE_ACTOR_DOWNED=6
+message EventsFrame
+   1 events: repeated GameEvent
+message AxisFeedback
+   1 resistance: float
+   2 damping: float
+message FeedbackAxes
+   1 x: AxisFeedback
+   2 y: AxisFeedback
+   3 z: AxisFeedback
+message ForceFeedbackFrame
+   2 angular: FeedbackAxes
+   3 linear: FeedbackAxes
+   4 gunfire: float
+   5 stick_shaker: float
+message ActorVitals
+   1 health: Gauge
+   2 oxygen: Gauge
+   3 hunger: Gauge
+   4 thirst: Gauge
+   5 body_temperature: Gauge
+   7 heart_rate: float
+   8 gravity: float
+   9 pressure: float
+  10 intoxication_level: int32
+message ActorEnvironment
+   1 external_temperature: float
+   2 ambient_radiation_rate: float
+   3 breathable_atmosphere: bool
+message ActorState
+   1 locomotion: ActorLocomotionState
+   2 crew_role: ActorCrewRole
+   3 seat_name: string
+   4 uec_balance: int64
+message ActorFrame
+   1 vitals: ActorVitals
+   2 state: ActorState
+   3 environment: ActorEnvironment
+message TurretFrame
+   1 light_amplification: bool
+enum VehicleComponentDeploymentState: VEHICLE_COMPONENT_DEPLOYMENT_STATE_UNSPECIFIED=0, VEHICLE_COMPONENT_DEPLOYMENT_STATE_RETRACTED=1, VEHICLE_COMPONENT_DEPLOYMENT_STATE_DEPLOYING=2, VEHICLE_COMPONENT_DEPLOYMENT_STATE_DEPLOYED=3, VEHICLE_COMPONENT_DEPLOYMENT_STATE_RETRACTING=4
+enum VehicleType: VEHICLE_TYPE_UNSPECIFIED=0, VEHICLE_TYPE_SPACESHIP=1, VEHICLE_TYPE_GROUND=2, VEHICLE_TYPE_GRAVLEV=3, VEHICLE_TYPE_BOAT=4
+enum VehicleMasterMode: VEHICLE_MASTER_MODE_UNSPECIFIED=0, VEHICLE_MASTER_MODE_NAVIGATION=1, VEHICLE_MASTER_MODE_SCM=2, VEHICLE_MASTER_MODE_STEALTH=3
+enum ActorLocomotionState: ACTOR_LOCOMOTION_STATE_UNSPECIFIED=0, ACTOR_LOCOMOTION_STATE_ON_FOOT=1, ACTOR_LOCOMOTION_STATE_EVA=2, ACTOR_LOCOMOTION_STATE_SEATED=3
+enum ActorCrewRole: ACTOR_CREW_ROLE_UNSPECIFIED=0, ACTOR_CREW_ROLE_PILOT=1, ACTOR_CREW_ROLE_GUNNER=2, ACTOR_CREW_ROLE_CREW=3
+#### FILE sc/game/telemetry/v1/api.proto bytes 1650
+package sc.game.telemetry.v1
+import sc/game/telemetry/v1/types.proto
+message TelemetryStreamRequest
+message TelemetryStreamResponse
+   3 vehicle: VehicleFrame
+   4 weapons: WeaponsFrame
+   5 events: EventsFrame
+   6 actor: ActorFrame
+   7 force_feedback: ForceFeedbackFrame
+   8 turret: TurretFrame
+message TriggerGameActionRequest
+   1 action_name: string
+   2 hold_ms: uint32 optional
+message TriggerGameActionResponse
+   1 status: TriggerGameActionStatus
+   2 message: string
+message ListTriggerableActionsRequest
+message TriggerableAction
+   1 action_name: string
+   2 category: string
+   3 holdable: bool
+message ListTriggerableActionsResponse
+   1 actions: repeated TriggerableAction
+enum TriggerGameActionStatus: TRIGGER_GAME_ACTION_STATUS_UNSPECIFIED=0, TRIGGER_GAME_ACTION_STATUS_OK=1, TRIGGER_GAME_ACTION_STATUS_UNKNOWN_ACTION=2, TRIGGER_GAME_ACTION_STATUS_MAP_INACTIVE=3, TRIGGER_GAME_ACTION_STATUS_RATE_LIMITED=4, TRIGGER_GAME_ACTION_STATUS_FAILED=5, TRIGGER_GAME_ACTION_STATUS_HOLD_NOT_ALLOWED=6, TRIGGER_GAME_ACTION_STATUS_FILTERED=7
+service GameTelemetryService
+  rpc TelemetryStream .sc.game.telemetry.v1.TelemetryStreamRequest -> .sc.game.telemetry.v1.TelemetryStreamResponse (stream)
+  rpc TriggerGameAction .sc.game.telemetry.v1.TriggerGameActionRequest -> .sc.game.telemetry.v1.TriggerGameActionResponse 
+  rpc ListTriggerableActions .sc.game.telemetry.v1.ListTriggerableActionsRequest -> .sc.game.telemetry.v1.ListTriggerableActionsResponse 

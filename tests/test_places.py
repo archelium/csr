@@ -183,3 +183,24 @@ class AggregateTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class NamedInBracketsTests(unittest.TestCase):
+    """Tech Preview location codes that carry their own name (sc-patch-inc, Oct 2026)."""
+
+    def test_settlement(self):
+        self.assertEqual(sc_stats.place_name("cluster_ht_a_agriculture_l_002 (Green Dale)")[::2], ("Green Dale", "Outpost"))
+
+    def test_region(self):
+        self.assertEqual(sc_stats.place_name("sector_ht_a_frontier_004_swamp_OLD (Unified Autonomous Region)")[::2],
+                         ("Unified Autonomous Region", "Other"))
+
+    def test_hub_with_apostrophe(self):
+        self.assertEqual(sc_stats.place_name("location_ht_a_habitation_xl_hub_001 (Bamberg's Central)")[0], "Bamberg's Central")
+
+    def test_no_name_given(self):
+        self.assertEqual(sc_stats.place_name("location_ht_a_game_logic_s_003_closehub-067")[0], "Unnamed site closehub-067")
+
+    def test_old_codes_unchanged(self):
+        self.assertEqual(sc_stats.place_name("Stanton4_NewBabbage")[0], "New Babbage")
+        self.assertEqual(sc_stats.place_name("RR_JP_StantonMagnus")[0], "Nyx Gateway (Stanton)")

@@ -5,6 +5,61 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and CSR
 uses [Semantic Versioning](https://semver.org/) (MAJOR.MINOR.PATCH).
 
 
+## [2.0.0-beta] — 2026-11-25
+
+Telemetry and the Kestrel K-7 Flight Slate. Beta: telemetry is new and tested on
+LIVE 4.10 only.
+
+### Added
+- **Kestrel K-7 Flight Slate.** A live screen for a tablet or phone beside your keyboard.
+  Seated: speed, fuel, G, IFCS and power, weapons, countermeasures, warnings, shields and
+  hull. On foot and EVA: vitals, injuries, suit and loadout. Contracts, HUD notices, your
+  location and ships destroyed nearby from Game.log. Click **Kestrel K-7** at the top of
+  the sidebar for a QR code. **Open on this PC** shows it in a browser tab.
+- **Tablet & phone access.** Off by default. Turn it on from the Kestrel K-7 drawer or the
+  Telemetry settings for a QR code and a private link on port 7890-7899. Serves Kestrel
+  only, on your LAN only. Windows asks to allow CSR on the network the first time.
+- **Telemetry recording.** CSR records the game's own telemetry stream while you play:
+  wallet, flight, weapons, warnings, on-foot and seat state, survival. The game's
+  telemetry setting starts off. Click **Enable** in Backup & Transfer → Telemetry. It
+  adds `grpc.client.server.enabled = true` to your channel's user.cfg, with a `.csr-bak`
+  backup, and takes effect on the next game launch. CSR must be open while you play. One
+  CSR window records at a time.
+- **Career stats from telemetry.** Wallet on Economy. Flight records, How you fly and
+  Weapons on Flight & Travel. Warnings & countermeasures on Combat. On foot & in seat and
+  Survival on Activity. Cards show "From N of M sessions with telemetry".
+- **Detail and retention.** Full, Normal or Light (about 1.7, 0.4 and 0.1 MB per hour).
+  Keep recordings forever, 1 year, 3 months or 1 month. Pick which groups to record.
+- **Space limit.** Recordings stay under 1 GB by default (250 MB to 5 GB, or no limit).
+  Oldest go first. Career stats from them stay.
+- **CSR lives in the tray.** No console window. Its icon sits by the clock: click it for
+  the dashboard, right-click for Refresh logs, Start with Windows, Open log, Open data
+  folder and Quit. Crashes and disconnects show as Windows notifications.
+- **Start with Windows**, from the tray menu or the status light. CSR starts in the tray
+  at sign-in without opening a browser tab.
+- Starting CSR while it's already running opens the running one's dashboard.
+- **Pictures for 116 more blueprints**: ship components, guns, armour and flight suits.
+  Where the wiki has no picture, CSR loads one from [xparrow-lite](https://xparrow-lite.pages.dev),
+  a Star Citizen fan site, while you view the page. Nothing of theirs is stored.
+
+### Changed
+- **Top bar menus.** Backup & Transfer, Refresh Data, Alerts and the status menu have
+  a cleaner layout, larger text and shorter wording. Alerts and status open as a sheet on
+  narrow windows.
+- **Config saves are atomic.** CSR never overwrites a csr_config.json it can't read.
+- **CSR refuses requests from other websites.** Origin and Host are checked.
+- CSR's output goes to `CSR-data\csr.log`, the run before kept as `csr.log.1`. Open it
+  from the tray or the status light. `--console` shows it in a window instead.
+- CSR keeps running with no dashboard open. It used to quit after 15 minutes.
+- `CSR.exe` carries its name, version and publisher in Windows file details
+  (right-click → Properties → Details). Antivirus tools trust an exe with details more.
+
+### Fixed
+- Refresh Data cards were titled Export backup and Import / merge.
+- The alert bell's link to a crash opens Stability's Crashes page again.
+- Tech Preview places showed their raw code, like "cluster ht a agriculture l 002 (Green
+  Dale)". They now read Green Dale.
+
 ## [1.11.0] — 2026-11-24
 
 ### Added

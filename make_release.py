@@ -8,13 +8,14 @@ download bundle ships .txt. `Start Analyzer.bat` is intentionally not included.
 
 Run AFTER build_exe.bat:  python make_release.py
 """
+import hashlib
 import os
 import re
 import shutil
 import tempfile
 import zipfile
 
-VERSION = "1.11.0"
+VERSION = "2.0.0-beta"
 EXES = ["dist/CSR.exe"]
 DOCS = {"README.md": "README.txt", "PRIVACY.md": "PRIVACY.txt",
         "DISCLAIMER.md": "DISCLAIMER.txt", "LICENSE": "LICENSE.txt",
@@ -98,6 +99,16 @@ def main():
         pass
     shutil.rmtree(stage, ignore_errors=True)
     print(f"wrote {zpath}  ({', '.join(names)})")
+    # hashes for the release notes, and the VirusTotal pages to check before publishing
+    lines = []
+    for f in [x for x in EXES if os.path.isfile(x)] + [zpath]:
+        h = hashlib.sha256(open(f, "rb").read()).hexdigest()
+        lines.append(f"{h}  {os.path.basename(f)}")
+        print(f"sha256 {os.path.basename(f)}  {h}")
+        print(f"  VirusTotal: https://www.virustotal.com/gui/file/{h}")
+    with open(f"CSR-v{VERSION}.sha256.txt", "w", encoding="utf-8") as fh:
+        fh.writelines(ln + "\n" for ln in lines)
+    print(f"wrote CSR-v{VERSION}.sha256.txt")
 
 
 if __name__ == "__main__":

@@ -29,25 +29,38 @@ Usage:
 
 import argparse
 import glob
+import hmac
 import html
+import http.server
 import json
 import math
 import os
 import re
+import secrets
+import socket
 import sys
 import time
 import shutil
 import subprocess
+import tempfile
 import threading
+import urllib.parse
+import zipfile
 import webbrowser
 from collections import defaultdict, Counter, deque
 from datetime import datetime, timedelta, timezone
 
 import sc_names
+import sc_qr
+import sc_livelog
+import sc_slate
+import sc_slate_ships
+import sc_telemetry
+import sc_tlm_stats
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
-CSR_VERSION = "1.11.0"
+CSR_VERSION = "2.0.0-beta"
 CSR_CONTACT = "support@archelium.com"      # publisher/contact (archelium.com)
 # Bump whenever scan_log() learns to extract something new or fixes an extraction bug.
 # A quick refresh reuses archived sessions only when they were parsed by THIS version,
@@ -358,6 +371,37 @@ _PROGRESS = {"frac": 0.0, "phase": "idle", "done": 0, "total": 0}
 #  back on demand; everything it printed is still there when you show it again.
 # --------------------------------------------------------------------------- #
 _CONSOLE_HIDDEN = False
+# Where output goes when CSR has no console (the tray build): CSR-data\csr.log.
+_LOG = {"path": None}
+
+
+def route_output(want_console=False):
+    """The exe lives in the tray and has no console. Its output goes to csr.log in the
+    data folder, the last run's kept as csr.log.1. --console opens a console window
+    for it instead. Run from a terminal, nothing changes."""
+    if sys.stdout is not None and sys.stderr is not None:
+        return
+    if want_console and os.name == "nt":
+        try:
+            import ctypes
+            if ctypes.windll.kernel32.AllocConsole():
+                con = open("CONOUT$", "w", encoding="utf-8", errors="replace", buffering=1)
+                sys.stdout = sys.stderr = con
+                return
+        except Exception:
+            pass
+    try:
+        path = os.path.join(app_dir(), "csr.log")
+        if os.path.isfile(path):
+            try:
+                os.replace(path, path + ".1")
+            except OSError:
+                pass
+        f = open(path, "w", encoding="utf-8", errors="replace", buffering=1)
+        sys.stdout = sys.stderr = f
+        _LOG["path"] = path
+    except Exception:
+        sys.stdout = sys.stderr = open(os.devnull, "w")
 
 
 def _console_hwnd():
@@ -463,18 +507,455 @@ def config_path():
     return os.path.join(app_dir(), CONFIG_NAME)
 
 
+def _read_config_file(path):
+    """Parsed config file. A UTF-8 BOM is fine, an empty or blank file is {}."""
+    with open(path, encoding="utf-8-sig") as fh:
+        text = fh.read()
+    return json.loads(text) if text.strip() else {}
+
+
 def load_config():
     try:
-        return json.load(open(config_path(), encoding="utf-8"))
+        return _read_config_file(config_path())
     except Exception:
         return {}
 
 
 def save_config(cfg):
+    """Write the config through a temp file and os.replace, so a crash or a failed write
+    never leaves a half-written file. Returns True when saved."""
+    path = config_path()
+    tmp = "%s.%d.%d.tmp" % (path, os.getpid(), threading.get_ident())
     try:
-        json.dump(cfg, open(config_path(), "w", encoding="utf-8"), indent=2)
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(cfg, fh, indent=2)
+        os.replace(tmp, path)
+        return True
     except Exception as e:
         cerr(f"could not save config: {e}")
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        return False
+
+
+#: request threads and the telemetry recorder read and write the config concurrently
+_CONFIG_LOCK = threading.RLock()
+
+
+def _config_for_update():
+    """The saved config for a read-modify-write: {} when there is no file, None when the
+    file is there but can't be read as a JSON object. Saving over that would wipe it."""
+    path = config_path()
+    if not os.path.exists(path):
+        return {}
+    try:
+        cfg = _read_config_file(path)
+    except Exception:
+        return None
+    return cfg if isinstance(cfg, dict) else None
+
+
+def update_config(**kv):
+    """Merge top-level keys into the saved config and save it. Keys not named are kept.
+    Returns the saved config, or None when nothing was saved (unreadable file, failed
+    write)."""
+    with _CONFIG_LOCK:
+        cfg = _config_for_update()
+        if cfg is None:
+            cerr(f"{config_path()} is unreadable. Not overwriting it.")
+            return None
+        cfg.update(kv)
+        return cfg if save_config(cfg) else None
+
+
+def remember_folder(path):
+    """Save the linked StarCitizen folder without touching the rest of the config."""
+    return update_config(live_path=path)
+
+
+TLM_DEFAULTS = {"record": True, "detail": "normal", "keep_days": None, "max_mb": 1000,
+                "groups": sc_telemetry.DEFAULT_GROUPS, "phone": False, "phone_key": None}
+TLM_KEEP_DAYS = (None, 365, 90, 30)
+TLM_MAX_MB = (None, 5000, 2000, 1000, 500, 250)
+TLM_GROUP_NAMES = [g for g, _ in sc_telemetry.GROUPS] + ["other"]
+
+
+def tlm_settings():
+    """Telemetry settings: config "tlm" merged over TLM_DEFAULTS."""
+    with _CONFIG_LOCK:
+        saved = load_config().get("tlm")
+    out = {k: (list(v) if isinstance(v, list) else v) for k, v in TLM_DEFAULTS.items()}
+    if isinstance(saved, dict):
+        out.update(saved)
+    return out
+
+
+def save_tlm_settings(changes):
+    """Merge `changes` into config "tlm" and save. Other keys are kept. Returns the saved
+    config, or None when nothing was saved."""
+    with _CONFIG_LOCK:
+        cfg = _config_for_update()
+        if cfg is None:
+            cerr(f"{config_path()} is unreadable. Not overwriting it.")
+            return None
+        cur = cfg.get("tlm")
+        cur = cur if isinstance(cur, dict) else {}
+        return update_config(tlm={**cur, **changes})
+
+
+def validate_tlm_settings(body):
+    """(True, cleaned) for a settings POST body, (False, error message) otherwise.
+    Only record, detail, keep_days, max_mb, groups and phone are taken. Other keys are dropped."""
+    if not isinstance(body, dict):
+        return False, "Bad request."
+    out = {}
+    for key in ("record", "phone"):
+        if key in body:
+            if not isinstance(body[key], bool):
+                return False, f"{key} must be true or false."
+            out[key] = body[key]
+    if "detail" in body:
+        if body["detail"] not in sc_telemetry.DETAIL_SECONDS:
+            return False, "Unknown detail level."
+        out["detail"] = body["detail"]
+    if "keep_days" in body:
+        v = body["keep_days"]
+        if isinstance(v, bool) or v not in TLM_KEEP_DAYS:
+            return False, "Keep must be forever, 365, 90 or 30 days."
+        out["keep_days"] = v
+    if "max_mb" in body:
+        v = body["max_mb"]
+        if isinstance(v, bool) or v not in TLM_MAX_MB:
+            return False, "Space limit must be none, 5000, 2000, 1000, 500 or 250 MB."
+        out["max_mb"] = v
+    if "groups" in body:
+        g = body["groups"]
+        if not isinstance(g, list) or not all(isinstance(x, str) for x in g):
+            return False, "groups must be a list of names."
+        if not g:
+            return False, "Pick at least one group, or turn recording off."
+        bad = [x for x in g if x not in TLM_GROUP_NAMES]
+        if bad:
+            return False, f"Unknown group: {bad[0]}"
+        out["groups"] = list(dict.fromkeys(g))
+    return True, out
+
+
+def tlm_settings_reply(status, saved):
+    """Reply to a settings POST that was saved. A failing status() still reports the save
+    with the saved settings. `saved` is the config save_tlm_settings returned."""
+    try:
+        return {"ok": True, **status()}
+    except Exception:
+        tlm = (saved or {}).get("tlm")
+        s = {**TLM_DEFAULTS, **(tlm if isinstance(tlm, dict) else {})}
+        return {"ok": True, "settings": {k: v for k, v in s.items() if k != "phone_key"}}
+
+
+# --- phone listener --------------------------------------------------------------------
+# A second HTTP server on the LAN that serves only the live view. Every request needs
+# the private key from the link (?k=) or the cookie set on the first /live visit.
+
+PHONE_PORTS = range(7890, 7900)
+PHONE_COOKIE = "csrk"
+_PHONE = {"srv": None, "port": None, "key": None, "live": None, "on_seen": None,
+          "qr": (None, None)}
+_PHONE_LOCK = threading.RLock()
+
+
+def lan_ip():
+    """This PC's address on the local network. A UDP connect picks the outgoing
+    interface without sending anything. 127.0.0.1 when there is no network."""
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            s.connect(("192.0.2.1", 9))
+            ip = s.getsockname()[0]
+        finally:
+            s.close()
+    except OSError:
+        return "127.0.0.1"
+    return ip if ip and ip != "0.0.0.0" else "127.0.0.1"
+
+
+class _PhoneServer(http.server.ThreadingHTTPServer):
+    # Windows lets SO_REUSEADDR bind a port another server already holds. Take it
+    # exclusively so a busy port falls through to the next one.
+    allow_reuse_address = False
+
+    def server_bind(self):
+        if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
+            self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+        super().server_bind()
+
+
+class _PhoneHandler(http.server.BaseHTTPRequestHandler):
+    """Live view only: /live and /api/telemetry/live. Everything else is 404."""
+    timeout = 10          # a silent connection can't hold a thread forever
+
+    def _send(self, code, body, ctype="application/json; charset=utf-8", extra=None):
+        b = body.encode("utf-8") if isinstance(body, str) else body
+        self.send_response(code)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(b)))
+        self.send_header("Cache-Control", "no-store")
+        for k, v in (extra or {}).items():
+            self.send_header(k, v)
+        self.end_headers()
+        try:
+            self.wfile.write(b)
+        except Exception:
+            pass
+
+    def _cookie_key(self):
+        for part in (self.headers.get("Cookie") or "").split(";"):
+            name, _, value = part.strip().partition("=")
+            if name == PHONE_COOKIE:
+                return value
+        return None
+
+    def _key_ok(self, query):
+        want = _PHONE["key"]
+        if not want:
+            return False
+        want = want.encode("utf-8")
+        for got in (query.get("k", [None])[0], self._cookie_key()):
+            if got and hmac.compare_digest(got.encode("utf-8", "replace"), want):
+                return True
+        return False
+
+    def do_GET(self):
+        parts = urllib.parse.urlsplit(self.path)
+        path = parts.path
+        if path not in ("/live", "/api/telemetry/live", "/api/telemetry/ship"):
+            self._send(404, "Not found.", "text/plain; charset=utf-8")
+            return
+        if not self._key_ok(urllib.parse.parse_qs(parts.query)):
+            self._send(403, "Old or wrong link. Scan the QR code in CSR again.",
+                       "text/plain; charset=utf-8")
+            return
+        if path == "/live":
+            cookie = (f"{PHONE_COOKIE}={_PHONE['key']}; Path=/; Max-Age=31536000; "
+                      f"HttpOnly; SameSite=Strict")
+            self._send(200, LIVE_HTML(), "text/html; charset=utf-8",
+                       extra={"Set-Cookie": cookie})
+            return
+        if path == "/api/telemetry/ship":
+            body = tlm_api_get(self.path, None, None, None)
+            if body is None:
+                self._send(404, "{}")
+            else:
+                self._send(200, body)
+            return
+        on_seen = _PHONE["on_seen"]
+        if on_seen:
+            on_seen()
+        try:
+            body = json.dumps(_json_safe(live_payload(_PHONE["live"])), default=str)
+        except Exception as e:
+            self._send(200, json.dumps({"ok": False, "error": str(e)}))
+            return
+        self._send(200, body)
+
+    def _not_found(self):
+        self._send(404, "Not found.", "text/plain; charset=utf-8")
+
+    do_POST = do_PUT = do_DELETE = do_PATCH = do_HEAD = do_OPTIONS = _not_found
+
+    def log_message(self, *a):
+        pass
+
+
+def start_phone_server(port_range=PHONE_PORTS, key=None, live=None, on_seen=None,
+                       host="0.0.0.0"):
+    """Start the phone listener on the first free port in `port_range`. `key` defaults
+    to the saved phone key, `live` returns the live payload, `on_seen` runs on each
+    valid poll. Already running: takes the new key and callbacks, keeps its port.
+    Returns the port, or None when no port in the range is free."""
+    with _PHONE_LOCK:
+        _PHONE["key"] = key if key is not None else tlm_settings().get("phone_key")
+        if live is not None:
+            _PHONE["live"] = live
+        if on_seen is not None:
+            _PHONE["on_seen"] = on_seen
+        if _PHONE["srv"] is not None:
+            return _PHONE["port"]
+        for p in port_range:
+            try:
+                srv = _PhoneServer((host, p), _PhoneHandler)
+            except OSError:
+                continue
+            _PHONE["srv"], _PHONE["port"] = srv, srv.server_address[1]
+            threading.Thread(target=srv.serve_forever, name="phone", daemon=True).start()
+            return _PHONE["port"]
+        return None
+
+
+def stop_phone_server():
+    with _PHONE_LOCK:
+        srv, _PHONE["srv"], _PHONE["port"] = _PHONE["srv"], None, None
+    if srv is not None:
+        try:
+            srv.shutdown()
+            srv.server_close()
+        except Exception:
+            pass
+
+
+def phone_url():
+    """The private link for the phone, or None when the listener isn't running."""
+    port, key = _PHONE["port"], _PHONE["key"]
+    if port is None or not key:
+        return None
+    return f"http://{lan_ip()}:{port}/live?k={urllib.parse.quote(key, safe='')}"
+
+
+def new_phone_key():
+    """Make and save a new phone key. Old links and cookies stop working. Returns the
+    key, or None when the config couldn't be saved."""
+    key = secrets.token_urlsafe(16)
+    if save_tlm_settings({"phone_key": key}) is None:
+        return None
+    with _PHONE_LOCK:
+        _PHONE["key"] = key
+    return key
+
+
+def sync_phone_server(live=None, on_seen=None, host="0.0.0.0", port_range=PHONE_PORTS):
+    """Match the listener to the saved "phone" setting. On: makes a key if there is
+    none and starts. Off: stops. Returns the port, or None when not listening. When it
+    returns None with the setting on, _PHONE["why"] is "ports" or "config"."""
+    with _PHONE_LOCK:                 # one sync at a time, listener and key stay in step
+        _PHONE["why"] = None
+        s = tlm_settings()
+        if not s.get("phone"):
+            stop_phone_server()
+            return None
+        key = s.get("phone_key") or new_phone_key()
+        if not key:
+            _PHONE["why"] = "config"
+            return None
+        port = start_phone_server(port_range, key=key, live=live, on_seen=on_seen, host=host)
+        if port is None:
+            _PHONE["why"] = "ports"
+        return port
+
+
+def phone_sync_error(port_range=PHONE_PORTS, **kw):
+    """Run sync_phone_server. Returns None when fine, else a message naming the cause."""
+    try:
+        port = sync_phone_server(port_range=port_range, **kw)
+    except Exception as e:
+        _PHONE["why"] = "error"
+        return f"tablet & phone access error: {e}"
+    if port is not None or not tlm_settings().get("phone"):
+        return None
+    if _PHONE.get("why") == "config":
+        return "tablet & phone access: cannot save the link key to csr_config.json."
+    return f"tablet & phone access: no free port in {port_range.start}-{port_range.stop - 1}."
+
+
+def phone_status():
+    """The "phone" block of /api/telemetry/status."""
+    if not tlm_settings().get("phone"):
+        return {"on": False, "url": None}
+    url = phone_url()
+    svg = None
+    if url:
+        cached_url, cached_svg = _PHONE["qr"]
+        if cached_url == url:
+            svg = cached_svg
+        else:
+            svg = sc_qr.qr_svg(url)
+            _PHONE["qr"] = (url, svg)
+    # why: "ports", "config" or "error" when it is on but not listening
+    return {"on": True, "url": url, "qr_svg": svg,
+            "why": None if url else (_PHONE.get("why") or "error")}
+
+
+def local_request_ok(method, headers, port):
+    """False for a request another site could have made through the browser: a Host
+    other than this server (DNS rebinding), or a POST from a foreign Origin. No Origin
+    (curl, scripts) is fine."""
+    mine = {f"127.0.0.1:{port}", f"localhost:{port}"}
+    host = (headers.get("Host") or "").strip().lower()
+    if host not in mine:
+        return False
+    if method == "POST":
+        origin = headers.get("Origin")
+        if origin is not None and origin.strip().lower() not in {"http://" + h for h in mine}:
+            return False
+    return True
+
+
+def _slate_log_path():
+    """The Game.log of the channel being played, or None."""
+    ch = tlm_channel_now()
+    return os.path.join(ch[1], "Game.log") if ch else None
+
+
+_SLATE_NAMES = {}
+
+
+def _slate_gun_names(snapshot, items=()):
+    """{class: display name} for the guns in this frame and the given item classes
+    (the Game.log loadout), from CSR's item names."""
+    if not _SLATE_NAMES:
+        try:
+            with open(os.path.join(resource_dir(), "sc_item_names.json"), encoding="utf-8") as fh:
+                _SLATE_NAMES.update(json.load(fh).get("names") or {})
+        except (OSError, ValueError):
+            pass
+    out = {}
+    guns = [re.sub(r"_\d{6,}$", "", str(w.get("name") or ""))
+            for w in (((snapshot or {}).get("weapons") or {}).get("weapons") or [])]
+    for cls in guns + [str(i or "") for i in items]:
+        cls = cls.lower()
+        if cls and cls in _SLATE_NAMES:
+            out[cls] = _SLATE_NAMES[cls]
+    return out
+
+
+def live_payload(live):
+    """The live view's poll: telemetry state, display names for the guns in the frame and
+    the live Game.log state (None when the log can't be read)."""
+    data = dict(live())
+    try:
+        data["log"] = sc_livelog.get_state(_slate_log_path, lambda code: place_name(code)[0])
+    except Exception:
+        data["log"] = None
+    data["names"] = _slate_gun_names(data.get("snapshot"), ((data["log"] or {}).get("loadout") or {}).values())
+    return data
+
+
+def tlm_api_get(path, live, status, on_seen):
+    """JSON body for GET /api/telemetry/live, /api/telemetry/status and
+    /api/telemetry/ship?c=CLASS (None when the ship is unknown). A live poll counts as
+    a page watching CSR."""
+    parts = urllib.parse.urlsplit(path)
+    if parts.path.endswith("/ship"):
+        cls = urllib.parse.parse_qs(parts.query).get("c", [None])[0]
+        ship = sc_slate_ships.ship_payload(cls)
+        return None if ship is None else json.dumps(ship)
+    if parts.path.endswith("/live"):
+        on_seen()
+        data = live_payload(live)
+    else:
+        data = status()
+    return json.dumps(_json_safe(data), default=str)
+
+
+def _json_safe(o):
+    """NaN and infinity become None. JSON.parse in the page rejects them."""
+    if isinstance(o, float):
+        return o if math.isfinite(o) else None
+    if isinstance(o, dict):
+        return {k: _json_safe(v) for k, v in o.items()}
+    if isinstance(o, (list, tuple)):
+        return [_json_safe(v) for v in o]
+    return o
 
 
 # What you choose in the page that should outlive the browser: pinned blueprints (per
@@ -565,6 +1046,7 @@ def cache_file(name):
 SHIPS = sc_names.ShipIndex()
 ITEMS = sc_names.ItemIndex()
 BPS = sc_names.BlueprintIndex()
+XP = sc_names.XparrowIcons()
 MIS = sc_names.MissionIndex()
 
 # --------------------------------------------------------------------------- #
@@ -798,6 +1280,97 @@ def _channel_dir(files, live):
 #: channel label -> install folder, so a write can find the file again later
 _CHANNEL_DIRS = {}
 
+#: telemetry index entries no session claimed. Filled by the page build.
+_TLM_UNMATCHED: list = []
+
+TLM_CFG_LINE = "grpc.client.server.enabled = true"
+_TLM_CFG_RE = re.compile(r"^\s*grpc\.client\.server\.enabled\s*=\s*(true|1)\s*$", re.I)
+_TLM_APPLIED_NAMES = ("GRPC_CLIENT_SERVER_ENABLED", "grpc-client-server-enabled")
+_TLM_APPLIED_LINES = 300
+
+
+TLM_CHANNEL_FRESH_S = 600
+
+
+def tlm_channel_now():
+    """(label, folder) of the channel whose Game.log was written last, or None. A log
+    not written in the last 10 minutes doesn't count."""
+    best = None
+    cutoff = time.time() - TLM_CHANNEL_FRESH_S
+    for label, cdir in list(_CHANNEL_DIRS.items()):
+        try:
+            mt = os.path.getmtime(os.path.join(cdir, "Game.log"))
+        except (OSError, TypeError):
+            continue
+        if mt < cutoff:
+            continue
+        if best is None or mt > best[0]:
+            best = (mt, label, cdir)
+    return (best[1], best[2]) if best else None
+
+
+def _user_cfg_has_line(path):
+    try:
+        with open(path, encoding="utf-8-sig", errors="replace") as fh:
+            return any(_TLM_CFG_RE.match(ln) for ln in fh)
+    except OSError:
+        return False
+
+
+def user_cfg_state(channel_dir):
+    """{"line": user.cfg turns the telemetry port on, "applied": the game launched after
+    user.cfg last changed and its Game.log names the setting in its first lines}."""
+    out = {"line": False, "applied": False}
+    if not channel_dir:
+        return out
+    cfg = os.path.join(channel_dir, "user.cfg")
+    log = os.path.join(channel_dir, "Game.log")
+    out["line"] = _user_cfg_has_line(cfg)
+    try:
+        cfg_mt = os.path.getmtime(cfg)
+    except OSError:
+        cfg_mt = 0.0
+    try:
+        if os.path.getmtime(log) <= cfg_mt:
+            return out                      # a log from before the last user.cfg edit
+        with open(log, encoding="utf-8", errors="replace") as fh:
+            for i, ln in enumerate(fh):
+                if i >= _TLM_APPLIED_LINES:
+                    break
+                if any(n in ln for n in _TLM_APPLIED_NAMES):
+                    out["applied"] = True
+                    break
+    except OSError:
+        pass
+    return out
+
+
+def enable_user_cfg(channel_dir):
+    """Append the telemetry line to the channel's user.cfg. Every other line is kept and
+    the old file is copied to user.cfg.csr-bak first. An existing backup is kept, so it
+    always holds the file from before CSR first touched it. The game reads user.cfg only at
+    launch, so this is safe while it runs. Returns (ok, message)."""
+    if not channel_dir or not os.path.isdir(channel_dir):
+        return False, "No folder for that channel."
+    path = os.path.join(channel_dir, "user.cfg")
+    if _user_cfg_has_line(path):
+        return True, "Already in user.cfg."
+    try:
+        data = b""
+        if os.path.isfile(path):
+            with open(path, "rb") as fh:
+                data = fh.read()
+            if not os.path.exists(path + ".csr-bak"):
+                shutil.copy2(path, path + ".csr-bak")
+        add = (TLM_CFG_LINE + "\r\n").encode("utf-8")
+        if data and not data.endswith(b"\n"):
+            add = b"\r\n" + add
+        with open(path, "ab") as fh:
+            fh.write(add)
+    except OSError as e:
+        return False, f"Could not write user.cfg: {e}"
+    return True, "Added to user.cfg. Restart the game to turn it on."
+
 
 # --------------------------------------------------------------------------- #
 #  Live event watcher  —  tails each channel's Game.log while you play and
@@ -963,9 +1536,24 @@ def _sc_process_running():
 MAX_EVENTS = 40
 
 
+# called with each new event (the tray shows it as a Windows notification)
+_EVENT_HOOKS = []
+
+
 def _push_event(kind, severity, title, detail, extra=None):
     """Record an event for the dashboard. Deduped on (kind,title) within 60s so a
     crash seen by BOTH the log tail and the Crashes folder is reported once."""
+    ev = _record_event(kind, severity, title, detail, extra)
+    if ev:
+        for hook in list(_EVENT_HOOKS):
+            try:
+                hook(dict(ev))
+            except Exception:
+                pass
+    return ev
+
+
+def _record_event(kind, severity, title, detail, extra=None):
     now = time.time()
     with _WATCH["lock"]:
         for e in reversed(_WATCH["events"]):
@@ -2768,7 +3356,7 @@ def _bp_catalog_payload():
             c = (r[2] or "").lower()
             if ITEMS.meta.get(c):
                 meta[r[0]] = ITEMS.meta[c]
-            d = art_src(ITEMS.imgs.get(c))
+            d = art_src(ITEMS.imgs.get(c)) or XP.art(c)
             if d:
                 img[r[0]] = d
     return {"version": BPS.version, "n": len(rows), "rows": rows,
@@ -3207,6 +3795,9 @@ def _place_label(code):
     m = re.match(r"(?i)pyro(\d[a-z]?)_Outpost_col_(?:xs|s|m)_(.+)$", code)
     if m:
         return f"Pyro {m.group(1)} outpost {m.group(2).replace('_', ' ')}", "Outpost"
+    m = re.match(r"(?i)(?:cluster|location|sector)_ht_\w*?_([a-z]+-\d+)$", code)
+    if m:   # one of the named-in-brackets codes that came without its name
+        return f"Unnamed site {m.group(1)}", "Outpost"
     m = re.match(r"(?:Stanton\d[a-z]?|Pyro\d[a-z]?|Nyx|AsteroidClusterBase_Pyro|AsteroidClusterBase_Nyx)_(.+)$", code)
     rest = m.group(1) if m else code
     kind = "Other"
@@ -3246,6 +3837,12 @@ def place_name(code, patch=None):
     the route log or the wiki, else are built from the code. Kind is City, Station,
     Rest stop, Jump point, Outpost, Facility, Wikelo or Other. `patch` matters for codes
     CIG reused: RR_JP_StantonMagnus is the Nyx Gateway from 4.4."""
+    # newer location codes carry their own name: "cluster_ht_a_agriculture_l_002 (Green Dale)"
+    m = re.match(r"^(.+?)\s*\(([^()]+)\)\s*$", code)
+    if m:
+        base = m.group(1)
+        kind = "Other" if base.lower().startswith("sector_") else "Outpost"
+        return m.group(2).strip(), _place_system(base), kind
     low = code.lower()
     ren = _PLACE_RENAMED.get(low)
     if ren and (patch is None or _patch_key(patch) >= ren[0]):
@@ -4232,6 +4829,8 @@ def blank_patch():
         "sk_lost": [], "sk_sessions": 0, "sk_kill_sessions": 0, "vd_secs": 0,
         # home inventory: [local date, start, inv dict] per session that logged anything
         "inv": [],
+        # telemetry recordings matched to these sessions (sc_tlm_stats career accumulator)
+        "tlm": sc_tlm_stats.new_acc(),
     }
 
 
@@ -4239,6 +4838,7 @@ def fold(agg, s):
     if s.get("handle"):
         _KNOWN_HANDLES.add(s["handle"].lower().strip())
     agg["sessions"] += 1
+    sc_tlm_stats.fold_tlm(agg["tlm"], s.get("_tlm"), s.get("start"))
     agg["seconds"] += s["dur"]
     agg["longest"] = max(agg["longest"], s["dur"])
     if s.get("limited"):
@@ -5213,6 +5813,7 @@ def finalize(agg):
     boot_sum = _episode_summary(agg["boots"], agg["boot_sessions"], agg)
     soft_sum = _episode_summary(agg["softs"], agg["soft_sessions"], agg)
     return {
+        "tlm": sc_tlm_stats.finalize_tlm(agg["tlm"], agg["sessions"]),
         "boots": boot_sum,
         "soft": soft_sum,
         "servers": _server_summary(agg),
@@ -5652,6 +6253,15 @@ def scan_channels(channels, reuse=None):
 def build_from_sessions(sessions, fresh_profile=False):
     """Bucket already-scanned sessions by their stored channel → per-channel
     datasets. Sessions come from the archive (accumulated) + this run's scan."""
+    global _TLM_UNMATCHED
+    # copies carry `_tlm`, the archive's own dicts stay as they are. Telemetry never
+    # fails the page: a bad index leaves the cards out.
+    try:
+        sessions, _TLM_UNMATCHED = sc_tlm_stats.attach(
+            sessions, sc_tlm_stats.load_index(sc_tlm_stats.tlm_dir(app_dir())))
+    except Exception as e:
+        cwarn(f"telemetry stats skipped: {e}")
+        _TLM_UNMATCHED = []
     buckets = defaultdict(list)
     for s in sessions:
         buckets[s.get("channel") or "LIVE"].append(s)
@@ -5674,6 +6284,7 @@ def build_from_sessions(sessions, fresh_profile=False):
         "log_count": total,
         "bp_catalog": _bp_catalog_payload(),
         "missions": _missions_payload(),
+        "xp": XP.payload(),
     }
 
 
@@ -5811,6 +6422,262 @@ def import_archive_file(path_or_sessions):
     merged = merge_sessions(existing, incoming)
     save_archive(merged)
     return len(merged) - before, len(merged)
+
+
+_TLM_CHANNEL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,31}$")
+_TLM_FILE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}\.jsonl\.gz$")
+_ARCHIVE_MEMBER_RE = re.compile(r"^CSR-archive-[A-Za-z0-9_.-]{1,40}\.json$")
+IMPORT_ZIP_MAX = 2 * 1024 ** 3
+
+
+def _archive_object(archive_file=None):
+    path = archive_file or archive_path()
+    try:
+        with open(path, encoding="utf-8") as fh:
+            obj = json.load(fh)
+    except Exception:
+        obj = None
+    if not isinstance(obj, dict):
+        obj = {"v": ARCHIVE_VERSION, "app": "CSR", "version": CSR_VERSION,
+               "saved": datetime.now().isoformat(), "sessions": []}
+    obj["prefs"] = load_prefs()           # pins and main accounts ride along
+    return obj
+
+
+def export_zip_file(root=None, archive_file=None):
+    """Zip the archive and every recording into a temp file. Returns (path, filename).
+    The caller deletes the file."""
+    root = root or sc_tlm_stats.tlm_dir(app_dir())
+    stamp = datetime.now().strftime("%Y-%m-%d")
+    obj = _archive_object(archive_file)
+    obj["telemetry"] = list(sc_tlm_stats.load_index(root).values())
+    fd, tmp = tempfile.mkstemp(suffix=".zip", prefix="csr-export-")
+    os.close(fd)
+    try:
+        with zipfile.ZipFile(tmp, "w", zipfile.ZIP_STORED, allowZip64=True) as z:
+            z.writestr("CSR-archive-%s.json" % stamp,
+                       json.dumps(obj, default=_json_default))
+            for f in sc_tlm_stats.recording_files(root):
+                chan = os.path.basename(os.path.dirname(f))
+                try:
+                    z.write(f, "telemetry/%s/%s" % (chan, os.path.basename(f)))
+                except OSError:
+                    pass
+    except Exception:
+        os.remove(tmp)
+        raise
+    return tmp, "CSR-backup-%s.zip" % stamp
+
+
+def export_payload(include_recordings, root=None, archive_file=None):
+    """(body, content type, filename) for the JSON export: the archive plus the telemetry
+    summaries. The zip with recordings is streamed from export_zip_file instead."""
+    if include_recordings:
+        raise ValueError("use export_zip_file for recordings")
+    root = root or sc_tlm_stats.tlm_dir(app_dir())
+    obj = _archive_object(archive_file)
+    obj["telemetry"] = list(sc_tlm_stats.load_index(root).values())
+    stamp = datetime.now().strftime("%Y-%m-%d")
+    return (json.dumps(obj, default=_json_default).encode("utf-8"), "application/json",
+            "CSR-archive-%s.json" % stamp)
+
+
+class ImportTooLarge(ValueError):
+    pass
+
+
+_TOO_LARGE = "Import stopped. A recording in the zip is too large."
+_WIN_RESERVED = re.compile(r"^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$", re.I)
+_TLM_ENTRY_KEYS = ("file", "channel", "started", "ended", "build", "groups", "v", "sum", "empty")
+_TLM_GROUP_NAMES = frozenset([g for g, _ in sc_telemetry.GROUPS] + ["other", "force_feedback"])
+TLM_MEMBER_MAX = 256 * 1024 ** 2
+TLM_TOTAL_MAX = 8 * 1024 ** 3
+ARCHIVE_MEMBER_MAX = 256 * 1024 ** 2
+TLM_ENTRIES_MAX = 100000
+TLM_SUM_MAX = 256 * 1024
+
+
+def _safe_name(rx, name):
+    return (isinstance(name, str) and bool(rx.fullmatch(name))
+            and not _WIN_RESERVED.match(name.split(".")[0]))
+
+
+def _finite(x):
+    return isinstance(x, (int, float)) and not isinstance(x, bool) and math.isfinite(x)
+
+
+def _sum_value_ok(key, v):
+    """One value of an imported `sum`: a number, a dict of numbers, or for uec_series a
+    list of [time, number] pairs."""
+    if not isinstance(key, str):
+        return False
+    if key == "uec_series":
+        return isinstance(v, list) and all(
+            isinstance(p, list) and len(p) == 2 and isinstance(p[0], str) and _finite(p[1])
+            for p in v)
+    if isinstance(v, dict):
+        return all(isinstance(k, str) and _finite(x) for k, x in v.items())
+    return _finite(v)
+
+
+def _clean_entry(e):
+    """Whitelisted, type-checked copy of an imported index entry. None when it fails."""
+    if not isinstance(e, dict) or not _safe_name(_TLM_FILE_RE, e.get("file")):
+        return None
+    out = {"file": e["file"]}
+    for k in _TLM_ENTRY_KEYS[1:]:
+        if k not in e:
+            continue
+        v = e[k]
+        if k == "channel":
+            if v is not None and not _safe_name(_TLM_CHANNEL_RE, v):
+                return None
+        elif k in ("started", "ended", "build"):
+            if v is not None and not (isinstance(v, str) and len(v) <= 64):
+                return None
+        elif k == "groups":
+            if not isinstance(v, list) or any(not isinstance(g, str) or g not in _TLM_GROUP_NAMES for g in v):
+                return None
+        elif k == "v":
+            if not isinstance(v, int) or isinstance(v, bool):
+                return None
+        elif k == "sum":
+            if not isinstance(v, dict) or not all(_sum_value_ok(kk, x) for kk, x in v.items()):
+                return None
+            try:
+                if len(json.dumps(v)) > TLM_SUM_MAX:
+                    return None
+            except (TypeError, ValueError):
+                return None
+        elif k == "empty":
+            if not isinstance(v, bool):
+                return None
+        out[k] = v
+    return out
+
+
+def _copy_bounded(src, out, limit):
+    """Copy at most `limit` bytes. Returns the count. ImportTooLarge when there is more."""
+    n = 0
+    while True:
+        chunk = src.read(1024 * 1024)
+        if not chunk:
+            return n
+        n += len(chunk)
+        if n > limit:
+            raise ImportTooLarge(_TOO_LARGE)
+        out.write(chunk)
+
+
+def _date_recording(path):
+    """Set an imported recording's modified time to its start time from the file name.
+    A fresh mtime would read as a file still being written (sc_tlm_stats.RECENT_S)."""
+    try:
+        t = datetime.strptime(os.path.basename(path)[:15], "%Y%m%d-%H%M%S").timestamp()
+    except ValueError:
+        t = time.time() - 3600
+    try:
+        os.utime(path, (t, t))
+    except OSError:
+        pass
+
+
+def import_telemetry(entries, files, root=None):
+    """Add index entries and recording files that are not there yet (same file name).
+    `files` maps "<channel>/<file>" to bytes or a callable returning (stream, header size).
+    Returns how many recordings were added. Raises ImportTooLarge past the size limits
+    (what was added before stays)."""
+    root = root or sc_tlm_stats.tlm_dir(app_dir())
+    added = set()
+    total = 0
+    with sc_tlm_stats._index_lock:
+        idx = sc_tlm_stats.load_index(root)
+        try:
+            have = {os.path.basename(p) for p in sc_tlm_stats.recording_files(root)}
+            for e in (entries[:TLM_ENTRIES_MAX] if isinstance(entries, list) else []):
+                c = _clean_entry(e)
+                if c is not None and c["file"] not in idx:
+                    idx[c["file"]] = c
+                    added.add(c["file"])
+            for key, src in (files or {}).items():
+                chan, _sep, name = str(key).partition("/")
+                if (not _safe_name(_TLM_CHANNEL_RE, chan) or not _safe_name(_TLM_FILE_RE, name)
+                        or name in have):
+                    continue
+                d = os.path.join(root, chan)
+                os.makedirs(d, exist_ok=True)
+                dest, tmp = os.path.join(d, name), os.path.join(d, name + ".import.tmp")
+                try:
+                    with open(tmp, "wb") as out:
+                        if isinstance(src, (bytes, bytearray)):
+                            if len(src) > TLM_MEMBER_MAX or total + len(src) > TLM_TOTAL_MAX:
+                                raise ImportTooLarge(_TOO_LARGE)
+                            out.write(src)
+                            total += len(src)
+                        else:
+                            stream, declared = src()
+                            with stream:
+                                if declared > TLM_MEMBER_MAX or total + declared > TLM_TOTAL_MAX:
+                                    raise ImportTooLarge(_TOO_LARGE)
+                                total += _copy_bounded(
+                                    stream, out, min(TLM_MEMBER_MAX, TLM_TOTAL_MAX - total))
+                    os.replace(tmp, dest)
+                    _date_recording(dest)
+                except Exception as ex:
+                    try:
+                        os.remove(tmp)
+                    except OSError:
+                        pass
+                    if not isinstance(ex, OSError):
+                        raise
+                    continue
+                have.add(name)
+                added.add(name)
+        finally:
+            if added:
+                sc_tlm_stats.save_index(root, idx)
+    return len(added)
+
+
+def import_zip_file(path, root=None, archive_file=None, merge=True):
+    """Merge a CSR backup zip. Returns {"added", "total", "telemetry"}. Only members shaped
+    `CSR-archive-*.json` and `telemetry/<channel>/<file>.jsonl.gz` are read."""
+    root = root or sc_tlm_stats.tlm_dir(app_dir())
+    with zipfile.ZipFile(path) as z:
+        arch = [i for i in z.infolist() if _ARCHIVE_MEMBER_RE.match(i.filename)]
+        if not arch:
+            raise ValueError("no CSR archive in that zip")
+        if arch[0].file_size > ARCHIVE_MEMBER_MAX:
+            raise ValueError("archive file too large")
+        with z.open(arch[0]) as f:
+            raw = f.read(ARCHIVE_MEMBER_MAX + 1)
+        if len(raw) > ARCHIVE_MEMBER_MAX:
+            raise ValueError("archive file too large")
+        try:
+            obj = json.loads(raw.decode("utf-8", "replace"))
+            sessions = [_deser_session(x) for x in obj.get("sessions", [])]
+            entries = obj.get("telemetry")
+        except Exception:
+            raise ValueError("that archive can't be read")
+        del raw
+        added = total = 0
+        if merge:
+            added, total = import_archive_file(sessions)
+            if isinstance(obj.get("prefs"), dict):     # the backup's pins and main accounts
+                try:
+                    save_prefs(merge_prefs(load_prefs(), obj["prefs"]))
+                except Exception:
+                    pass
+        files = {}
+        for i in z.infolist():
+            parts = i.filename.split("/")
+            if (len(parts) == 3 and parts[0] == "telemetry" and not i.is_dir()
+                    and _safe_name(_TLM_CHANNEL_RE, parts[1])
+                    and _safe_name(_TLM_FILE_RE, parts[2])):
+                files["%s/%s" % (parts[1], parts[2])] = (
+                    lambda n=i: (z.open(n), n.file_size))
+        n = import_telemetry(entries, files, root=root)
+    return {"added": added, "total": total, "telemetry": n}
 
 
 def import_log_folder(path):
@@ -6127,6 +6994,22 @@ def build_showcase(career, patches, order, eras=None):
 _WIKI_LEAD = {}         # starcitizen.tools page title -> lead image url, "" when none
 
 
+_XP_NAMES = {}
+
+
+def _xp_by_name(name):
+    """A fan icon for an item CSR knows by name only: its class from the item catalogue,
+    then xparrow-lite's list."""
+    if not (XP.ok and ITEMS.ok and name):
+        return None
+    if not _XP_NAMES:
+        for cls, n in sorted(ITEMS.idx.items(), key=lambda kv: len(kv[0])):   # base class first
+            if cls in XP.ids:
+                _XP_NAMES.setdefault(n, cls)
+    cls = _XP_NAMES.get(name)
+    return XP.art(cls) if cls else None
+
+
 def art_src(src):
     """Where a picture lives, compact for the page: ["r", small, large] for an RSI ship
     matrix record, ["w", "a/ab/File.png"] for a starcitizen.tools file (the page asks the
@@ -6321,9 +7204,10 @@ def build_list_art(data):
             crate = None
             if not u and n in commodities:
                 crate = next((f for rx, f in _CARGO_CRATE if re.search(rx, n, re.I)), None)
-            picks[(kind, n)] = _wiki_file(crate) if crate else u
+            picks[(kind, n)] = _wiki_file(crate) if crate else (u or _xp_by_name(n))
         elif kind == "bp":
-            picks[(kind, n)] = ITEMS.imgs.get((bp.get(n) or "").lower()) if ITEMS.ok else None
+            c = (bp.get(n) or "").lower()
+            picks[(kind, n)] = (ITEMS.imgs.get(c) if ITEMS.ok else None) or XP.art(c)
         elif kind == "place":
             picks[(kind, n)] = _place_art(n)
 
@@ -7590,6 +8474,21 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
   /* three transfer routes (export / import logs / import backup) need more room */
   .modal.data:has(.datarow.three){max-width:760px}
   .dmnote{font-size:11.5px;color:var(--dim);margin:2px 0 0}
+  .modal.data{max-height:92vh;overflow-y:auto}
+  .tlmcard{text-align:left;margin-top:14px;border:1px solid var(--line);border-radius:12px;padding:14px 16px}
+  .tlmcard .ol-t{margin-bottom:8px}
+  .tlmrow{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:8px 0;font-size:13px;color:var(--muted)}
+  .tlmrow>label,.tlmrow>.tlml{min-width:120px;color:var(--txt)}
+  .tlmrow.tlmhint{margin-top:-4px;font-size:12px}
+  .tlmrow select{background:var(--panel2);color:var(--txt);border:1px solid var(--line);border-radius:8px;padding:5px 8px}
+  .tlmgroups{display:flex;flex-wrap:wrap;gap:6px 16px}
+  .tlmgroups label{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--muted)}
+  .tlmqr{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+  .tlmqr svg{width:132px;height:132px;background:#fff;border-radius:8px;padding:6px}
+  .tlmqr .tlmurl{word-break:break-all;font-size:12px;color:var(--txt)}
+  .tlmcard .tlmbtn{font-size:12px;padding:6px 12px}
+  .tlmcard .mbtn.danger{border-color:rgba(235,110,110,.45);color:#eb6e6e}
+  .tlmerr{color:#ff5468;font-size:12px;min-height:16px}
   .onlinebar{display:flex;align-items:center;gap:14px;text-align:left;margin-top:14px;
     padding:12px 14px;border:1px solid var(--line);border-radius:11px;background:var(--panel2)}
   .onlinebar .ol-t{font-weight:700;font-size:13px}
@@ -7941,6 +8840,82 @@ nav a::after{background:var(--menu-bg);border-color:var(--glass-line);box-shadow
 .bm-empty{font-size:13px}
 .sm-acts .mbtn{font-size:13px;min-height:34px}
 .statusbtn::after,nav a::after{font-size:11px}
+
+/* ---- top-right menus: layout pass ---- */
+.modal{position:relative}
+.mx{position:absolute;top:12px;right:14px;background:none;border:0;color:var(--muted);font-size:24px;line-height:1;
+  cursor:pointer;padding:4px 8px;border-radius:8px}
+.mx:hover{color:var(--txt);background:var(--hover-tint)}
+.modal .mb{font-size:14px;margin-bottom:18px}
+.modal.rfm{max-width:560px}
+.modal.rfm .mactions{margin-top:16px}
+.dsec{font-family:var(--font-mono);font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--dim);
+  text-align:left;margin:22px 0 8px}
+.datarow{gap:12px;margin-bottom:0}
+.dcard{padding:16px;border-radius:12px}
+.dct{display:flex;align-items:center;gap:8px;font-size:14.5px;margin-bottom:8px}
+.dct .csr-ic{margin:0;width:18px;height:18px;color:var(--cyan);flex:none}
+.dcd{font-size:13px;line-height:1.55;margin-bottom:16px}
+.dcard .mbtn{font-size:13px;min-height:40px}
+.dfoot{display:block;margin-top:10px;min-height:20px;font-size:12px;color:var(--dim);line-height:1.45}
+.dfoot.tlmchk{display:flex;align-items:center;gap:7px;color:var(--muted);cursor:pointer}
+.dfoot.tlmchk input{margin:0}
+.linky{font-size:12px}
+.pastehint{font-size:12px}
+.onlinebar{margin-top:0;padding:14px 16px;border-radius:12px;gap:18px}
+.onlinebar .ol-s{font-size:13px;margin-top:0;color:var(--muted)}
+#olWhen{display:block;margin-top:6px;font-size:11.5px;line-height:1.5}
+#olWhen .olstale{display:block;color:var(--amber);font-family:inherit;font-size:12.5px;font-weight:600;margin-top:4px}
+.tlmcard{margin-top:0;padding:4px 16px 14px;border-radius:12px;background:var(--panel2)}
+.tlmrow{font-size:13.5px;margin:0;padding:9px 0;border-bottom:1px solid var(--line);min-height:36px;box-sizing:border-box}
+.tlmrow>label,.tlmrow>.tlml{min-width:170px}
+.tlmrow.tlmhint{padding:0 0 10px 182px;margin-top:-4px;font-size:12px;color:var(--dim);min-height:0}
+.tlmrow:has(+ .tlmhint){border-bottom:0}
+.tlmrow select{font-size:13px;min-height:32px}
+.tlmgroups{flex:1;min-width:0;gap:8px 16px}
+.tlmcard .tlmbtn{font-size:12.5px;min-height:32px;padding:6px 14px}
+.tlmcard .mbtn.danger{background:rgba(235,110,110,.06)}
+.tlmcard .mbtn.danger:hover{background:rgba(235,110,110,.16);color:#ffd9d9}
+#tlmDisk{min-width:170px;color:var(--txt)}
+.tlmcard>.dmnote{margin-top:10px;font-size:12px}
+.tlmerr:empty{display:none}
+.dmnote{font-size:12px}
+@media(max-width:640px){
+  .tlmrow>label,.tlmrow>.tlml,#tlmDisk{min-width:0;flex:1 1 100%}
+  .tlmrow.tlmhint{padding-left:0}
+  .onlinebar{flex-direction:column;align-items:stretch}
+  .modal{padding:22px 18px 18px}
+}
+/* alerts + status menus */
+.bellmenu{width:360px}
+.bm-head{padding:12px 14px}
+.bm-clear{padding:4px 6px;margin:-4px -6px;border-radius:6px}
+.bm-clear:hover{background:var(--hover-tint)}
+.bm-ev{padding:12px 14px;gap:11px}
+.bm-ev.new:not(.bad){background:rgba(244,169,42,.06)}
+.bm-ev .bw{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:6px}
+.bm-ev .bw a{margin-left:auto;font-family:inherit;letter-spacing:0;font-size:12px}
+.statusmenu{width:300px;padding:16px}
+.sm-head{font-size:14.5px;margin-bottom:6px}
+.sm-acts{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:14px}
+.sm-acts .mbtn{width:100%;padding:8px 10px;min-height:36px}
+.sm-acts #smAuto,.sm-acts .dmnote{grid-column:1/-1}
+.sm-acts .mbtn:not(.danger){background:transparent;color:var(--txt);border-color:var(--line)}
+.sm-acts .mbtn:not(.danger):hover{border-color:var(--hover-line);background:var(--hover-tint)}
+.sm-acts .mbtn.on{border-color:rgba(74,222,128,.5);color:#4ade80}
+@media(max-width:760px){
+  .bellmenu,.statusmenu{position:fixed;top:auto;left:12px;right:12px;width:auto;max-height:75vh;overflow:auto}
+}
+/* Kestrel drawer actions */
+.kacts{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:14px}
+.kacts .kbtn{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:40px;padding:8px 12px;
+  font-size:13px;text-decoration:none;color:var(--txt);box-sizing:border-box}
+.kacts .kbtn i{display:inline-grid;width:17px;height:17px;color:var(--amber)}
+.kacts .kbtn i svg{width:17px;height:17px}
+.kacts .kbtn:hover{border-color:rgba(244,169,42,.55)}
+.kon{width:100%;min-height:42px}
+.kstat{display:flex;gap:10px;align-items:center;margin-top:14px;padding-top:12px;border-top:1px solid var(--line);font-size:12.5px;color:var(--txt)}
+.kstat span{font-family:var(--font-mono);font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--dim)}
 
 /* ---- modals + limited-data banner ---- */
 .modal-back{background:rgba(4,8,13,.6);backdrop-filter:blur(6px)}
@@ -8363,6 +9338,46 @@ nav a::after{background:var(--menu-bg);border-color:var(--glass-line);box-shadow
 .bxtot .bxkey span{display:inline-flex;align-items:center;gap:6px}
 .bxtot .bxkey .bsq{width:14px;height:14px;cursor:default;border-radius:3px}
 .bsq[data-bpplan]:hover,.bdot[data-bpplan]:hover{outline:2px solid var(--cyan);outline-offset:1px}
+/* the Kestrel K-7 entry: first in the sidebar, amber, a device, not a page */
+#nav a.nav-kestrel{margin:0 0 10px;min-height:52px;color:var(--amber);border:1px solid rgba(244,169,42,.45);border-left-width:1px;
+  background:linear-gradient(90deg,rgba(244,169,42,.16),rgba(244,169,42,.03))}
+#nav a.nav-kestrel:hover{background:linear-gradient(90deg,rgba(244,169,42,.26),rgba(244,169,42,.06));color:var(--amber)}
+#nav a.nav-kestrel .kt{display:flex;flex-direction:column;font-style:normal;line-height:1.2;min-width:0}
+#nav a.nav-kestrel .kt b{font-weight:700;letter-spacing:.02em}
+#nav a.nav-kestrel .kt small{font-family:var(--font-mono);font-size:10.5px;letter-spacing:.04em;color:var(--muted);white-space:nowrap}
+@media(max-width:760px){ #nav a.nav-kestrel{box-shadow:0 0 0 2px rgba(244,169,42,.45)} #nav a.nav-kestrel .kt{display:none} }
+/* the Kestrel K-7 code: a drawer beside the sidebar entry, a bottom sheet on phones */
+.kpop{display:none;position:fixed;z-index:61;width:min(430px,calc(100vw - 24px));padding:18px 18px 14px;
+  background:var(--menu-bg,var(--panel));border:1px solid rgba(244,169,42,.45);border-radius:var(--r-lg,16px);
+  box-shadow:var(--menu-shadow,0 24px 70px rgba(0,0,0,.55));animation:kin .16s ease-out}
+.kpop.on{display:block}
+.kpop::before{content:"";position:absolute;left:-7px;top:calc(var(--ka,28px) - 6px);width:12px;height:12px;
+  background:inherit;border-left:1px solid rgba(244,169,42,.45);border-bottom:1px solid rgba(244,169,42,.45);transform:rotate(45deg)}
+.kpop.sheet{left:0;right:0;bottom:0;top:auto;width:auto;max-height:88vh;overflow:auto;border-radius:18px 18px 0 0;
+  border-bottom:0;animation:kup .2s ease-out;padding-bottom:max(14px,env(safe-area-inset-bottom))}
+.kpop.sheet::before{display:none}
+@keyframes kin{from{opacity:0;transform:translateX(-6px)}to{opacity:1;transform:none}}
+@keyframes kup{from{transform:translateY(30px);opacity:0}to{transform:none;opacity:1}}
+.kx{position:absolute;top:8px;right:10px;background:none;border:0;color:var(--muted);font-size:22px;line-height:1;cursor:pointer;padding:4px 8px}
+.kx:hover{color:var(--txt)}
+.kh{font-family:var(--font-display);font-weight:700;font-size:17px;letter-spacing:.4px}
+.khead{display:flex;gap:12px;align-items:center;margin:0 26px 14px 0}
+.khead .kic{display:grid;place-items:center;width:40px;height:40px;border-radius:12px;color:var(--amber);background:rgba(244,169,42,.12);flex:none}
+.khead .kic svg{width:22px;height:22px}
+.ksub{font-size:13.5px;color:var(--muted);margin-top:2px}
+.kstep{font-size:14px;line-height:1.5;color:var(--txt);margin:0 0 14px}
+.kqr{display:flex;gap:18px;align-items:center;flex-wrap:wrap}
+.kcode{background:#fff;border-radius:10px;padding:8px;width:168px;height:168px;flex:none;box-sizing:border-box}
+.kcode svg{width:100%;height:100%;display:block}
+.ksteps{margin:0;padding-left:18px;font-size:13px;line-height:1.55;color:var(--txt);flex:1;min-width:170px}
+.kurl{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:14px 0 8px}
+.kurl code{font-family:var(--font-mono);font-size:12px;color:var(--cyan);word-break:break-all;flex:1 1 100%}
+.kstat{margin-top:12px;font-family:var(--font-mono);font-size:12px;color:var(--muted)}
+.kerr{color:var(--red);font-size:13px;min-height:4px;margin-top:6px}
+/* xparrow-lite icons are 128 px on transparent: shown whole, never blown up */
+img[src*="xparrow-lite.pages.dev"]{object-fit:scale-down!important}
+/* their pictures are see-through: hide the placeholder icon behind them */
+*:has(> img[src*="xparrow-lite.pages.dev"]) > svg{visibility:hidden}
 /* the top menu: a page's sections as tabs, icon, name and headline number. Sticks under
    the top bar on wide screens, scrolls sideways when it doesn't fit */
 .snav-at{height:0}
@@ -8577,6 +9592,7 @@ nav a::after{background:var(--menu-bg);border-color:var(--glass-line);box-shadow
         <div class="brand-sub">CITIZEN SERVICE RECORD</div></div>
     </button>
     <nav id="nav">
+      <a href="#kestrel" id="navKestrel" class="nav-kestrel" data-label="Kestrel K-7" style="display:none" title="Kestrel K-7 Flight Slate: open it on a tablet or phone"><span>📟</span><em class="kt"><b>Kestrel K-7</b><small>Flight Slate</small></em></a>
       <a data-sec="overview" data-label="Overview" class="active"><span>📊</span> Overview</a>
       <a data-sec="flight" data-label="Flight &amp; Travel"><span>🚀</span> Flight &amp; Travel</a>
       <a data-sec="combat" data-label="Combat"><span>💀</span> Combat</a>
@@ -8665,18 +9681,18 @@ nav a::after{background:var(--menu-bg);border-color:var(--glass-line);box-shadow
 </div>
 
 <div class="modal-back" id="refreshModal">
-  <div class="modal">
+  <div class="modal rfm">
     <div class="mh">Refresh Data</div>
-    <div class="mb">Pull in your latest sessions. Old log backups never change once Star Citizen has rotated them, so a quick refresh only needs to read what's new.</div>
+    <div class="mb">Scan your Star Citizen logs for new sessions.</div>
     <div class="datarow">
       <div class="dcard">
-        <div class="dct">Quick refresh</div>
-        <div class="dcd">Reads only new or changed logs — usually a few seconds. This is what you want almost every time.</div>
+        <div class="dct" data-ic="refresh">Quick refresh</div>
+        <div class="dcd">Reads new and changed logs only. Takes a few seconds.</div>
         <button class="mbtn go" id="rfGo">Quick refresh</button>
       </div>
       <div class="dcard">
-        <div class="dct">Full re-scan</div>
-        <div class="dcd">Re-reads every log from scratch. Slower, but use it after a CSR update so improved parsing is applied to your whole history.</div>
+        <div class="dct" data-ic="reload">Full re-scan</div>
+        <div class="dcd">Re-reads every log. Run it after a CSR update to apply parser fixes to older sessions.</div>
         <button class="mbtn ghost" id="rfFull">Full re-scan</button>
       </div>
     </div>
@@ -8685,64 +9701,120 @@ nav a::after{background:var(--menu-bg);border-color:var(--glass-line);box-shadow
 </div>
 <div class="modal-back" id="offlineModal">
   <div class="modal">
-    <div class="mh">CSR Isn&rsquo;t Running</div>
-    <div class="mb">This page is still showing your last saved dashboard, but the CSR app that scans your logs has been closed — so it can&rsquo;t refresh right now.<br><br>
-      Start <b>CSR</b> again, then use Refresh. Everything already on this page stays readable in the meantime.</div>
-    <div class="mactions"><button class="mbtn go" id="offClose">Back to dashboard</button></div>
+    <div class="mh">CSR Is Not Running</div>
+    <div class="mb">This is the last saved copy of your dashboard. Start <b>CSR</b> to refresh or import.</div>
+    <div class="mactions"><button class="mbtn go" id="offClose">Close</button></div>
   </div>
 </div>
 <div class="modal-back" id="refreshBusy">
   <div class="modal"><div class="mspin"></div>
-    <div class="mh" id="rfBusyTx">Scanning your logs…</div>
-    <div class="mb">Reading your Game.logs — hang tight, the page will reload automatically.</div></div>
+    <div class="mh" id="rfBusyTx">Scanning logs…</div>
+    <div class="mb">The page reloads when the scan finishes.</div></div>
 </div>
 <div class="modal-back" id="dataModal">
   <div class="modal data">
+    <button class="mx" id="dmX" type="button" title="Close" aria-label="Close">×</button>
     <div class="mh">Backup &amp; Transfer</div>
-    <div class="mb">CSR keeps a running <b>archive</b> of every session it has scanned (<span id="dmCount">—</span> on file), so your career survives even if Star Citizen deletes old logs.</div>
+    <div class="mb"><span id="dmCount">—</span> in the archive. Sessions stay here after Star Citizen deletes old logs.</div>
+    <div class="dsec">Transfer</div>
     <div class="datarow three">
       <div class="dcard">
         <div class="dct" data-ic="export">Export backup</div>
-        <div class="dcd">Save your whole career as a single file — keep it safe, or move it to another PC.</div>
+        <div class="dcd">Your full career in one file. Use it as a backup or to move CSR to another PC.</div>
         <button class="mbtn go" id="dmExport">Download archive</button>
+        <label class="dfoot tlmchk"><input type="checkbox" id="dmExportTlm"> <span id="dmExportTlmLbl">Include telemetry</span></label>
       </div>
       <div class="dcard">
         <div class="dct" data-ic="transfer">Import logs</div>
-        <div class="dcd">Copied your <b>Game.log</b> folder from another PC? Point CSR at it — no need to install CSR over there first.</div>
+        <div class="dcd">Load a <b>Game.log</b> folder copied from another PC. CSR does not need to be installed there.</div>
         <button class="mbtn go" id="dmLogsBtn">Choose log folder…</button>
-        <div class="pastefall">
-          <div class="pastehint" id="dmHint">Windows opens that dialog <b>behind</b> this
-            window — look in your taskbar. Or just paste the path below.</div>
-          <button class="linky" id="dmPasteToggle">or paste the folder path</button>
+        <div class="dfoot pastefall">
+          <div class="pastehint" id="dmHint">The folder picker can open behind this window. Check the taskbar, or paste the path below.</div>
+          <button class="linky" id="dmPasteToggle">Paste a folder path</button>
           <div class="pasterow" id="dmPasteRow">
             <input type="text" id="dmPastePath" spellcheck="false"
-                   placeholder="D:\path\to\the\copied\logbackups">
+                   placeholder="D:\path\to\logbackups">
             <button class="mbtn go" id="dmPasteGo">Use this folder</button>
           </div>
         </div>
       </div>
       <div class="dcard">
         <div class="dct" data-ic="import">Import backup</div>
-        <div class="dcd">Load <b>.json</b> backups exported from CSR. Pick one or several.</div>
-        <button class="mbtn ghost" id="dmImportBtn">Choose backup file(s)…</button>
-        <input type="file" id="dmFile" accept=".json,.csr,application/json" multiple style="display:none">
+        <div class="dcd">Load one or more <b>.json</b> or <b>.zip</b> backups exported from CSR.</div>
+        <button class="mbtn ghost" id="dmImportBtn">Choose backup files…</button>
+        <div class="dfoot">Merged by session, no duplicates.</div>
+        <input type="file" id="dmFile" accept=".json,.zip,.csr,application/json,application/zip" multiple style="display:none">
       </div>
     </div>
-    <div class="mb dmnote">Everything merges and de-duplicates by session, so importing twice never double-counts.</div>
+    <div class="dsec">Online Data</div>
     <div class="onlinebar">
       <div>
-        <div class="ol-t">Online data</div>
-        <div class="ol-s">Ship &amp; weapon art, manufacturer logos, your RSI dossier and orgs — and the
-          catalogues CSR names things from: the RSI ship matrix, the SC-Wiki item catalogue,
-          mission index and crafting catalogue. Nothing here updates on its own; press the button after a patch, if you&rsquo;ve
-          joined an org, or if artwork failed to load. <b>Takes about two minutes</b> — the catalogue
-          is one call per blueprint. <span id="olWhen"></span></div>
+        <div class="ol-s">Ship and weapon art, manufacturer logos, your RSI profile and orgs, plus the ship,
+          item, mission and blueprint catalogues. Update after a patch or when art is missing.
+          Takes about 2 minutes.</div>
+        <div id="olWhen"></div>
       </div>
       <button class="mbtn ghost" id="olBtn">Update now</button>
     </div>
-    <div class="mb" id="dmMsg" style="min-height:18px;margin-top:4px"></div>
+    <div class="dsec">Telemetry</div>
+    <div class="tlmcard" id="tlmCard">
+      <div id="tlmChannels"></div>
+      <div class="tlmrow"><span class="tlml">Recorder</span><span id="tlmRec">—</span></div>
+      <div class="tlmrow"><label for="tlmRecord">Record telemetry</label>
+        <input type="checkbox" id="tlmRecord"></div>
+      <div class="tlmrow"><label for="tlmDetail">Detail</label>
+        <select id="tlmDetail">
+          <option value="full">Full · 1.7 MB per hour</option>
+          <option value="normal">Normal · 0.4 MB per hour</option>
+          <option value="light">Light · 0.1 MB per hour</option>
+        </select></div>
+      <div class="tlmrow"><label for="tlmKeep">Keep recordings</label>
+        <select id="tlmKeep">
+          <option value="">Forever</option>
+          <option value="365">1 year</option>
+          <option value="90">3 months</option>
+          <option value="30">1 month</option>
+        </select></div>
+      <div class="tlmrow"><label for="tlmMax">Space limit</label>
+        <select id="tlmMax">
+          <option value="">No limit</option>
+          <option value="5000">5 GB</option>
+          <option value="2000">2 GB</option>
+          <option value="1000">1 GB</option>
+          <option value="500">500 MB</option>
+          <option value="250">250 MB</option>
+        </select></div>
+      <div class="tlmrow tlmhint">Oldest recordings go first. Career stats from them stay.</div>
+      <div class="tlmrow"><span class="tlml">Groups</span><div class="tlmgroups" id="tlmGroups"></div></div>
+      <div class="tlmrow"><span id="tlmDisk">—</span>
+        <button class="mbtn ghost tlmbtn danger" id="tlmDeleteAll">Delete all recordings</button></div>
+      <div class="tlmrow" id="tlmUnmatched" style="display:none"></div>
+      <div class="tlmrow"><label for="tlmPhone">Tablet &amp; phone access</label>
+        <input type="checkbox" id="tlmPhone"></div>
+      <div class="tlmrow" id="tlmPhoneBox" style="display:none">
+        <div class="tlmqr"><div id="tlmQr"></div>
+          <div><div class="tlmurl" id="tlmUrl"></div>
+            <button class="mbtn ghost tlmbtn" id="tlmNewLink" style="margin-top:8px">New link</button>
+            <div class="dmnote">Windows asks to allow CSR on the network once. Allow private networks.</div></div></div>
+      </div>
+      <div class="tlmerr" id="tlmErr"></div>
+      <div class="dmnote">Detail and group changes apply to the next recording.</div>
+    </div>
+    <div class="mb" id="dmMsg" style="min-height:18px;margin:8px 0 4px"></div>
     <div class="mactions"><button class="mbtn ghost" id="dmClose">Close</button></div>
   </div>
+</div>
+
+<div class="kpop" id="kModal" role="dialog" aria-labelledby="kTitle">
+  <button class="kx" id="kClose" title="Close" aria-label="Close">×</button>
+  <div class="khead"><span class="kic" id="kIc"></span>
+    <div><div class="kh" id="kTitle">Kestrel K-7 Flight Slate</div>
+      <div class="ksub">Scan with a tablet or phone on the same Wi-Fi.</div></div></div>
+  <div id="kBody"><div class="dmnote">Loading…</div></div>
+  <div class="kerr" id="kErr"></div>
+  <div class="kacts">
+    <button class="mbtn ghost kbtn" id="kSettings" type="button"><i data-ic="tools"></i>Telemetry settings</button>
+    <a class="mbtn ghost kbtn" id="kPc" href="/live" target="_blank" rel="noopener"><i data-ic="display"></i>Open on this PC</a></div>
 </div>
 
 <div class="modal-back" id="aboutModal">
@@ -8771,8 +9843,9 @@ nav a::after{background:var(--menu-bg);border-color:var(--glass-line);box-shadow
          and your public profile are fetched from official sources only while the dashboard is being built.</p>
 
       <div class="ab-sec">Data sources</div>
-      <p>Ships &amp; art — RSI Ship Matrix. Item names — Star Citizen Wiki. Profile &amp; orgs — your public RSI pages.
-         Fonts — Chakra Petch &amp; Share Tech Mono (Google Fonts, OFL).</p>
+      <p>Ships &amp; art — RSI Ship Matrix. Item names &amp; pictures — Star Citizen Wiki. Icons for items the wiki has
+         no picture of — <a class="lk" href="https://xparrow-lite.pages.dev" target="_blank" rel="noopener">xparrow-lite</a>.
+         Profile &amp; orgs — your public RSI pages. Fonts — Chakra Petch &amp; Share Tech Mono (Google Fonts, OFL).</p>
 
       <div class="ab-sec">Found a bug or have feedback?</div>
       <p>Reports genuinely help — the button below opens your email app with a short template (and the version
@@ -8839,6 +9912,9 @@ function artUrls(d, size){
   if(!d) return [];
   if(d[0]==='r'){ const sm=d[1], lg=d[2];
     return [[sm, lg], [lg, sm], [lg.replace('store_large','store_hub_large'), lg]][size]; }
+  if(d[0]==='x'){ const x=DATA.xp; if(!x) return [];       // xparrow-lite fan icon, 128 px
+    if(d[2]==='t') return [x.base+'thumbs/sc/'+d[1]+'.webp'];   // armour and clothing, 256 px
+    return [x.base+(d[2]==='s'?'icons/ship/128/':'icons/128/')+d[1]+'.webp?v='+encodeURIComponent((x.v||{})[d[2]]||'')]; }
   if(d[0]==='w'){ const p=d[1], n=p.split('/').pop(), orig=WIKI_MEDIA+p;
     const t=w=>`${WIKI_MEDIA}thumb/${p}/${w}px-${n}${/\.webp$/i.test(n)?'':'.webp'}`;
     // the wiki resizes to fixed widths only (240, 320, 480, 640, 800, 960, 1200, 1280):
@@ -8973,6 +10049,7 @@ const ICON = {
   star:_SVG('<path d="M12 3.4l2.6 5.7 6.2.7-4.6 4.2 1.3 6.1L12 17l-5.5 3.1 1.3-6.1L3.2 9.8l6.2-.7z"/>'),
   starOn:_SVG('<path d="M12 3.4l2.6 5.7 6.2.7-4.6 4.2 1.3 6.1L12 17l-5.5 3.1 1.3-6.1L3.2 9.8l6.2-.7z" fill="currentColor"/>'),
   blueprints:_SVG('<rect x="3.5" y="3.5" width="17" height="17" rx="1.8"/><path d="M3.5 9h17"/><path d="M9 9v11.5"/><path d="M12.5 13h5M12.5 16.5h3.5"/>'),
+  tablet:_SVG('<rect x="2.8" y="5" width="18.4" height="14" rx="2.2"/><path d="M6 8.5h9M6 11.5h12M6 14.5h7"/><circle cx="18.6" cy="15.6" r=".9" fill="currentColor" stroke="none"/>'),
   search:_SVG('<circle cx="10.5" cy="10.5" r="6.2"/><path d="M15.2 15.2l5.3 5.3"/>'),
   helmet:_SVG('<path d="M4 15.5a8 8 0 0116 0V19H4z"/><path d="M7.5 13.2h9l-1 3.3h-7z"/>'),
   mag:_SVG('<rect x="8" y="2.8" width="8" height="18.4" rx="1.6"/><path d="M8 8.4h8M8 13.6h8"/>')
@@ -9462,6 +10539,183 @@ function placesHTML(v){
     barsCard('Most Visited Places','sessions · top 15','placeBars')+
     noteFold(`Logged when you land or dock, and when an inventory or shop screen opens. Flybys don’t show.`);
 }
+// ==== telemetry cards ====
+// From recordings matched to sessions (v.tlm). A stat a recording didn't have is absent:
+// its tile is left out, never shown as 0. Coverage is counted per stat.
+const tlmStats = v => (v.tlm && v.tlm.stats) || {};
+const tlmOn = v => !!(v.tlm && v.tlm.n_tlm);
+const tlmSess = n => `${fmt(n)} ${n===1?'session':'sessions'}`;
+// whole tanks without ".0", two decimals below 1
+const tlmTanks = x => {
+  if(!x) return '0 tanks';
+  if(x<0.01) return '<0.01 tanks';
+  const s = x>=1 ? (Number.isInteger(+x.toFixed(1)) ? fmt(Math.round(x)) : x.toFixed(1)) : x.toFixed(2);
+  return s+(s==='1'?' tank':' tanks');
+};
+const tlmNum = x => fmt(+x.toFixed(2));
+// tiles: {k: key or [keys], ic, label, f(values...)}. opts.keys: stats used by opts.body.
+function tlmCard(title, sub, tiles, v, opts={}){
+  const t=v.tlm, st=tlmStats(v);
+  if(!t || !t.n_tlm) return '';
+  const ks=x=>[].concat(x.k);
+  const shown=tiles.filter(x=>ks(x).every(k=>st[k]));
+  const used=(opts.keys||[]).filter(k=>st[k]);
+  const ns=shown.flatMap(x=>ks(x).map(k=>st[k].n)).concat(used.map(k=>st[k].n));
+  if(!ns.length) return '';
+  const top=Math.max(...ns);
+  const minis=shown.map(x=>{
+    const n=Math.min(...ks(x).map(k=>st[k].n));
+    return miniTile(icon(x.ic), x.f(...ks(x).map(k=>st[k].v)), x.label+(n<top?` (${tlmSess(n)})`:''));
+  }).join('');
+  return `<div class="card"${opts.id?` id="${opts.id}"`:''}><h3>${title}${sub?` <span class="u">— ${sub}</span>`:''}</h3>`+
+    (minis?`<div class="minis">${minis}</div>`:'')+(used.length&&opts.body?opts.body:'')+
+    `<div class="bsub">From ${fmt(top)} of ${fmt(t.n_sessions)} sessions with telemetry</div></div>`;
+}
+// One group per page holding that page's telemetry cards. Nothing when no card has data.
+function tlmGroup(n, ic, cards){
+  return cards ? group(n, ic, 'Telemetry', 'From your telemetry recordings', cards) : '';
+}
+function tlmPair(a, b){
+  return a&&b ? `<div class="grid2" style="margin-top:16px">${a}${b}</div>` : (a||b ? `<div style="margin-top:16px">${a||b}</div>` : '');
+}
+// split bar of durations in seconds. Minutes under 2 h, hours above.
+function tlmSplit(el, parts, small){
+  if(!el) return;
+  const total=parts.reduce((a,p)=>a+(p.value||0),0), u=total>=7200?3600:60;
+  splitbar(el, parts.map(p=>({...p, value:Math.round((p.value||0)/u*10)/10})),
+    {big:loadSecs(total), small:small+(u===60?' · minutes':' · hours')});
+}
+// running balance as a step line, points evenly spaced, dates under it
+function stepLine(el, pts){
+  if(!el) return;
+  if(pts.length<2){ el.innerHTML='<div class="empty">No balance changes yet.</div>'; return; }
+  const W=560, H=200, padL=64, padR=12, padT=14, padB=26, plotW=W-padL-padR, plotH=H-padT-padB;
+  const vals=pts.map(p=>p[1]);
+  let lo=Math.min(...vals), hi=Math.max(...vals);
+  if(hi===lo){ hi+=1; lo-=1; }
+  const r=hi-lo;
+  const yf=n=>Math.abs(n)>=1e6&&r>=1e5 ? (n/1e6).toFixed(r>=1e6?1:2)+'M'
+    : Math.abs(n)>=1e3&&r>=100 ? (n/1e3).toFixed(r>=1e3?0:1)+'k' : fmt(Math.round(n));
+  const x=i=>padL+plotW*i/(pts.length-1), y=val=>padT+plotH*(1-(val-lo)/r);
+  let s=`<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet">`;
+  for(let g=0; g<=4; g++){
+    const val=lo+r*g/4, yy=y(val).toFixed(1);
+    s+=`<line x1="${padL}" y1="${yy}" x2="${W-padR}" y2="${yy}" style="stroke:var(--grid)"/>`+
+       `<text class="axis" x="${padL-6}" y="${(+yy+3).toFixed(1)}" text-anchor="end">${yf(val)}</text>`;
+  }
+  let d=`M${x(0).toFixed(1)} ${y(vals[0]).toFixed(1)}`;
+  for(let i=1;i<pts.length;i++) d+=` H${x(i).toFixed(1)} V${y(vals[i]).toFixed(1)}`;
+  s+=`<path d="${d}" fill="none" style="stroke:var(--cyan)" stroke-width="2"/>`;
+  if(pts.length<=120) pts.forEach((p,i)=>{
+    s+=`<circle cx="${x(i).toFixed(1)}" cy="${y(p[1]).toFixed(1)}" r="2.5" style="fill:var(--cyan)"><title>${esc(ddmm(p[0].slice(0,10)))} ${esc(p[0].slice(11,16))}: ${fmt(p[1])} aUEC</title></circle>`;
+  });
+  const marks=[...new Set([0, Math.floor((pts.length-1)/2), pts.length-1])];
+  marks.forEach(i=>{
+    const anchor=i===0?'start':i===pts.length-1?'end':'middle';
+    s+=`<text class="axis" x="${x(i).toFixed(1)}" y="${H-6}" text-anchor="${anchor}">${esc(ddmm(pts[i][0].slice(0,10)))}</text>`;
+  });
+  el.innerHTML=s+'</svg>';
+}
+function tlmWallet(v){
+  return tlmCard('Wallet', 'aUEC', [
+    {k:'uec_end', ic:'credits', label:current==='all'?'Balance now':'Latest balance', f:auec},
+    {k:'uec_earned', ic:'credits', label:'Earned', f:auec},
+    {k:'uec_spent', ic:'spend', label:'Spent', f:auec},
+    {k:['uec_earned','uec_spent'], ic:'scales', label:'Net', f:(e,s)=>(e>s?'+':e<s?'−':'')+auec(Math.abs(e-s))},
+    {k:'uec_max_rise', ic:'credits', label:'Biggest rise', f:auec},
+    {k:'uec_max_drop', ic:'spend', label:'Biggest drop', f:auec},
+  ], v, {id:'tlm-wallet', keys:['uec_end'], body:`<div id="tlmWalletChart"></div>`});
+}
+function tlmWalletMount(v){ stepLine($('#tlmWalletChart'), (v.tlm||{}).wallet_series||[]); }
+// the settings a player toggles, in card order. The rest stay recorded, not shown.
+const IFCS_SHOWN=[['ifcs_coupled','Coupled'], ['ifcs_esp','ESP'], ['ifcs_g_safe','G-safe'],
+  ['ifcs_cruise_mode','Cruise'], ['ifcs_speed_limiter','Speed limiter'], ['ifcs_proximity_assist','Proximity assist'],
+  ['ifcs_gravity_compensation','Gravity compensation'], ['flight_light_amplification','Light amplification']];
+function tlmFlightCards(v){
+  const km=m=>(m>=100000 ? fmt(Math.round(m/1000)) : (m/1000).toFixed(1))+' km';
+  const rec=tlmCard('Flight records', '', [
+    {k:'top_speed', ic:'flight', label:'Top speed', f:x=>fmt(Math.round(x))+' m/s'},
+    {k:'max_g', ic:'pulse', label:'Max G', f:x=>x.toFixed(1)+' G'},
+    {k:'dist_m', ic:'space', label:'Distance flown', f:km},
+    {k:'takeoffs', ic:'flight', label:'Take-offs', f:fmt},
+    {k:'landings', ic:'planet', label:'Landings', f:fmt},
+    {k:'gear_cycles', ic:'tools', label:'Gear cycles', f:fmt},
+    {k:'t_boost', ic:'time', label:'Boost time', f:loadSecs},
+    {k:'n_boost_critical', ic:'warning', label:'Boost ran out', f:fmt},
+    {k:'h2_used', ic:'cargo', label:'Hydrogen used', f:tlmTanks},
+    {k:'qt_used', ic:'satellite', label:'Quantum fuel used', f:tlmTanks},
+  ], v, {id:'tlm-flight', keys:['t_nav','t_scm'], body:`<div id="tlmModes"></div>`});
+  const fly=tlmCard('How you fly', 'share of flight time', [], v,
+    {id:'tlm-ifcs', keys:['t_ifcs'], body:`<div class="bars" id="tlmIfcs"></div>`});
+  const wpn=tlmCard('Weapons', 'presets by time used', [], v,
+    {id:'tlm-presets', keys:['presets'], body:`<div class="bars" id="tlmPresets"></div>`});
+  return rec+tlmPair(fly, wpn);
+}
+function tlmFlightMount(v){
+  const st=tlmStats(v);
+  if(st.t_nav||st.t_scm) tlmSplit($('#tlmModes'), [
+    {label:'NAV', value:(st.t_nav||{}).v, color:'#b98bff'},
+    {label:'SCM', value:(st.t_scm||{}).v, color:'#42d0e6'}], 'flying');
+  const fi=$('#tlmIfcs');
+  if(fi && st.t_ifcs){
+    const den=(st.t_flying_ifcs||{}).v||0;
+    const t=st.t_ifcs.v;
+    hbars(fi, IFCS_SHOWN.filter(([k])=>t[k]>0).map(([k,name])=>{
+      const pct=den ? Math.min(100, Math.round(100*t[k]/den)) : 0;
+      return {label:name, value:pct, disp:pct+'%', title:loadSecs(t[k])};
+    }));
+  }
+  const pr=$('#tlmPresets');
+  if(pr && st.presets) hbars(pr, Object.entries(st.presets.v).sort((a,b)=>b[1]-a[1])
+    .map(([k,s])=>({label:k, value:s, disp:loadSecs(s), color:'#f4a92a'})));
+}
+const LIGHT_NAMES={misl:'Missile', hit:'Hit', prox:'Proximity', shld:'Shields', pwr:'Power', wpn:'Weapons',
+  thr:'Thrusters', cool:'Cooling', qdrv:'Quantum drive', radr:'Radar'};
+const LIGHT_FIRST=['misl','hit','prox'];
+function tlmCombatCards(v){
+  return tlmCard('Warnings &amp; countermeasures', 'warnings by light', [
+    {k:'cm_used', ic:'target', label:'Decoys used', f:x=>fmt(x.DECOY||0)},
+    {k:'cm_used', ic:'satellite', label:'Noise used', f:x=>fmt(x.NOISE||0)},
+  ], v, {id:'tlm-warn', keys:['warn'], body:`<div class="bars" id="tlmWarn"></div>`});
+}
+function tlmCombatMount(v){
+  const el=$('#tlmWarn'), w=(tlmStats(v).warn||{}).v;
+  if(!el || !w) return;
+  const rank=k=>{ const i=LIGHT_FIRST.indexOf(k); return i<0?99:i; };
+  hbars(el, Object.entries(w).sort((a,b)=>rank(a[0])-rank(b[0]) || b[1]-a[1])
+    .map(([k,n])=>({label:LIGHT_NAMES[k]||k, value:n, disp:fmt(n), color:'#ff9147'})));
+}
+function tlmActivityCards(v){
+  const body=tlmCard('On foot &amp; in seat', 'time split', [], v,
+    {id:'tlm-body', keys:['t_on_foot','t_eva','t_seated','t_pilot','t_gunner','t_crew'],
+     body:`<div class="grid2"><div id="tlmLoco"></div><div id="tlmCrew"></div></div>`});
+  const temp=x=>Math.round(x)+' °C';
+  const surv=tlmCard('Survival', '', [
+    {k:'n_downed', ic:'medical', label:'Times downed', f:fmt},
+    {k:'n_dead', ic:'deaths', label:'Deaths', f:fmt},
+    {k:'t_no_air', ic:'warning', label:'Out of air', f:loadSecs},
+    {k:'min_health', ic:'medical', label:'Lowest health', f:x=>fmt(Math.round(x))},
+    {k:'t_starving', ic:'time', label:'Starving', f:loadSecs},
+    {k:'t_dehydrated', ic:'time', label:'Dehydrated', f:loadSecs},
+    {k:'max_radiation', ic:'warning', label:'Peak radiation', f:tlmNum},
+    {k:'max_intox', ic:'pulse', label:'Peak intoxication', f:tlmNum},
+    {k:'max_ext_temp', ic:'day', label:'Hottest surroundings', f:temp},
+    {k:'min_ext_temp', ic:'night', label:'Coldest surroundings', f:temp},
+  ], v, {id:'tlm-survival'});
+  return tlmPair(body, surv);
+}
+function tlmActivityMount(v){
+  const st=tlmStats(v), s=k=>(st[k]||{}).v;
+  if(st.t_on_foot||st.t_eva||st.t_seated) tlmSplit($('#tlmLoco'), [
+    {label:'On foot', value:s('t_on_foot'), color:'#4ade80'},
+    {label:'EVA', value:s('t_eva'), color:'#b98bff'},
+    {label:'Seated', value:s('t_seated'), color:'#42d0e6'}], 'on foot, EVA, seated');
+  if(st.t_pilot||st.t_gunner||st.t_crew) tlmSplit($('#tlmCrew'), [
+    {label:'Pilot', value:s('t_pilot'), color:'#42d0e6'},
+    {label:'Gunner', value:s('t_gunner'), color:'#ff9147'},
+    {label:'Crew', value:s('t_crew'), color:'#f4a92a'}], 'pilot, gunner, crew');
+}
+
 function secFlight(v){
   // per-session/per-hour rates only mean something where jumps were actually logged
   const jps = (v.qt_known!==false && v.sessions) ? (v.qt/v.sessions).toFixed(1) : null;
@@ -9491,8 +10745,9 @@ function secFlight(v){
       ])+
       barsCard('Systems Visited','sessions with location activity there','sysBars')+
       noteFold(
-        `Systems come from location names in the log. Fuel and distance aren't logged.`,
-        `Stanton, Pyro and Nyx are the only live systems; a session counts for one if any location there shows up. Refuelling is a server-side transaction and the client only logs an error with no amount, so fuel used and refuel spend can't be shown. Fuel pods bought at a shop count under Economy — that's a purchase, not a refuel.`)
+        `Systems come from location names in the log. `+(tlmOn(v) ? `Fuel and distance aren't in the game log. Flight records come from telemetry.`
+          : `Fuel and distance aren't logged. Turn on telemetry in Backup &amp; transfer to record them.`),
+        `Stanton, Pyro and Nyx are the only live systems. A session counts for one if any location there shows up. Refuelling is a server-side transaction. The client only logs an error with no amount.`+(tlmOn(v) ? ` Fuel used comes from telemetry. Refuel spend isn't recorded.` : ` Fuel used and refuel spend can't be shown.`)+` Fuel pods bought at a shop count under Economy as purchases.`)
     )+
     group(3,'planet','Where You\u2019ve Been','Jurisdictions, armistice zones and hangar requests from the HUD, plus the places you landed',
       (v.hud_known ? kpiRow([
@@ -9512,8 +10767,10 @@ function secFlight(v){
       placesHTML(v)+
       noteFold(
         `From the HUD notices the game writes to the log, 4.5 onward.`,
-        `A jurisdiction is who owns the space: UEE for open Stanton space, the four corporations for their planets, Ungoverned, Rough &amp; Ready and People\u2019s Alliance for Pyro, Klescher for prison. Armistice-zone notices fire at every hangar door, so entries within ten minutes count as one visit. The calibration notice names the pilot, so a jump someone else started is a crew jump. Party time runs from accepting an invite to leaving the group; a party you host leaves no trace.`))
+        `A jurisdiction is who owns the space: UEE for open Stanton space, the four corporations for their planets, Ungoverned, Rough &amp; Ready and People\u2019s Alliance for Pyro, Klescher for prison. Armistice-zone notices fire at every hangar door, so entries within ten minutes count as one visit. The calibration notice names the pilot, so a jump someone else started is a crew jump. Party time runs from accepting an invite to leaving the group; a party you host leaves no trace.`))+
+    tlmGroup(4,'pulse',tlmFlightCards(v))
   ;
+  tlmFlightMount(v);
   const byTime = v.ships_rank==='time';
   const shipItems=(v.ships_top||[]).map(([n,c,first,last,to,aboard,seat])=>({label:n, full:n,
     value: byTime ? aboard : c, href:wikiURL(n),
@@ -9618,7 +10875,9 @@ function secCombat(v){
         [icon('deaths'), fmt(v.corpse_loots||0), 'Corpse loots (approx.)', `gear stripped off NPC bodies`],
       ])
     )+
+    tlmGroup(6,'warning',tlmCombatCards(v))+
     `${NOTE}`;
+  tlmCombatMount(v);
   hbars($('#gunBars'), toItems(guns.map(w=>[w[0],w[1]]), null, true), {art:'gun'});
   hbars($('#toolBars'), toItems(tools.map(w=>[w[0],w[1]]), null, true).map(x=>({...x,tool:true})), {art:'item'});
   splitbar($('#causeChart'), [{label:'Collision',value:dc.collision,color:'#ff9147'},{label:'Destroyed / other',value:dc.other,color:'#ff5468'}], {big:v.deaths, small:'ship deaths'});
@@ -9753,8 +11012,10 @@ function secEconomy(v){
     group(1,'spend','Spending','Where your aUEC went — every shop purchase your client sent',
       K+`<div class="grid2">`+barsCard('Top Items Bought','ranked by aUEC spent · qty shown','itemBars')+
       barsCard('What You Buy','purchases by item category','catBars')+`</div>`)+commRow+
+    tlmGroup(3,'credits',tlmWallet(v))+
     noteFold(
-      `Spend is real — the log carries the price of every purchase. Balance, earnings and sales aren't logged.`,
+      `Spend is real — the log carries the price of every purchase. `+(tlmOn(v) ? `Balance, earnings and sales aren't in the game log. Wallet is from telemetry.`
+        : `Balance, earnings and sales aren't logged. Turn on telemetry in Backup &amp; transfer to record them.`),
       `Purchases are grouped by item category rather than store; the shop codes in the log aren't reliable brand names. Fleet size is your ASOP list read at a terminal, so it includes ships bought with aUEC as well as pledges.`);
   const bought=(v.top_items||[]).map(([n,amt,q])=>({label:n, value:amt, disp:auec(amt)+' · ×'+fmt(q), href:wikiURL(n),
     ak: lart('ship', n) ? 'ship' : 'item'}));
@@ -9763,6 +11024,7 @@ function secEconomy(v){
   const topShip=bought.find(d=>d.ak==='ship'), lead=topShip||bought[0];
   if(lead) mountHero(lead.ak, lead.label, topShip?'Biggest ship purchase':'Top purchase', lead.disp, lead.href);
   hbars($('#catBars'), (v.buy_cats||[]).map(([n,c])=>({label:n, value:c, disp:fmt(c)+' buys'})));
+  tlmWalletMount(v);
 }
 
 // ---- Blueprints (4.7+) ----
@@ -10437,7 +11699,8 @@ function secActivity(v){
       `<div class="grid3" style="margin-top:16px">`+
       cardHTML('By Hour','play start time','hourChart')+
       cardHTML('By Weekday','','dowChart')+
-      barsCard('Session Length','how long you play','distBars')+`</div>`);
+      barsCard('Session Length','how long you play','distBars')+`</div>`)+
+    tlmGroup(3,'activity',tlmActivityCards(v));
   const ms=Object.keys(v.months).sort();
   const mitems=ms.map(m=>{const [y,mm]=m.split('-');return {label:MON[+mm-1]+" '"+y.slice(2), value:+(v.months[m]/3600).toFixed(1), disp:(v.months[m]/3600).toFixed(0)+' h', full:m, color:'#3fd0e6'};});
   if(mitems.length) vbars($('#monthChart'), mitems, {h:230, w:Math.max(560,mitems.length*54), rot:true, fmtY:x=>x+'h'});
@@ -10447,6 +11710,7 @@ function secActivity(v){
   vbars($('#hourChart'), v.by_hour.map((c,i)=>({label:(i%3===0?String(i):''), value:c, full:i+':00', disp:c+' sessions', color:'#b98bff'})), {h:210, maxbw:16});
   vbars($('#dowChart'), v.by_dow.map((c,i)=>({label:DOW[i], value:c, full:DOW[i], disp:c+' sessions', color:'#f4a92a'})), {h:210});
   hbars($('#distBars'), (v.session_dist||[]).map(([n,c])=>({label:n, value:c, disp:fmt(c)})));
+  tlmActivityMount(v);
 }
 
 // ---- System & Stability ----
@@ -10981,8 +12245,17 @@ function navLive(w){
   const on=!!(SERVED && w && w.on);
   d.classList.toggle('on', on);
   d.classList.toggle('hot', !!(on && w.live));
-  if(on) d.title = w.live ? 'Session live — checking every '+w.poll+'s'
-                          : 'Watching your logs — checking every '+w.poll+'s';
+  if(on) d.title = (w.live ? 'Session live — checking every '+w.poll+'s'
+                          : 'Watching your logs — checking every '+w.poll+'s')+
+                   (TLM_LINE?'\nTelemetry: '+TLM_LINE:'');
+}
+let TLM_LINE='';
+function tlmLine(t){
+  if(!t||t.state==='idle') return '';
+  if(t.state==='live') return t.file?'recording':(t.reason==='write'?"can't write the file":'live, not recording');
+  if(t.state==='waiting') return 'waiting for the game';
+  if(t.state==='off') return t.reason==='schema'?'no schema':(t.reason==='other'?'recording in another CSR window':'off in the game');
+  return '';
 }
 var LAST_WATCH=null;
 function renderWatch(w){
@@ -11036,7 +12309,8 @@ function renderWatch(w){
     `<div class="wbar"><span>Poll <b>${w.poll}s</b></span>`+
     (w.ago!=null?`<span>All channels <b>${esc(seen(w.ago))}</b></span>`:'')+
     `<span>Events raised <b>${fmt(w.raised)}</b></span>`+
-    `<span>Watching for <b>${ago(w.uptime)}</b></span></div>`;
+    `<span>Watching for <b>${ago(w.uptime)}</b></span>`+
+    (TLM_LINE?`<span>Telemetry: <b>${esc(TLM_LINE)}</b></span>`:'')+`</div>`;
 }
 // ---- inline confirmation ----
 // The button arms into its own confirm rather than opening a modal, so destructive
@@ -11720,6 +12994,10 @@ document.addEventListener('keydown',e=>{
 });
 
 document.querySelectorAll('#nav a').forEach(a=>{
+  if(!a.dataset.sec){   // the Kestrel K-7 opens its own window, not a page
+    const ls=a.querySelector('span'); if(ls&&a.id==='navKestrel') ls.innerHTML=ICON.tablet;
+    if(a.id==='navKestrel') a.onclick=e=>{ e.preventDefault(); kestrelOpen(); };
+    return; }
   const s=a.querySelector('span'); if(s&&ICON[a.dataset.sec]) s.innerHTML=ICON[a.dataset.sec];  // swap emoji → HUD glyph
   a.onclick=(e)=>{ e.preventDefault();
     section=a.dataset.sec; document.querySelectorAll('#nav a').forEach(x=>x.classList.toggle('active',x===a)); render();
@@ -11731,9 +13009,6 @@ document.querySelectorAll('#nav a').forEach(a=>{
     if(el) el.innerHTML=icon(name)+(after||'');};
   set('#dataBtn','backup'); set('#refreshBtn','refresh');
   set('#bugBtn','bug',' Report a bug');
-  const dct=document.querySelectorAll('.dcard .dct');
-  if(dct[0]) dct[0].innerHTML=icon('export')+' Export backup';
-  if(dct[1]) dct[1].innerHTML=icon('import')+' Import / merge';
 })();
 // jump to a section from an in-content link (e.g. Combat → Legacy Combat)
 // Smooth scrolling is unreliable — it is a no-op under reduced-motion settings and in
@@ -11899,16 +13174,82 @@ $('#themeBtn').onclick=()=>{
 
 // ---- local-app mode: in-page Refresh (only when served by the CSR app) ----
 function modal(id,on){ const m=$('#'+id); if(m) m.classList.toggle('on', on); }
+// ---- Kestrel K-7: made for a tablet. Opening it shows a code to scan on a device on the
+// same network, with the PC as the fallback.
+function kestrelPlace(){
+  const pop=$('#kModal'), a=$('#navKestrel');
+  if(!pop.classList.contains('on')) return;
+  pop.classList.toggle('sheet', innerWidth<=760);
+  if(innerWidth<=760 || !a){ pop.style.left=pop.style.top=''; return; }
+  const r=a.getBoundingClientRect();
+  pop.style.left=Math.round(r.right+12)+'px';
+  pop.style.top=Math.round(Math.max(12, Math.min(r.top, innerHeight-pop.offsetHeight-12)))+'px';
+  pop.style.setProperty('--ka', Math.round(r.top+r.height/2-parseFloat(pop.style.top))+'px');
+}
+function kestrelOpen(){
+  const pop=$('#kModal');
+  if(pop.classList.contains('on')){ $('#kClose').click(); return; }
+  modal('kModal', true); kestrelPlace();
+  const ic=$('#kIc'); if(ic) ic.innerHTML=ICON.tablet;
+  document.querySelectorAll('#kModal i[data-ic]').forEach(i=>{ if(!i.firstChild) i.innerHTML=ICON[i.dataset.ic]||''; });
+  $('#kErr').textContent='';
+  kestrelLoad();
+}
+function kestrelLoad(){
+  return fetch('/api/telemetry/status',{cache:'no-store'}).then(r=>r.json()).then(st=>{ kestrelRender(st); kestrelPlace(); })
+    .catch(()=>{ $('#kBody').innerHTML='<div class="dmnote">CSR isn’t running. Start CSR.exe and try again.</div>'; });
+}
+function kestrelRender(st){
+  const s=(st&&st.settings)||{}, ph=(st&&st.phone)||{}, body=$('#kBody');
+  const rec=st&&st.recorder ? `<div class="kstat"><span>Recorder</span>${esc(tlmRecText(st.recorder))}</div>` : '';
+  if(!s.phone){
+    body.innerHTML=`<div class="kstep"><b>Tablet &amp; phone access is off.</b> Turn it on to serve Kestrel on your
+      local network (ports 7890-7899). Only Kestrel is exposed. Nothing leaves your network.</div>
+      <button class="mbtn go kon" id="kOn">Turn on tablet &amp; phone access</button>${rec}`;
+    $('#kOn').onclick=()=>{ $('#kOn').disabled=true;
+      tlmPost('/api/telemetry/settings',{phone:true}).then(res=>{
+        if(!res.ok) $('#kErr').textContent=res.error||'Could not turn it on.';
+        kestrelLoad(); }).catch(()=>{ $('#kErr').textContent='Lost contact with CSR.'; }); };
+    return;
+  }
+  if(!ph.url){
+    body.innerHTML=`<div class="kstep">${ph.why==='ports'?'Tablet &amp; phone access did not start. Ports 7890-7899 are in use.'
+      :ph.why==='config'?'Tablet &amp; phone access did not start. Cannot save the link key to csr_config.json.'
+      :'Tablet &amp; phone access did not start.'}</div>${rec}`;
+    return;
+  }
+  body.innerHTML=`<div class="kqr"><div class="kcode">${ph.qr_svg||''}</div>
+      <ol class="ksteps"><li>Connect your tablet or phone to the same Wi-Fi as this PC.</li>
+        <li>Scan the code with its camera, or open the link.</li>
+        <li>Add it to the home screen for a full-screen slate.</li></ol></div>
+    <div class="kurl"><code id="kUrl">${esc(ph.url)}</code><button class="mbtn ghost tlmbtn" id="kCopy">Copy link</button>
+      <button class="mbtn ghost tlmbtn" id="kNew" title="Old links and devices stop working">New link</button></div>
+    <div class="dmnote">Windows asks to allow CSR on the network once. Allow private networks.</div>${rec}`;
+  $('#kCopy').onclick=()=>copyText(ph.url, ok=>{ $('#kCopy').textContent=ok?'Copied':'Copy failed';
+    setTimeout(()=>{ const b=$('#kCopy'); if(b) b.textContent='Copy link'; },1600); });
+  $('#kNew').onclick=()=>confirmBtn($('#kNew'),'Confirm. Old links stop working.',()=>{
+    tlmPost('/api/telemetry/new-link').then(res=>{ if(!res.ok) $('#kErr').textContent=res.error||'Could not save.'; kestrelLoad(); })
+      .catch(()=>{ $('#kErr').textContent='Lost contact with CSR.'; }); });
+}
+$('#kClose').onclick=()=>{ modal('kModal', false); if(location.hash==='#kestrel') history.replaceState(null,'',location.pathname+location.search); };
+document.addEventListener('mousedown', e=>{ const pop=$('#kModal');
+  if(pop.classList.contains('on') && !pop.contains(e.target) && !e.target.closest('#navKestrel')) $('#kClose').click(); });
+addEventListener('resize', kestrelPlace);
+document.addEventListener('keydown', e=>{ if(e.key==='Escape' && $('#kModal').classList.contains('on')) $('#kClose').click(); });
+$('#kSettings').onclick=e=>{ e.preventDefault(); $('#kClose').click(); $('#dataBtn').click();
+  setTimeout(()=>{ const c=$('#tlmCard'); if(c) c.scrollIntoView({block:'center'}); }, 150); };
 let SERVED=false;
 // probe the local server; if absent (opened as a plain file), the buttons stay hidden
 fetch('/api/status').then(r=>r.ok?r.json():Promise.reject()).then(s=>{
   // SERVED flips here, asynchronously — anything whose visibility depends on it has
   // to be told again, or it stays hidden from the one render that ran before this.
   SERVED=true; $('#refreshBtn').style.display=''; $('#dataBtn').style.display='';
+  $('#navKestrel').style.display='';
+  if(location.hash==='#kestrel') kestrelOpen();
   renderBell();
   if(s&&s.sessions!=null) $('#dmCount').textContent=fmt(s.sessions)+' sessions';
   if(s&&s.online){ ONLINE=s.online; olWhen(); }
-  if(s){ CSR_CONSOLE={hidden:!!s.console_hidden,supported:!!s.console_supported}; }
+  if(s){ CSR_CONSOLE={hidden:!!s.console_hidden,supported:!!s.console_supported,log:!!s.log_file,autostart:s.autostart}; }
   setStatus(s&&s.busy?'busy':'online');
   // the System tab hides its apply buttons until it knows CSR is app-hosted
   if(section==='system'||section==='stability') render();
@@ -11927,7 +13268,7 @@ function runRefresh(full){
     fetch('/api/refresh'+(full?'?full=1':''),{method:'POST'}).then(r=>r.json()).then(res=>{
       if(res.ok){ CSRTerm.finish(()=>location.reload()); }
       else{ CSRTerm.fail('refresh failed — check the CSR window'); }
-    }).catch(()=>{ CSRTerm.fail('lost contact with the CSR app — it may have been closed'); });
+    }).catch(()=>{ CSRTerm.fail('Lost contact with CSR.'); });
   }).catch(()=>modal('offlineModal',true));
 }
 $('#rfGo').onclick=()=>runRefresh(false);
@@ -11941,7 +13282,7 @@ $('#offClose').onclick=()=>modal('offlineModal',false);
 // It cannot START CSR — a web page has no way to launch a program on your PC — so
 // when it's offline the menu explains what to run instead.
 let CSR_STATE='checking';
-let CSR_CONSOLE={hidden:false,supported:false};
+let CSR_CONSOLE={hidden:false,supported:false,log:false,autostart:null};
 function setStatus(st, note){
   CSR_STATE=st;
   const w=$('#statusBtn').parentElement;
@@ -11950,23 +13291,32 @@ function setStatus(st, note){
   $('#statusTx').textContent = st==='online'?'CSR ON':st==='busy'?'WORKING':'OFFLINE';
   // the label is hidden now, so the same words go to the hover tooltip and to the
   // accessible name — a bare coloured dot has neither on its own
-  const tip={online:'CSR is running — click for options',
-             busy:'CSR is working — scanning your logs',
-             offline:'CSR isn’t running — this is a saved copy'}[st] || 'CSR status';
+  const tip={online:'CSR running',
+             busy:'CSR scanning logs',
+             offline:'CSR not running. Saved copy.'}[st] || 'CSR status';
   const stBtn=$('#statusBtn');
   stBtn.dataset.tip=tip; stBtn.setAttribute('aria-label', tip); stBtn.title='';
-  const m={online:['CSR is running','Serving this page. Refresh, import and backup all work.'],
-           busy:['Working…','CSR is scanning your logs. This page updates when it finishes.'],
-           offline:['CSR isn’t running','You’re viewing a saved copy of your dashboard. It stays fully readable, but Refresh and Import need the app.']}[st];
+  const m={online:['CSR is running','Refresh, import and backup are available.'],
+           busy:['Scanning…','Reading your logs. The page updates when done.'],
+           offline:['CSR is not running','Saved copy. Start CSR to refresh or import.']}[st];
   $('#smState').textContent=m[0];
   $('#smBody').innerHTML=(note||m[1]);
-  const conBtn = CSR_CONSOLE.supported
-    ? `<button class="mbtn" id="smConsole">${CSR_CONSOLE.hidden?'Show':'Hide'} console</button>` : '';
+  const conBtn = (CSR_CONSOLE.supported
+    ? `<button class="mbtn" id="smConsole">${CSR_CONSOLE.hidden?'Show':'Hide'} console</button>` : '')+
+    (CSR_CONSOLE.log ? `<button class="mbtn" id="smLog">Open log</button>` : '')+
+    (CSR_CONSOLE.autostart!=null ? `<button class="mbtn${CSR_CONSOLE.autostart?' on':''}" id="smAuto" aria-pressed="${!!CSR_CONSOLE.autostart}">Start with Windows: ${CSR_CONSOLE.autostart?'on':'off'}</button>` : '');
   $('#smActs').innerHTML = st==='offline'
-    ? `<span class="dmnote">Start <b>CSR.exe</b> again, then reload this page.</span>`
+    ? `<span class="dmnote">Start <b>CSR.exe</b>, then reload this page.</span>`
     : conBtn+`<button class="mbtn" id="smRestart">Restart</button>`+
       `<button class="mbtn danger" id="smStop">Shut down</button>`;
-  const rb=$('#smRestart'), sb=$('#smStop'), cb=$('#smConsole');
+  const rb=$('#smRestart'), sb=$('#smStop'), cb=$('#smConsole'), lb=$('#smLog'), ab=$('#smAuto');
+  if(lb) lb.onclick=()=>{ fetch('/api/open-log',{method:'POST'}).catch(()=>{}); };
+  if(ab) ab.onclick=()=>{
+    fetch('/api/autostart',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({on:!CSR_CONSOLE.autostart})}).then(r=>r.json()).then(r=>{
+        CSR_CONSOLE.autostart=r.autostart; setStatus(CSR_STATE);
+      }).catch(()=>{});
+  };
   if(rb) rb.onclick=csrRestart;
   if(sb) sb.onclick=csrShutdown;
   if(cb) cb.onclick=()=>{
@@ -11983,17 +13333,9 @@ function setStatus(st, note){
 // already on that tab, which is where most of the links into this live.
 function gotoCrashes(){
   bellMenu(false);
-  const go=()=>{
-    const g=[...document.querySelectorAll('.gsec')]
-      .find(s=>s.querySelector('.gt') && s.querySelector('.gt').textContent==='Crashes');
-    if(!g) return;
-    // Land the heading just below the sticky topbar rather than under it.
-    const tb=document.querySelector('.topbar');
-    const off=(tb?tb.getBoundingClientRect().height:0)+16;
-    scrollToY(g.getBoundingClientRect().top+window.pageYOffset-off);
-  };
-  if(section!=='stability'){ gotoSec('stability'); setTimeout(go, 220); }
-  else go();
+  SV.page='crashes'; svSave();
+  if(section!=='stability') gotoSec('stability'); else render();
+  setTimeout(snavSettle, 60);
 }
 function alertHost(){
   let el=$('#alerts');
@@ -12026,7 +13368,7 @@ function renderBell(){
     `<div class="bw">${esc(notifTime(e.ts))}${e.test?' · simulated':''}`+
     (e.kind==='crash'&&!e.test?`<a onclick="gotoCrashes()">See crash history →</a>`:'')+
     `</div></div></div>`).join('')
-    : `<div class="bm-empty">Nothing raised while this page has been open.</div>`;
+    : `<div class="bm-empty">No alerts since this page opened.</div>`;
 }
 function notifAdd(e){
   if(NOTIF.some(x=>x.id===e.id)) return false;
@@ -12080,8 +13422,9 @@ function setPollRate(ms){
 function pollStatus(){
   return fetch('/api/status',{cache:'no-store'}).then(r=>r.ok?r.json():Promise.reject())
     .then(s=>{ if(s&&s.online){ONLINE=s.online; olWhen();}
-               if(s){CSR_CONSOLE={hidden:!!s.console_hidden,supported:!!s.console_supported};}
+               if(s){CSR_CONSOLE={hidden:!!s.console_hidden,supported:!!s.console_supported,log:!!s.log_file,autostart:s.autostart};}
                if(s&&s.events) s.events.forEach(showAlert);
+               if(s) TLM_LINE=tlmLine(s.tlm);
                if(s&&s.watch) renderWatch(s.watch);
                // check in more often while Star Citizen is actually writing its log,
                // so a crash surfaces in ~5s instead of ~8s; back off when it isn't
@@ -12149,10 +13492,10 @@ function olWhen(){
   const el=$('#olWhen'); if(!el) return;
   const ts=ONLINE.profile||ONLINE.forced, c=ONLINE.catalogues||{};
   const ago=d=>{ const n=Math.floor((Date.now()-new Date(d))/86400000); return n<1?'today':n===1?'yesterday':n+' days ago'; };
-  let s = ts ? 'Last updated '+ago(ts)+'. ' : '';
+  let s = ts ? 'Updated '+ago(ts) : 'Never updated';
   const cat=['ships','items','missions','blueprints'].filter(k=>c[k]).map(k=>`${k} ${ago(c[k])}`).join(', ');
-  if(cat) s += `Catalogues pulled: ${cat}.`;
-  if(c.stale) s += ` <b style="color:var(--amber)">A catalogue is more than ${c.max_days} days old — new ships, items, missions or blueprints may be missing until you update.</b>`;
+  if(cat) s += ` · Catalogues: ${cat}`;
+  if(c.stale) s += `<b class="olstale">A catalogue is over ${c.max_days} days old. Update to get new ships, items, missions and blueprints.</b>`;
   el.innerHTML=s;
 }
 $('#olBtn').onclick=()=>{
@@ -12163,13 +13506,145 @@ $('#olBtn').onclick=()=>{
     if(res.ok){ CSRTerm.finish(()=>location.reload()); }
     else{ b.disabled=false; b.textContent=was; CSRTerm.fail(res.error||'update failed'); }
   }).catch(()=>{ b.disabled=false; b.textContent=was;
-    CSRTerm.fail('lost contact with the CSR app — it may have been closed'); });
+    CSRTerm.fail('Lost contact with CSR.'); });
 };
 
 // ---- data / backup modal: export + import the session archive ----
-$('#dataBtn').onclick=()=>{ $('#dmMsg').textContent=''; olWhen(); modal('dataModal',true); };
-$('#dmClose').onclick=()=>modal('dataModal',false);
-$('#dmExport').onclick=()=>{ window.location='/api/export'; $('#dmMsg').innerHTML='<span style="color:var(--cyan)">Downloading your archive…</span>'; };
+$('#dmX').onclick=()=>modal('dataModal',false);
+$('#dataBtn').onclick=()=>{ $('#dmMsg').textContent=''; olWhen(); modal('dataModal',true); tlmOpen(true); };
+$('#dmClose').onclick=()=>{ modal('dataModal',false); tlmOpen(false); };
+// ---- telemetry card (in the Backup & transfer modal) ----
+const TLM_GROUP_LABELS=[['wallet','Wallet'],['vitals','Vitals'],['surroundings','Surroundings'],
+  ['you','You'],['events','Events'],['flight','Flight'],['ship','Ship systems'],
+  ['weapons','Weapons'],['settings','Settings'],['turret','Turret'],
+  ['force_feedback','Force feedback'],['other','Other']];
+const tlmMB=b=>(b/1048576).toFixed(b>=104857600?0:1)+' MB';
+function tlmRecText(r){
+  r=r||{};
+  if(r.state==='live'){
+    if(r.file) return 'Recording · '+tlmMB(r.bytes||0);
+    return r.reason==='write' ? "Live. Recording stopped, can't write the file." : 'Live, not recording';
+  }
+  if(r.state==='waiting') return 'Waiting for the game';
+  if(r.state==='off') return r.reason==='schema' ? 'No telemetry schema for this game build.'
+    : r.reason==='other' ? 'Recording in another CSR window.' : 'Telemetry off in the game';
+  return 'Game not running';
+}
+function tlmErr(t){ const e=$('#tlmErr'); if(e) e.textContent=t||''; }
+function tlmPost(path,body){
+  return fetch(path,{method:'POST',body:JSON.stringify(body||{})}).then(r=>r.json());
+}
+function tlmSave(change){
+  tlmErr('');
+  return tlmPost('/api/telemetry/settings',change).then(res=>{
+    if(!res.ok){ tlmErr(res.error||'Could not save.'); }
+    tlmLoad();
+  }).catch(()=>{ tlmErr('Lost contact with CSR.'); tlmLoad(); });
+}
+function tlmRenderChannels(chs){
+  const box=$('#tlmChannels'); if(!box) return;
+  box.textContent='';
+  Object.keys(chs||{}).forEach(lab=>{
+    const c=chs[lab]||{};
+    const t=c.line&&c.applied?'Enabled in user.cfg':(c.line?'Enabled. Applies on next game launch.':'Disabled in user.cfg');
+    const row=document.createElement('div'); row.className='tlmrow';
+    const n=document.createElement('span'); n.className='tlml'; n.textContent=lab;
+    const m=document.createElement('span'); m.textContent=t;
+    row.append(n,m);
+    if(!c.line){
+      const b=document.createElement('button');
+      b.className='mbtn ghost tlmbtn'; b.id='tlmEnable-'+lab; b.textContent='Enable';
+      b.onclick=()=>confirmBtn(b,'Confirm',()=>{
+        tlmErr('');
+        tlmPost('/api/telemetry/enable',{channel:lab}).then(res=>{
+          if(!res.ok) tlmErr(res.msg||'Could not change user.cfg.');
+          tlmLoad();
+        }).catch(()=>tlmErr('Lost contact with CSR.'));
+      });
+      row.append(b);
+    }
+    box.append(row);
+  });
+}
+function tlmRender(st){
+  const s=st.settings||{};
+  tlmRenderChannels(st.channels);
+  $('#tlmRecord').checked=!!s.record;
+  $('#tlmDetail').value=s.detail||'normal';
+  $('#tlmKeep').value=s.keep_days==null?'':String(s.keep_days);
+  $('#tlmMax').value=s.max_mb==null?'':String(s.max_mb);
+  const on=new Set(s.groups||[]);
+  $('#tlmGroups').innerHTML=TLM_GROUP_LABELS.map(([k,l])=>
+    `<label><input type="checkbox" data-g="${k}"${on.has(k)?' checked':''}>${esc(l)}</label>`).join('');
+  $('#tlmGroups').querySelectorAll('input').forEach(i=>{
+    i.onchange=()=>{
+      const g=[...$('#tlmGroups').querySelectorAll('input:checked')].map(x=>x.dataset.g);
+      tlmSave({groups:g});
+    };
+  });
+  $('#tlmPhone').checked=!!s.phone;
+  const ph=st.phone||{};
+  $('#tlmPhoneBox').style.display=(s.phone&&ph.url)?'':'none';
+  $('#tlmQr').innerHTML=ph.qr_svg||'';
+  $('#tlmUrl').textContent=ph.url||'';
+  if(s.phone&&!ph.url) tlmErr(ph.why==='ports'?"Tablet & phone access did not start. Ports 7890-7899 are in use."
+    :ph.why==='config'?"Tablet & phone access did not start. Cannot save the link key to csr_config.json."
+    :"Tablet & phone access did not start.");
+  tlmLive(st);
+}
+// the parts that change while the game runs
+function tlmLive(st){
+  $('#tlmRec').textContent=tlmRecText(st.recorder);
+  const cap=st.settings&&st.settings.max_mb;
+  $('#tlmDisk').textContent='Recordings use '+tlmMB(st.disk||0)+(cap?' of '+(cap>=1000?cap/1000+' GB':cap+' MB'):'')+'.';
+  $('#dmExportTlmLbl').textContent='Include telemetry ('+tlmMB(st.disk||0)+')';
+  const u=st.unmatched||[], box=$('#tlmUnmatched');
+  if(u.length){
+    const names=u.map(e=>typeof e==='string'?e:(e&&(e.file||e.name))||'').filter(Boolean);
+    box.style.display='';
+    box.textContent=u.length+' unmatched recording'+(u.length===1?'':'s')+': '+
+      names.slice(0,10).join(', ')+(names.length>10?' +'+(names.length-10)+' more':'');
+  }else box.style.display='none';
+}
+function tlmLoad(){
+  return fetch('/api/telemetry/status',{cache:'no-store'}).then(r=>r.json()).then(st=>{
+    if(st&&st.settings) tlmRender(st);
+  }).catch(()=>{});
+}
+$('#tlmRecord').onchange=e=>tlmSave({record:e.target.checked});
+$('#tlmDetail').onchange=e=>tlmSave({detail:e.target.value});
+$('#tlmKeep').onchange=e=>tlmSave({keep_days:e.target.value===''?null:+e.target.value});
+$('#tlmMax').onchange=e=>tlmSave({max_mb:e.target.value===''?null:+e.target.value});
+$('#tlmPhone').onchange=e=>tlmSave({phone:e.target.checked});
+$('#tlmNewLink').onclick=()=>{
+  tlmErr('');
+  tlmPost('/api/telemetry/new-link').then(res=>{ if(!res.ok) tlmErr(res.error||'Could not save.'); tlmLoad(); })
+    .catch(()=>tlmErr('Lost contact with CSR.'));
+};
+$('#tlmDeleteAll').onclick=()=>confirmBtn($('#tlmDeleteAll'),'Confirm. Deletes every recording. Career stats stay.',()=>{
+  tlmErr('');
+  tlmPost('/api/telemetry/delete-all').then(res=>{ if(!res.ok) tlmErr(res.error||'Could not delete.'); tlmLoad(); })
+    .catch(()=>tlmErr('Lost contact with CSR.'));
+});
+let tlmTimer=null;
+function tlmOpen(on){
+  clearInterval(tlmTimer);
+  if(!on) return;
+  tlmLoad();
+  tlmTimer=setInterval(()=>{
+    if(!$('#dataModal').classList.contains('on')){ clearInterval(tlmTimer); return; }
+    if($('#tlmCard .danger')) return;
+    fetch('/api/telemetry/status',{cache:'no-store'}).then(r=>r.json()).then(st=>{
+      if(st&&st.settings) tlmLive(st);
+    }).catch(()=>{});
+  },4000);
+}
+
+$('#dmExport').onclick=()=>{
+  const z=$('#dmExportTlm').checked;
+  window.location='/api/export'+(z?'?tlm=1':'');
+  $('#dmMsg').innerHTML='<span style="color:var(--cyan)">'+(z?'Preparing backup…':'Downloading archive…')+'</span>';
+};
 // The three card titles carried emoji: ⬇ and ⬆ rendered as plain glyphs in the text
 // colour, but 📁 came out as a full-colour emoji — one yellow icon in a row of white
 // ones. Swap all three for the HUD set so they match each other and the rest of the UI.
@@ -12180,19 +13655,26 @@ $('#dmImportBtn').onclick=()=>$('#dmFile').click();
 $('#dmFile').onchange=e=>{
   const files=[...e.target.files]; e.target.value=''; if(!files.length) return;
   modal('dataModal',false); CSRTerm.start();
-  // read every chosen backup, combine their sessions into one payload, import once
-  Promise.all(files.map(f=>f.text())).then(texts=>{
-    let sessions=[], bad=0, prefs={pins:{}, main:{}};
-    texts.forEach(t=>{ try{ const d=JSON.parse(t); if(d&&Array.isArray(d.sessions)) sessions=sessions.concat(d.sessions); else bad++;
+  const zips=files.filter(f=>/\.zip$/i.test(f.name)), jsons=files.filter(f=>!/\.zip$/i.test(f.name));
+  // zips go up one at a time as raw bytes, the JSON backups are combined and imported once
+  const sendZips=()=>zips.reduce((p,f)=>p.then(()=>fetch('/api/import-zip',{method:'POST',
+      headers:{'Content-Type':'application/zip'},body:f}).then(r=>r.json()).then(res=>{
+        if(!res.ok) throw new Error(res.error||'bad file'); })), Promise.resolve());
+  Promise.all(jsons.map(f=>f.text())).then(texts=>{
+    let sessions=[], telemetry=[], bad=0, prefs={pins:{}, main:{}};
+    texts.forEach(t=>{ try{ const d=JSON.parse(t); if(d&&Array.isArray(d.sessions)){ sessions=sessions.concat(d.sessions); if(Array.isArray(d.telemetry)) telemetry=telemetry.concat(d.telemetry); } else bad++;
       const q=d&&d.prefs; if(q){ Object.entries(q.pins||{}).forEach(([a,ks])=>{ prefs.pins[a]=[...new Set((prefs.pins[a]||[]).concat(ks||[]))]; });
         Object.entries(q.main||{}).forEach(([c,a])=>{ if(!prefs.main[c]) prefs.main[c]=a; }); } }catch(_){ bad++; } });
-    if(!sessions.length){ CSRTerm.fail(bad?'those files aren’t CSR backups':'nothing to import'); return; }
-    return fetch('/api/import',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessions, prefs})})
-      .then(r=>r.json()).then(res=>{
-        if(res.ok){ CSRTerm.finish(()=>location.reload()); }
-        else{ CSRTerm.fail('import failed: '+(res.error||'bad file')); }
-      });
-  }).catch(()=>{ CSRTerm.fail('is the CSR app still running?'); });
+    if(!sessions.length&&!zips.length){ CSRTerm.fail(bad?'those files aren’t CSR backups':'nothing to import'); return; }
+    return sendZips().then(()=>{
+      if(!sessions.length){ CSRTerm.finish(()=>location.reload()); return; }
+      return fetch('/api/import',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessions,telemetry,prefs})})
+        .then(r=>r.json()).then(res=>{
+          if(res.ok){ CSRTerm.finish(()=>location.reload()); }
+          else{ CSRTerm.fail('import failed: '+(res.error||'bad file')); }
+        });
+    });
+  }).catch(e=>{ CSRTerm.fail(e&&e.message?'import failed: '+e.message:'is the CSR app still running?'); });
 };
 // Escape hatch for the native dialog. It shares runImportFolder() with the picker, so
 // both routes go through exactly the same import — only the way the path is obtained
@@ -12215,7 +13697,7 @@ function runImportFolder(path){
       if(r2.ok){ CSRTerm.finish(()=>location.reload()); }
       else{ CSRTerm.fail(r2.error||'could not read that folder'); }
     })
-    .catch(()=>CSRTerm.fail('lost contact with the CSR app — it may have been closed'));
+    .catch(()=>CSRTerm.fail('Lost contact with CSR.'));
 }
 // Import a copied Game.log FOLDER. The folder is picked natively and read by the
 // app off disk — a log folder is hundreds of MB, far too much to upload through
@@ -12243,7 +13725,7 @@ $('#dmLogsBtn').onclick=()=>{
   }).catch(()=>{
     btn.disabled=false; btn.textContent=was; $('#dmHint').classList.remove('on');
     modal('dataModal',false);
-    CSRTerm.fail('lost contact with the CSR app — it may have been closed');
+    CSRTerm.fail('Lost contact with CSR.');
   });
 };
 
@@ -12402,6 +13884,12 @@ def ONBOARD_HTML():
             .replace("__CSR_CONTACT__", CSR_CONTACT))
 
 
+def LIVE_HTML():
+    """The Kestrel K-7 slate (sc_slate) with the fonts filled in."""
+    return sc_slate.slate_html().replace(
+        "/*__FONTS__*/", sc_names.fetch_google_fonts_embed(cache_file("sc_fonts_embed.css")))
+
+
 _RESOLVERS_LOADED = False
 
 
@@ -12427,8 +13915,17 @@ def reload_catalogues():
         sc_names.ITEMS = ITEMS
     cstep("pulling the contract registry")
     MIS.load(force=True)
+    cstep("pulling the xparrow-lite icon lists")
+    XP.load(force=True)
     cstep("pulling the crafting catalogue — one call per blueprint, about two minutes")
     BPS.load(force=True)
+    # armour and clothing CSR has no picture of: ask xparrow-lite for each thumbnail
+    cat = _bp_catalog_payload()
+    if cat:
+        todo = [r[2] for r in cat["rows"] if r[0] not in cat["img"] and r[3] in ("Armor", "Flight suits", "Clothing")]
+        if todo:
+            cstep(f"looking for {len(todo)} armour pictures on xparrow-lite")
+            XP.probe_thumbs(todo)
     cok(f"catalogues refreshed — {len(SHIPS.by_name):,} hulls · {len(ITEMS.idx):,} items · {len(MIS.rows):,} missions · {len(BPS.rows):,} blueprints")
     _bp_rev, _bp_cat_idx, _mis_by_dbg = None, None, None
     _bp_cache.clear(); _fam_cache.clear()
@@ -12456,6 +13953,9 @@ def load_resolvers():
         cstep(f"contract registry synced — {len(MIS.rows):,} missions · {len(MIS.factions)} factions")
     else:
         cwarn("contract registry offline — blueprint planner unavailable")
+    XP.cache_path = cache_file("sc_xparrow.json")
+    if XP.load():
+        cstep(f"fan icons on file — {len(XP.ids):,} classes from xparrow-lite")
     BPS.cache_path = cache_file("sc_blueprints.json")
     if BPS.load():
         cstep(f"crafting catalogue synced — {len(BPS.rows):,} blueprints ({BPS.version or 'unknown build'})")
@@ -12654,6 +14154,128 @@ if ($result -eq [System.Windows.Forms.DialogResult]::OK) {
                 pass
 
 
+# ---- the tray icon -------------------------------------------------------------- #
+TRAY = {"t": None}
+
+
+def STOP_HINT():
+    if _LOG["path"]:
+        return "quit from the tray icon or the status light in the page"
+    return "press Ctrl+C to power down · or use the status light in the page"
+
+
+def _tray_mod():
+    try:
+        import csr_tray
+        return csr_tray
+    except Exception:
+        return None
+
+
+def autostart_state():
+    """True/False for Start with Windows, None where it can't be set."""
+    m = _tray_mod()
+    return m.autostart_enabled() if m else None
+
+
+def set_autostart(on):
+    m = _tray_mod()
+    return bool(m and m.set_autostart(on))
+
+
+def tray_tip(text=None):
+    if TRAY["t"]:
+        TRAY["t"].set_tip(text or "CSR \u00b7 watching your logs")
+
+
+def start_tray(url, refresh, quit_):
+    """CSR's icon in the notification area: click for the dashboard, right-click for
+    the menu. Crashes and disconnects pop up as Windows notifications."""
+    m = _tray_mod()
+    if not m:
+        return None
+
+    def open_dash():
+        webbrowser.open(url)
+
+    def open_log():
+        if _LOG["path"] and os.path.isfile(_LOG["path"]):
+            os.startfile(_LOG["path"])
+        else:
+            os.startfile(app_dir())
+
+    def toggle_autostart():
+        m.set_autostart(not m.autostart_enabled())
+
+    items = [("!Open dashboard", open_dash),
+             ("Kestrel K-7 (show code)", lambda: webbrowser.open(url + "#kestrel")),
+             ("Refresh logs", refresh),
+             None,
+             ("Start with Windows", (toggle_autostart, m.autostart_enabled)),
+             ("Open log", open_log),
+             ("Open data folder", lambda: os.startfile(app_dir())),
+             None,
+             ("Quit CSR", quit_)]
+    ico = os.path.join(SCRIPT_DIR, "csr.ico")
+    t = m.Tray("CSR \u00b7 watching your logs", items, ico_path=ico)
+    if not t.start():
+        return None
+    TRAY["t"] = t
+
+    def on_event(ev):
+        if ev.get("severity") in ("bad", "warn"):
+            t.notify(ev.get("title") or "CSR", ev.get("detail") or "",
+                     "error" if ev.get("severity") == "bad" else "warn")
+    _EVENT_HOOKS.append(on_event)
+    return t
+
+
+# One CSR per Windows user: a named lock held for the life of the process. Checking it
+# is instant, where probing ports costs ~0.6 s per closed port on Windows.
+_INSTANCE = {"h": None}
+
+
+def claim_instance():
+    """True when no other CSR is running for this user. Keeps the lock."""
+    if os.name != "nt":
+        return True
+    try:
+        import ctypes
+        k = ctypes.WinDLL("kernel32", use_last_error=True)
+        k.CreateMutexW.restype = ctypes.c_void_p
+        h = k.CreateMutexW(None, False, "Local\\CSR-Citizen-Service-Record")
+        already = ctypes.get_last_error() == 183          # ERROR_ALREADY_EXISTS
+        _INSTANCE["h"] = h
+        return not already
+    except Exception:
+        return True
+
+
+def release_instance():
+    """Let go of the lock, so a restarted CSR can take it."""
+    h, _INSTANCE["h"] = _INSTANCE["h"], None
+    if h and os.name == "nt":
+        try:
+            import ctypes
+            ctypes.windll.kernel32.CloseHandle(ctypes.c_void_p(h))
+        except Exception:
+            pass
+
+
+def running_csr(port):
+    """The address of a CSR already serving on this PC, else None."""
+    import urllib.request
+    for p in range(port, port + 12):
+        try:
+            with urllib.request.urlopen(f"http://127.0.0.1:{p}/api/status", timeout=0.6) as r:
+                d = json.loads(r.read().decode("utf-8", "replace"))
+            if isinstance(d, dict) and "watch" in d and "configured" in d:
+                return f"http://127.0.0.1:{p}/"
+        except Exception:
+            continue
+    return None
+
+
 def serve(out_path, port=7878, explicit_logs=None, open_browser=True,
           hide_console=True):
     import http.server
@@ -12669,9 +14291,16 @@ def serve(out_path, port=7878, explicit_logs=None, open_browser=True,
     pick_req, pick_res = queue.Queue(), queue.Queue()
 
     def _power_down(restart):
-        """Stop CSR from the page. On restart, relaunch with --no-browser so the tab
-        you're already looking at is reused instead of a duplicate opening."""
+        """Stop CSR from the page or the tray. On restart, relaunch with --no-browser so
+        the tab you're already looking at is reused instead of a duplicate opening."""
         time.sleep(0.35)                      # let the HTTP reply flush
+        if TRAY["t"]:
+            TRAY["t"].stop()                  # no dead icon left behind
+        try:
+            recorder.stop()                   # close an open recording cleanly
+        except Exception:
+            pass
+        stop_phone_server()
         try:
             srv.shutdown()
             srv.server_close()                # release the port before the new process
@@ -12682,6 +14311,7 @@ def serve(out_path, port=7878, explicit_logs=None, open_browser=True,
             # Popen, NOT os.execv: on Windows execv doesn't quote its arguments, so an
             # install path containing spaces ("G:\\My Drive\\…") is split and the
             # relaunch dies with "can't open file". Popen quotes properly.
+            release_instance()                # the new process takes the lock
             args = [a for a in sys.argv[1:] if a != "--no-browser"] + ["--no-browser"]
             cmd = [sys.executable] + ([] if is_frozen() else [os.path.abspath(sys.argv[0])]) + args
             try:
@@ -12703,7 +14333,7 @@ def serve(out_path, port=7878, explicit_logs=None, open_browser=True,
         output pushes it off screen — leaving no visible hint of how to quit."""
         print()
         cok(f"ready — {_paint(url, _CY)}")
-        csub("press Ctrl+C to power down · or use the status light in the page")
+        csub(STOP_HINT())
         print()
 
     def watchdog():
@@ -12714,7 +14344,9 @@ def serve(out_path, port=7878, explicit_logs=None, open_browser=True,
         GRACE = 900                          # 15 min — long enough for a background tab
         while True:
             time.sleep(30)
-            if not _CONSOLE_HIDDEN:
+            if recorder.connected:           # the game is streaming: stay up
+                state["seen"] = time.time()
+            if TRAY["t"] or not _CONSOLE_HIDDEN:  # the tray icon is the way back in
                 continue
             if time.time() - state.get("seen", 0) > GRACE:
                 show_console(True)
@@ -12725,6 +14357,7 @@ def serve(out_path, port=7878, explicit_logs=None, open_browser=True,
     def do_generate(quick=False):
         with gen_lock:
             state["busy"] = True
+            tray_tip("CSR \u00b7 scanning your logs")
             try:
                 data = generate(out_path, state["explicit"], state["live_path"],
                                 quick=quick)
@@ -12733,6 +14366,7 @@ def serve(out_path, port=7878, explicit_logs=None, open_browser=True,
                 data = None
             finally:
                 state["busy"] = False
+                tray_tip()
             if not data:
                 state["configured"] = False
                 return False
@@ -12742,6 +14376,68 @@ def serve(out_path, port=7878, explicit_logs=None, open_browser=True,
             state["log_count"] = data["log_count"]
             state["sessions"] = data["log_count"]
             return True
+
+    # Telemetry recorder: its own thread, records while the game streams. Index upkeep
+    # and the page rebuild after a recording closes run on tlm_worker, never on the
+    # recorder thread or a request thread.
+    tlm_root = sc_tlm_stats.tlm_dir(app_dir())
+    tlm_wake = threading.Event()
+
+    def tlm_skip():
+        f = recorder.status().get("file")
+        return frozenset((f, os.path.basename(f))) if f else frozenset()
+
+    def tlm_housekeeping():
+        """Index new recordings, apply retention. True when the index changed."""
+        try:
+            skip = tlm_skip()
+            before = sc_tlm_stats.load_index(tlm_root)
+            sc_tlm_stats.refresh_index(tlm_root, skip=skip)
+            s = tlm_settings()
+            sc_tlm_stats.apply_retention(tlm_root, s.get("keep_days"), datetime.now(), skip=skip)
+            cap = s.get("max_mb")
+            if cap in TLM_MAX_MB and cap:
+                sc_tlm_stats.apply_size_cap(tlm_root, cap * 1024 * 1024, skip=skip)
+            return sc_tlm_stats.load_index(tlm_root) != before
+        except Exception as e:
+            cerr(f"telemetry index error: {e}")
+            return False
+
+    def tlm_worker():
+        while True:
+            tlm_wake.wait()
+            tlm_wake.clear()
+            if tlm_housekeeping() and (state["configured"] or state["has_work"]):
+                do_generate(quick=True)
+
+    def tlm_closed(_path):
+        # refresh_index leaves files written in the last RECENT_S alone: wait that out
+        t = threading.Timer(sc_tlm_stats.RECENT_S + 1, tlm_wake.set)
+        t.daemon = True
+        t.start()
+
+    recorder = sc_telemetry.Recorder(
+        tlm_root, get_settings=lambda: {**tlm_settings(), "csr": CSR_VERSION},
+        game_running=_sc_process_running, pick_channel=tlm_channel_now,
+        on_close=tlm_closed)
+
+    def tlm_status():
+        s = tlm_settings()
+        return {"settings": {k: v for k, v in s.items() if k != "phone_key"},
+                "recorder": recorder.status(),
+                "channels": {lab: user_cfg_state(cdir)
+                             for lab, cdir in list(_CHANNEL_DIRS.items())},
+                "disk": sc_tlm_stats.disk_usage(tlm_root),
+                "unmatched": _TLM_UNMATCHED,
+                "phone": phone_status()}
+
+    def phone_seen():
+        state["seen"] = time.time()          # a live view polling (PC or phone) counts
+
+    def phone_sync():
+        err = phone_sync_error(live=recorder.live, on_seen=phone_seen)
+        if err:
+            cerr(err)
 
     csr_banner()
     # scanning runs in the BACKGROUND so the browser can open onto the animated
@@ -12765,7 +14461,17 @@ def serve(out_path, port=7878, explicit_logs=None, open_browser=True,
             except Exception:
                 pass
 
+        def _refused(self, method):
+            """403 for a request another site could have sent. True when refused."""
+            if local_request_ok(method, self.headers, port):
+                return False
+            self.close_connection = True
+            self._send(403, json.dumps({"ok": False, "error": "Forbidden."}))
+            return True
+
         def do_GET(self):
+            if self._refused("GET"):
+                return
             p = self.path.split("?")[0]
             if p in ("/", "/index.html", "/CSR.html", "/sc_stats.html"):
                 if state["configured"] and state["html"]:
@@ -12775,6 +14481,8 @@ def serve(out_path, port=7878, explicit_logs=None, open_browser=True,
                     self._send(200, BOOT_HTML(), "text/html; charset=utf-8")   # scanning → terminal
                 else:
                     self._send(200, ONBOARD_HTML(), "text/html; charset=utf-8")
+            elif p == "/live":
+                self._send(200, LIVE_HTML(), "text/html; charset=utf-8")
             elif p == "/api/status":
                 state["seen"] = time.time()    # heartbeat — see the watchdog in serve()
                 self._send(200, json.dumps({
@@ -12783,29 +14491,36 @@ def serve(out_path, port=7878, explicit_logs=None, open_browser=True,
                     "sessions": state["sessions"], "busy": state["busy"],
                     "online": {**online_meta(), "catalogues": catalogue_ages()},
                     "console_hidden": _CONSOLE_HIDDEN,
+                    "log_file": bool(_LOG["path"]),
+                    "autostart": autostart_state(),
                     "console_supported": _console_hwnd() is not None,
                     "progress": _PROGRESS,
                     # live crash/disconnect watcher: unseen events + whether a game
                     # session is currently writing (the page polls faster while it is)
                     "events": watch_events(),
                     "session_live": _WATCH["live"],
-                    "watch": watch_status()}))
+                    "watch": watch_status(),
+                    "tlm": recorder.status()}))
+            elif p in ("/api/telemetry/live", "/api/telemetry/status", "/api/telemetry/ship"):
+                try:
+                    body = tlm_api_get(self.path, recorder.live, tlm_status, phone_seen)
+                except Exception as e:
+                    self._send(200, json.dumps({"ok": False, "error": str(e)}))
+                    return
+                self._send(200, body) if body is not None else self._send(404, "{}")
             elif p == "/api/export":
                 # hand over the accumulated archive as a downloadable backup
+                want_zip = "tlm=1" in (self.path.split("?", 1)[1] if "?" in self.path else "")
                 try:
-                    raw = open(archive_path(), "rb").read()
-                except Exception:
-                    save_archive([])
-                    raw = open(archive_path(), "rb").read()
-                try:                               # pins and main accounts ride along
-                    d = json.loads(raw)
-                    d["prefs"] = load_prefs()
-                    raw = json.dumps(d, default=_json_default).encode("utf-8")
-                except Exception:
-                    pass
-                stamp = datetime.now().strftime("%Y-%m-%d")
-                self._send(200, raw, "application/json",
-                           extra={"Content-Disposition": f'attachment; filename="CSR-archive-{stamp}.json"'})
+                    if want_zip:
+                        self._send_zip()
+                        return
+                    raw, ctype, fname = export_payload(False, root=tlm_root)
+                except Exception as e:
+                    self._send(500, json.dumps({"ok": False, "error": str(e)}))
+                    return
+                self._send(200, raw, ctype,
+                           extra={"Content-Disposition": f'attachment; filename="{fname}"'})
             else:
                 self._send(404, "{}")
 
@@ -12823,15 +14538,61 @@ def serve(out_path, port=7878, explicit_logs=None, open_browser=True,
                     "error": "That doesn't look right — pick your StarCitizen folder (the "
                              "one containing LIVE / PTU), or a LIVE folder directly."}))
                 return
+            if remember_folder(path) is None:
+                self._send(200, json.dumps({"ok": False, "error":
+                    f"Could not save {config_path()}. Folder not saved."}))
+                return
             state["live_path"] = path
-            save_config({"live_path": path})
             self._send(200, json.dumps({"ok": True, "path": path}))
+
+        def _send_zip(self):
+            tmp, fname = export_zip_file(tlm_root)
+            try:
+                with open(tmp, "rb") as f:
+                    size = os.fstat(f.fileno()).st_size
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/zip")
+                    self.send_header("Content-Length", str(size))
+                    self.send_header("Cache-Control", "no-store")
+                    self.send_header("Content-Disposition", f'attachment; filename="{fname}"')
+                    self.end_headers()
+                    try:
+                        shutil.copyfileobj(f, self.wfile, 1024 * 1024)
+                    except Exception:
+                        pass
+            finally:
+                os.remove(tmp)
+
+        def _body_to_file(self, limit):
+            """Read the request body into a temp file. Returns its path, None when over limit."""
+            n = int(self.headers.get("Content-Length", 0) or 0)
+            if n <= 0 or n > limit:
+                self.close_connection = True
+                return None
+            fd, tmp = tempfile.mkstemp(suffix=".zip", prefix="csr-import-")
+            try:
+                with os.fdopen(fd, "wb") as out:
+                    left = n
+                    while left > 0:
+                        chunk = self.rfile.read(min(1024 * 1024, left))
+                        if not chunk:
+                            break
+                        out.write(chunk)
+                        left -= len(chunk)
+                if left:
+                    raise OSError("upload cut short")
+            except Exception:
+                os.remove(tmp)
+                raise
+            return tmp
 
         def _body(self):
             n = int(self.headers.get("Content-Length", 0) or 0)
             return self.rfile.read(n).decode("utf-8", "replace") if n else ""
 
         def do_POST(self):
+            if self._refused("POST"):
+                return
             p = self.path.split("?")[0]
             if p == "/api/refresh":
                 # ?full=1 re-parses every log; default reads only new/changed ones
@@ -12857,6 +14618,21 @@ def serve(out_path, port=7878, explicit_logs=None, open_browser=True,
                 except Exception:
                     path = ""
                 self._accept_folder(path)
+            elif p == "/api/open-log":             # the tray build's log, in Notepad
+                ok = bool(_LOG["path"] and os.path.isfile(_LOG["path"]))
+                if ok:
+                    try:
+                        os.startfile(_LOG["path"])
+                    except Exception:
+                        ok = False
+                self._send(200, json.dumps({"ok": ok}))
+            elif p == "/api/autostart":            # Start with Windows on/off
+                try:
+                    on = bool(json.loads(self._body() or "{}").get("on"))
+                except Exception:
+                    on = False
+                ok = set_autostart(on)
+                self._send(200, json.dumps({"ok": ok, "autostart": autostart_state()}))
             elif p == "/api/prefs":                # pins / main account from the page
                 try:
                     inc = json.loads(self._body() or "{}")
@@ -12875,6 +14651,11 @@ def serve(out_path, port=7878, explicit_logs=None, open_browser=True,
                     return
                 try:
                     added, total = import_archive_file(body)
+                    try:
+                        tl = json.loads(body).get("telemetry")
+                    except Exception:
+                        tl = None
+                    n = import_telemetry(tl, {}, root=tlm_root)
                 except Exception as e:
                     self._send(200, json.dumps({"ok": False, "error": str(e)}))
                     return
@@ -12884,8 +14665,42 @@ def serve(out_path, port=7878, explicit_logs=None, open_browser=True,
                         save_prefs(merge_prefs(load_prefs(), inc))
                 except Exception:
                     pass
+                note = None
+                if n:
+                    try:
+                        sc_tlm_stats.refresh_index(tlm_root, skip=tlm_skip())
+                    except Exception as e:
+                        note = "Recordings imported, index update failed: %s" % e
                 do_generate()                      # rebuild the dashboard from the merged archive
                 self._send(200, json.dumps({"ok": True, "added": added, "total": total,
+                                            "telemetry": n, "note": note,
+                                            "log_count": state["log_count"]}))
+            elif p == "/api/import-zip":           # backup zip with recordings
+                try:
+                    tmp = self._body_to_file(IMPORT_ZIP_MAX)
+                except Exception as e:
+                    self._send(200, json.dumps({"ok": False, "error": str(e)}))
+                    return
+                if tmp is None:
+                    self._send(200, json.dumps({"ok": False, "error": "file is empty or over 2 GB"}))
+                    return
+                note = None
+                try:
+                    res = import_zip_file(tmp, root=tlm_root)
+                    try:
+                        sc_tlm_stats.refresh_index(tlm_root, skip=tlm_skip())
+                    except Exception as e:
+                        note = "Recordings imported, index update failed: %s" % e
+                except zipfile.BadZipFile:
+                    self._send(200, json.dumps({"ok": False, "error": "not a zip file"}))
+                    return
+                except Exception as e:
+                    self._send(200, json.dumps({"ok": False, "error": str(e)}))
+                    return
+                finally:
+                    os.remove(tmp)
+                do_generate()
+                self._send(200, json.dumps({"ok": True, **res, "note": note,
                                             "log_count": state["log_count"]}))
             elif p == "/api/console":
                 try:
@@ -12997,6 +14812,46 @@ def serve(out_path, port=7878, explicit_logs=None, open_browser=True,
                     _SETTINGS_CACHE.pop(chan, None)
                     do_generate(quick=True)
                 self._send(200, json.dumps({"ok": ok, "msg": msg, "which": which}))
+            elif p == "/api/telemetry/settings":
+                try:
+                    req = json.loads(self._body() or "{}")
+                except Exception:
+                    req = None
+                ok, res = validate_tlm_settings(req)
+                if not ok:
+                    self._send(200, json.dumps({"ok": False, "error": res}))
+                    return
+                saved = save_tlm_settings(res)
+                if saved is None:
+                    self._send(200, json.dumps({"ok": False, "error":
+                        f"Could not save {config_path()}. Settings not changed."}))
+                    return
+                if "keep_days" in res or "max_mb" in res:
+                    tlm_wake.set()             # apply the new retention off this thread
+                if "phone" in res:
+                    phone_sync()
+                self._send(200, json.dumps(_json_safe(tlm_settings_reply(tlm_status, saved)),
+                                           default=str))
+            elif p == "/api/telemetry/new-link":
+                if new_phone_key() is None:
+                    self._send(200, json.dumps({"ok": False, "error":
+                        f"Could not save {config_path()}. Link not changed."}))
+                    return
+                self._send(200, json.dumps(_json_safe({"ok": True, **tlm_status()}),
+                                           default=str))
+            elif p == "/api/telemetry/enable":
+                try:
+                    chan = (json.loads(self._body() or "{}") or {}).get("channel")
+                except Exception:
+                    chan = None
+                cdir = _CHANNEL_DIRS.get(chan) if isinstance(chan, str) else None
+                ok, msg = enable_user_cfg(cdir)
+                self._send(200, json.dumps({"ok": ok, "msg": msg,
+                                            "state": user_cfg_state(cdir)}))
+            elif p == "/api/telemetry/delete-all":
+                n = sc_tlm_stats.delete_all_recordings(tlm_root, skip=tlm_skip())
+                self._send(200, json.dumps({"ok": True, "deleted": n,
+                                            "disk": sc_tlm_stats.disk_usage(tlm_root)}))
             else:
                 self._send(404, "{}")
 
@@ -13018,11 +14873,16 @@ def serve(out_path, port=7878, explicit_logs=None, open_browser=True,
     url = f"http://127.0.0.1:{port}/"
     print()
     cok(f"terminal online — {_paint(url, _CY)}")
-    csub("press Ctrl+C to power down · or use the status light in the page")
+    csub(STOP_HINT())
     print()
     threading.Thread(target=srv.serve_forever, daemon=True).start()
+    start_tray(url, lambda: threading.Thread(target=do_generate, kwargs={"quick": True}, daemon=True).start(),
+               lambda: _power_down(False))
     threading.Thread(target=watchdog, daemon=True).start()
     start_watcher()      # tail Game.log for crashes / disconnects while you play
+    recorder.start()     # record the game's telemetry stream while it runs
+    phone_sync()         # phone view, when it's on in settings
+    threading.Thread(target=tlm_worker, name="tlm-index", daemon=True).start()
     # Hide the console straight away rather than after the scan: the browser's
     # flight-recorder terminal is already showing that progress, so leaving this
     # window up means two things reporting the same thing. Everything printed while
@@ -13046,9 +14906,13 @@ def serve(out_path, port=7878, explicit_logs=None, open_browser=True,
         # modified logs are still read, and an archive written by an older parser is
         # rejected wholesale by _reuse_map — so a CSR update still re-parses everything
         # exactly once, automatically, without anyone having to ask for a full re-scan.
+        # The telemetry index is brought up to date afterwards on tlm_worker, which
+        # rebuilds once more only if that changed anything.
         threading.Thread(
-            target=lambda: (do_generate(quick=True), ready_banner()), daemon=True).start()
+            target=lambda: (do_generate(quick=True), ready_banner(), tlm_wake.set()),
+            daemon=True).start()
     else:
+        tlm_wake.set()
         ready_banner()
     try:
         while True:
@@ -13061,6 +14925,8 @@ def serve(out_path, port=7878, explicit_logs=None, open_browser=True,
         tui_disable()
         print()
         clog(f"{_paint(_g('◼', '#'), _AMB)} terminal powered down. fly safe, Citizen.", _AMB)
+        recorder.stop()
+        stop_phone_server()
         srv.shutdown()
 
 
@@ -13077,14 +14943,24 @@ def main():
                     help="re-read only new/changed logs (default is a full re-scan)")
     ap.add_argument("--no-browser", action="store_true",
                     help="serve without opening a browser tab (used when restarting)")
+    ap.add_argument("--allow-second", action="store_true", help=argparse.SUPPRESS)   # dev: run beside an installed CSR
     ap.add_argument("--console", action="store_true",
-                    help="keep the console window open (it is hidden once CSR is ready)")
+                    help="show a console window with CSR's output (it lives in the tray otherwise)")
     args = ap.parse_args()
+    serving = args.serve or (is_frozen() and not args.open and not args.out)
+    # one CSR at a time: a second start opens the running one's dashboard and leaves,
+    # before it touches the log the running one is writing
+    if serving and not args.allow_second and not claim_instance():
+        other = running_csr(args.port)
+        if other and not args.no_browser:
+            webbrowser.open(other)
+        return
+    route_output(want_console=args.console)
 
     out_path = args.out or os.path.join(app_dir(), "CSR.html")
 
     # The packaged exe launches the app experience by default.
-    if args.serve or (is_frozen() and not args.open and not args.out):
+    if serving:
         serve(out_path, args.port, explicit_logs=args.logs,
               open_browser=not args.no_browser, hide_console=not args.console)
         return

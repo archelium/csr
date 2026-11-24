@@ -7,6 +7,12 @@ broken down by patch and by account.
 
 Pure Python **standard library** (no pip installs to run from source).
 
+**New in 2.0 (beta): the Kestrel K-7 Flight Slate.** CSR records the game's own
+telemetry and shows it live on a tablet or phone beside your keyboard: speed, fuel,
+weapons, shields and hull in your seat, vitals and loadout on foot, contracts and
+notices from the log. Click **Kestrel K-7** at the top of the sidebar and scan the QR
+code. See [Telemetry](#telemetry).
+
 **Patch coverage — tested on 4.1 → 4.10.3** (November 2026). CSR reads the version out of each
 log rather than working from a fixed list, so **older patches will often work too**, and
 newer ones should. Neither is tested: Star Citizen changes its log format between
@@ -65,11 +71,13 @@ first.
 
 ## Get started
 
-Pick whichever fits you:
+Pick whichever fits you. To record the game's live telemetry, see
+[Telemetry](#telemetry) below.
 
 ### 1. The app (recommended — no Python needed)
-**Extract the zip**, then double-click **`CSR.exe`**. A console window opens and
-your browser loads the dashboard at `http://127.0.0.1:7878`.
+**Extract the zip**, then double-click **`CSR.exe`**. Your browser loads the dashboard at
+`http://127.0.0.1:7878`, and CSR's icon appears in the notification area by the clock
+(behind the ^ arrow if Windows hides it).
 
 - **First run:** CSR tries to auto-detect your install. If it can't, it pops up a
   folder picker — choose your **`StarCitizen`** folder (the one that *contains*
@@ -79,11 +87,12 @@ your browser loads the dashboard at `http://127.0.0.1:7878`.
 - **Refresh:** the **⟳** button (top-right of the page) re-scans your logs. It only
   re-reads files that changed, so it takes about a second; **Full re-scan** is there
   for after a CSR update.
-- **Everything is driven from the page.** The console window hides itself once CSR is
-  ready — the **status light** at the top-right shows whether CSR is running, and lets
-  you shut it down, restart it, or bring the console back. (Start it with `--console`
-  if you'd rather keep the window.) A page can't *start* CSR, so if the light is grey,
-  run `CSR.exe` again.
+- **CSR lives in the tray.** No console window. Click the icon to open the dashboard.
+  Right-click it for Refresh logs, **Start with Windows**, Open log, Open data folder and
+  Quit. Crashes and disconnects pop up as Windows notifications while you play. The
+  **status light** at the top-right of the page restarts or shuts CSR down too. Starting
+  `CSR.exe` again while it runs just opens the dashboard. Its output goes to
+  `CSR-data\csr.log`. Start it with `--console` to see it in a window instead.
 - **Self-contained / portable:** CSR keeps its config, generated page and cached
   art in a **`CSR-data` folder right next to the exe** — delete that folder to wipe
   everything, or run the whole thing from a USB stick with no trace left on your
@@ -101,7 +110,7 @@ your browser loads the dashboard at `http://127.0.0.1:7878`.
 
 CSR is portable, so updating is just **replace the exe**:
 
-1. Close CSR — use **Shut down** in the status light, or Ctrl+C in its console.
+1. Close CSR — **Quit CSR** from the tray icon, or **Shut down** in the status light.
 2. Extract the new `CSR.exe` **over the old one**, in the same folder.
 3. Start it. That's it — your settings, cached artwork and career history live in
    the `CSR-data` folder beside the exe and are picked up automatically.
@@ -110,14 +119,14 @@ CSR is portable, so updating is just **replace the exe**:
 keeps sessions Star Citizen has since deleted from your log folder. If you want a
 belt-and-braces backup first, open CSR and use **💾 Backup & transfer → Export**.
 
-What happens on your first run of v1.11.0, depending on where you're coming from:
+What happens on your first run of v2.0.0-beta, depending on where you're coming from:
 
 | Coming from | What to expect |
 |---|---|
 | **v1.0.0** | v1.0.0 kept no archive, so your history is rebuilt from whatever logs you still have. If your saved folder was `…\StarCitizen\LIVE`, CSR now finds `PTU` and `TECH-PREVIEW` beside it on its own — **no need to re-pick a folder** — and a **Channel** dropdown appears if it finds any. |
-| **v1.1.0 – v1.10.0** | Your archive carries over untouched. |
+| **v1.1.0 – v1.11.0** | Your archive carries over untouched. |
 | **v1.0.0 – v1.9.1** | The first scan re-reads **every** log (a minute or so). This is deliberate: each release fixes parsing bugs or extracts new data, so nothing older is trusted. It happens once — after that CSR starts, and refreshes, in about a second. |
-| **v1.9.2 – v1.10.0** | No re-read. CSR opens on your stats since the 4.8 wipe, with Career one click away. |
+| **v1.9.2 – v1.11.0** | No re-read. Telemetry recording starts once you enable it for your channel (see [Telemetry](#telemetry)). |
 
 Coming from **v1.2.0** specifically, the first run also *moves* some existing numbers,
 because v1.3.0 converts session times from the log's UTC stamps to your own clock: the
@@ -146,7 +155,7 @@ python sc_stats.py --open       # writes + opens CSR.html, then exits
 python sc_stats.py --live "D:\...\StarCitizen\LIVE"   # point at a specific LIVE folder
 ```
 Produces a **single `CSR.html`** you can open any time or
-share. Ship and item pictures load from RSI and starcitizen.tools when you view it. (No server, so no in-page Refresh button — re-run to update.)
+share. Ship and item pictures load from RSI, starcitizen.tools and xparrow-lite when you view it. (No server, so no in-page Refresh button — re-run to update.)
 
 ---
 
@@ -220,6 +229,32 @@ scope. On **Overview**, click any bar in *Playtime by Patch* to filter to that p
 Stats the game stopped recording (or never did) show **N/A** rather than a
 misleading `0` — see the CHANGELOG for which, and why.
 
+### Telemetry
+
+CSR can record the telemetry stream the game serves on your own PC: wallet, flight,
+weapons, warnings, on-foot and seat state, survival. It adds stat cards to Economy,
+Flight & Travel, Combat and Activity, and the **Kestrel K-7 Flight Slate**.
+
+- **CSR records by default.** The game's own telemetry setting starts off.
+  The card's Turn on button adds it.
+- **Turn it on** in the Telemetry section of **💾 Backup & Transfer** (or **Telemetry
+  settings** in the Kestrel K-7 drawer). **Enable** adds
+  `grpc.client.server.enabled = true` to your channel's user.cfg and keeps a `.csr-bak`
+  backup. It takes effect on the next game launch.
+- **Disk use** per hour of play: Full 1.7 MB, Normal 0.4 MB, Light 0.1 MB. Keep
+  recordings forever, 1 year, 3 months or 1 month. **Space limit** caps the total at
+  1 GB by default, oldest deleted first. Career stats from deleted recordings stay.
+- **Kestrel K-7** is sized for a tablet and fine on a phone. **Open on this PC** in its
+  drawer shows it in a browser tab instead.
+  Seated: speed, fuel, G, IFCS and power, guns, countermeasures, warnings, shields and
+  hull (SC 5.0). On foot and EVA: vitals, injuries, suit, loadout, last ship. Contracts,
+  HUD notices, where you are and ships destroyed nearby come from Game.log. Keys show
+  state only. Nothing on the page sends input to the game.
+- **Tablet & phone access** is off by default. Click **Kestrel K-7** at the top of the
+  sidebar to turn it on and get a QR code and a private link on port 7890-7899. It serves
+  Kestrel only and works on your LAN only.
+- **CSR must be open while you play.** Nothing is recorded while it's closed.
+
 ### Playing on more than one PC
 
 Star Citizen deletes old logs, and each machine only ever sees its own. CSR keeps a
@@ -244,8 +279,10 @@ Everything is real, from your logs. Backend class IDs become in-fiction names
 (`RSI_Zeus_ES` → **Zeus Mk II ES**, `klwe_rifle_energy_01` → **Klaus & Werner
 Gallant**); ship names/art come from the official **RSI Ship Matrix**, item names
 from the **SC-Wiki** item data. Fonts and maker logos are embedded. Ship, gun, item
-and place pictures load from RSI and starcitizen.tools as you scroll. Offline, each
-picture slot shows its icon and everything else works.
+and place pictures load from RSI and starcitizen.tools as you scroll. Items the wiki has no
+picture of use an icon from [xparrow-lite](https://xparrow-lite.pages.dev), a Star Citizen
+fan site, loaded the same way and never stored. Offline, each picture slot shows its icon
+and everything else works.
 
 **What CSR can't show** — on-foot kills, K/D, accuracy, damage, and your aUEC *balance /
 earnings*: Star Citizen stopped writing those to the client log in the 2026 builds
@@ -290,11 +327,13 @@ drop a `csr.ico` next to `csr.spec` and rebuild.
 |------|---------|
 | `sc_stats.py` | ⭐ The whole app — log scan → aggregate → HTML/CSS/JS dashboard + `--serve` local app. |
 | `sc_names.py` | Name resolution & web fetch: ship matrix, item names, RSI profile/orgs, artwork + fonts → data URIs. |
+| `csr_tray.py` | The tray icon, its menu, Windows notifications and Start with Windows (plain Windows API, no extra packages). |
 | `csr.spec`, `build_exe.bat` | PyInstaller build for `dist/CSR.exe`. |
 | `Start CSR.bat` | Double-click launcher for the source app. |
 | `sc_*.json`, `sc_fonts_embed.css` | Cached game data / fonts (delete to refetch). |
 | `sc_analyzer.py` | **Deprecated** live death-tracker (kept for reference; not maintained). |
-| `make_release.py` | Assembles the download zip: the exe plus the docs as plain `.txt`. |
+| `make_release.py` | Assembles the download zip: the exe plus the docs as plain `.txt`, and prints the SHA-256 hashes with their VirusTotal links. |
+| `docs/RELEASING.md` | Release checklist: build, scan on VirusTotal, report false positives, publish. |
 | `tools/make_icon.py` | Draws the chevron mark → `csr.ico`. Developer tool, **not** part of the app: it's the one file needing a package (Pillow), and the generated `.ico` is committed so a clone builds without it. |
 | `tools/make_social.py`, `tools/shoot.py` | Developer tools: the GitHub social-preview card, and the README screenshots (headless Edge over DevTools, standard library only). |
 

@@ -310,6 +310,96 @@ class ItemIndex:
         return None
 
 
+class XparrowIcons:
+    """Which game classes have a picture on xparrow-lite.pages.dev (a Star Citizen fan
+    site): icons for ship components and ship guns, FPS weapons and attachments (two
+    lists they publish), and armour and clothing thumbnails (no list, found by asking
+    for each class CSR has no picture of). CSR keeps the class names only. The page
+    loads the picture from their site for an item CSR has no picture of."""
+
+    BASE = "https://xparrow-lite.pages.dev/"
+    LISTS = {"s": "icons/ship/index.json", "f": "icons/index.json"}
+
+    def __init__(self, cache=None):
+        self.cache_path = cache or os.path.join(SCRIPT_DIR, "sc_xparrow.json")
+        self.ver = {}                 # "s"/"f" -> their cache-busting version
+        self.ids = {}                 # lowercased class -> (kind, id as they spell it)
+        self.ok = False
+        self.fetched = None
+
+    def _apply(self, d):
+        self.ver = {k: str(d.get(k + "_v") or "") for k in self.LISTS}
+        self.ids = {}
+        for k in ("t", "f", "s"):     # icons win over thumbnails, ship over FPS
+            for i in d.get(k) or []:
+                self.ids[str(i).lower()] = (k, str(i))
+        self.thumbs = list(d.get("t") or [])
+        self.fetched = d.get("fetched")
+        self.ok = bool(self.ids)
+
+    def load(self, force=False):
+        if not force and os.path.isfile(self.cache_path):
+            try:
+                self._apply(json.load(open(self.cache_path, encoding="utf-8")))
+                if self.ok:
+                    return True
+            except Exception:
+                pass
+        try:
+            keep = list(getattr(self, "thumbs", []))
+            if not keep and os.path.isfile(self.cache_path):      # thumbnails found on earlier runs
+                try:
+                    keep = json.load(open(self.cache_path, encoding="utf-8")).get("t") or []
+                except Exception:
+                    keep = []
+            d = {"fetched": datetime.date.today().isoformat(), "t": keep}
+            for k, path in self.LISTS.items():
+                req = urllib.request.Request(self.BASE + path, headers=_UA)
+                j = json.loads(urllib.request.urlopen(req, timeout=20, context=_SSL).read())
+                ids = j.get("ids") or []
+                d[k] = sorted(ids.keys() if isinstance(ids, dict) else ids)
+                d[k + "_v"] = j.get("v") or ""
+            if d["s"] or d["f"]:
+                json.dump(d, open(self.cache_path, "w", encoding="utf-8"))
+                self._apply(d)
+        except Exception:
+            pass
+        return self.ok
+
+    def probe_thumbs(self, classes, delay=0.5):
+        """Ask for an armour/clothing thumbnail for each class not already known, one at a
+        time, gently. Keeps the ones that exist. Returns how many were found."""
+        import time
+        known = set(self.ids)
+        found = []
+        for c in dict.fromkeys(c for c in classes if c and c.lower() not in known):
+            try:
+                req = urllib.request.Request(f"{self.BASE}thumbs/sc/{c}.webp", headers=_UA, method="HEAD")
+                with urllib.request.urlopen(req, timeout=15, context=_SSL) as r:
+                    if r.status == 200 and "image" in (r.headers.get("Content-Type") or ""):
+                        found.append(c)
+            except Exception:
+                pass
+            time.sleep(delay)
+        if found:
+            try:
+                d = json.load(open(self.cache_path, encoding="utf-8"))
+            except Exception:
+                d = {}
+            d["t"] = sorted(set(d.get("t") or []) | set(found))
+            json.dump(d, open(self.cache_path, "w", encoding="utf-8"))
+            self._apply(d)
+        return len(found)
+
+    def art(self, cls):
+        """["x", id, kind] for the page, None when they have no icon for this class."""
+        hit = self.ids.get((cls or "").lower())
+        return ["x", hit[1], hit[0]] if hit else None
+
+    def payload(self):
+        return {"base": self.BASE, "v": self.ver} if self.ok else None
+
+
 class BlueprintIndex:
     """Every crafting blueprint in the game, from the SC-Wiki API's extraction of the
     game data (/api/v2/blueprints — 1,606 rows in 4.10). Kept by the OUTPUT item's class
