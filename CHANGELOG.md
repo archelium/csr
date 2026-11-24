@@ -15,7 +15,8 @@ LIVE 4.10 only.
   Seated: speed, fuel, G, IFCS and power, weapons, countermeasures, warnings, shields and
   hull. On foot and EVA: vitals, injuries, suit and loadout. Contracts, HUD notices, your
   location and ships destroyed nearby from Game.log. Click **Kestrel K-7** at the top of
-  the sidebar for a QR code. **Open on this PC** shows it in a browser tab.
+  the sidebar for a QR code. **Open on this PC** shows it in a browser tab. The screen
+  stays on while Kestrel is open. The SCREEN key goes fullscreen.
 - **Tablet & phone access.** Off by default. Turn it on from the Kestrel K-7 drawer or the
   Telemetry settings for a QR code and a private link on port 7890-7899. Serves Kestrel
   only, on your LAN only. Windows asks to allow CSR on the network the first time.
