@@ -5,6 +5,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and CSR
 uses [Semantic Versioning](https://semver.org/) (MAJOR.MINOR.PATCH).
 
 
+## [Unreleased]
+
+### Fixed
+- Telemetry settings showed a channel as enabled when its game build started no telemetry
+  service. 5.0 PTU (build 13273298) reads the line but starts none. CSR now reads the
+  game's own startup line and says so, in the settings and on Kestrel's recorder line.
+
 ## [2.0.0-beta] — 2026-11-25
 
 Telemetry and the Kestrel K-7 Flight Slate. Beta: telemetry is new and tested on

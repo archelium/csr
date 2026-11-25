@@ -150,8 +150,8 @@ class UserCfgTests(_TmpDir):
         self.assertFalse(sc_stats.user_cfg_state(self.tmp)["line"])
 
     def test_user_cfg_state_missing_files(self):
-        self.assertEqual(sc_stats.user_cfg_state(self.tmp), {"line": False, "applied": False})
-        self.assertEqual(sc_stats.user_cfg_state(None), {"line": False, "applied": False})
+        self.assertEqual(sc_stats.user_cfg_state(self.tmp), {"line": False, "applied": False, "service": None})
+        self.assertEqual(sc_stats.user_cfg_state(None), {"line": False, "applied": False, "service": None})
 
     def test_user_cfg_state_applied(self):
         self._log("<boot>\nCVar GRPC_CLIENT_SERVER_ENABLED set\n")
@@ -168,9 +168,27 @@ class UserCfgTests(_TmpDir):
         t = time.time()
         os.utime(log, (t - 600, t - 600))       # log from a launch before the edit
         os.utime(cfg, (t - 60, t - 60))
-        self.assertEqual(sc_stats.user_cfg_state(self.tmp), {"line": True, "applied": False})
+        self.assertEqual(sc_stats.user_cfg_state(self.tmp), {"line": True, "applied": False, "service": None})
         os.utime(log, (t, t))                   # game launched after the edit
-        self.assertEqual(sc_stats.user_cfg_state(self.tmp), {"line": True, "applied": True})
+        self.assertEqual(sc_stats.user_cfg_state(self.tmp), {"line": True, "applied": True, "service": None})
+
+    def test_user_cfg_state_service(self):
+        # LIVE 4.10: the game registers the telemetry service at startup
+        head = ("[User CFG ] grpc.client.server.enabled=true\n"
+                "'GRPC_CLIENT_SERVER_ENABLED' was already set via 'User CFG '\n" + "x\n" * 170)
+        self._log(head + "<Register Service> Service 'sc.game.telemetry.v1.GameTelemetryService' registered\n"
+                  "<GRPC Server> Services configured: 1\n")
+        st = sc_stats.user_cfg_state(self.tmp)
+        self.assertTrue(st["applied"])
+        self.assertTrue(st["service"])
+        # 5.0 PTU build 13273298: the line is read, but no service starts
+        self._log(head + "<Server Started> No Star Engine services started.\n<GRPC Server> No services configured\n")
+        st = sc_stats.user_cfg_state(self.tmp)
+        self.assertTrue(st["applied"])
+        self.assertIs(st["service"], False)
+        # a log that hasn't got that far yet says nothing
+        self._log("[User CFG ] grpc.client.server.enabled=true\n")
+        self.assertIsNone(sc_stats.user_cfg_state(self.tmp)["service"])
 
     def test_user_cfg_state_bom(self):
         with open(os.path.join(self.tmp, "user.cfg"), "wb") as fh:

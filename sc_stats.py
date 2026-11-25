@@ -1339,6 +1339,11 @@ TLM_CFG_LINE = "grpc.client.server.enabled = true"
 _TLM_CFG_RE = re.compile(r"^\s*grpc\.client\.server\.enabled\s*=\s*(true|1)\s*$", re.I)
 _TLM_APPLIED_NAMES = ("GRPC_CLIENT_SERVER_ENABLED", "grpc-client-server-enabled")
 _TLM_APPLIED_LINES = 300
+# the game says at startup whether it started the telemetry service (line ~180)
+_TLM_SERVICE_ON = ("Service 'sc.game.telemetry.v1.GameTelemetryService' registered",
+                   "[sc.game.telemetry.v1.GameTelemetryService]:")
+_TLM_SERVICE_OFF = ("<GRPC Server> No services configured", "No Star Engine services started")
+_TLM_SERVICE_LINES = 1500
 
 
 TLM_CHANNEL_FRESH_S = 600
@@ -1371,8 +1376,10 @@ def _user_cfg_has_line(path):
 
 def user_cfg_state(channel_dir):
     """{"line": user.cfg turns the telemetry port on, "applied": the game launched after
-    user.cfg last changed and its Game.log names the setting in its first lines}."""
-    out = {"line": False, "applied": False}
+    user.cfg last changed and its Game.log names the setting in its first lines,
+    "service": True when that log shows the game started its telemetry service, False when
+    it says it started none, None when the log doesn't say}."""
+    out = {"line": False, "applied": False, "service": None}
     if not channel_dir:
         return out
     cfg = os.path.join(channel_dir, "user.cfg")
@@ -1387,10 +1394,15 @@ def user_cfg_state(channel_dir):
             return out                      # a log from before the last user.cfg edit
         with open(log, encoding="utf-8", errors="replace") as fh:
             for i, ln in enumerate(fh):
-                if i >= _TLM_APPLIED_LINES:
+                if i >= _TLM_SERVICE_LINES:
                     break
-                if any(n in ln for n in _TLM_APPLIED_NAMES):
+                if i < _TLM_APPLIED_LINES and not out["applied"] and any(n in ln for n in _TLM_APPLIED_NAMES):
                     out["applied"] = True
+                if any(n in ln for n in _TLM_SERVICE_ON):
+                    out["service"] = True
+                    break
+                if any(n in ln for n in _TLM_SERVICE_OFF):
+                    out["service"] = False
                     break
     except OSError:
         pass
@@ -13253,7 +13265,7 @@ function kestrelLoad(){
 }
 function kestrelRender(st){
   const s=(st&&st.settings)||{}, ph=(st&&st.phone)||{}, body=$('#kBody');
-  const rec=st&&st.recorder ? `<div class="kstat"><span>Recorder</span>${esc(tlmRecText(st.recorder))}</div>` : '';
+  const rec=st&&st.recorder ? `<div class="kstat"><span>Recorder</span>${esc(tlmRecText(st.recorder,st.channels))}</div>` : '';
   if(!s.phone){
     body.innerHTML=`<div class="kstep"><b>Tablet &amp; phone access is off.</b> Turn it on to serve Kestrel on your
       local network (ports 7890-7899). Only Kestrel is exposed. Nothing leaves your network.</div>
@@ -13571,13 +13583,15 @@ const TLM_GROUP_LABELS=[['wallet','Wallet'],['vitals','Vitals'],['surroundings',
   ['weapons','Weapons'],['settings','Settings'],['turret','Turret'],
   ['force_feedback','Force feedback'],['other','Other']];
 const tlmMB=b=>(b/1048576).toFixed(b>=104857600?0:1)+' MB';
-function tlmRecText(r){
+function tlmRecText(r,chs){
   r=r||{};
+  const ch=(chs||{})[r.channel]||{};
   if(r.state==='live'){
     if(r.file) return 'Recording · '+tlmMB(r.bytes||0);
     return r.reason==='write' ? "Live. Recording stopped, can't write the file." : 'Live, not recording';
   }
   if(r.state==='waiting') return 'Waiting for the game';
+  if(r.state==='off'&&r.reason==='port'&&ch.service===false) return 'This game build started no telemetry service';
   if(r.state==='off') return r.reason==='schema' ? 'No telemetry schema for this game build.'
     : r.reason==='other' ? 'Recording in another CSR window.' : 'Telemetry off in the game';
   return 'Game not running';
@@ -13598,7 +13612,8 @@ function tlmRenderChannels(chs){
   box.textContent='';
   Object.keys(chs||{}).forEach(lab=>{
     const c=chs[lab]||{};
-    const t=c.line&&c.applied?'Enabled in user.cfg':(c.line?'Enabled. Applies on next game launch.':'Disabled in user.cfg');
+    const t=c.line&&c.applied&&c.service===false?'Enabled, but this game build started no telemetry service'
+      :c.line&&c.applied?'Enabled in user.cfg':(c.line?'Enabled. Applies on next game launch.':'Disabled in user.cfg');
     const row=document.createElement('div'); row.className='tlmrow';
     const n=document.createElement('span'); n.className='tlml'; n.textContent=lab;
     const m=document.createElement('span'); m.textContent=t;
@@ -13646,7 +13661,7 @@ function tlmRender(st){
 }
 // the parts that change while the game runs
 function tlmLive(st){
-  $('#tlmRec').textContent=tlmRecText(st.recorder);
+  $('#tlmRec').textContent=tlmRecText(st.recorder,st.channels);
   const cap=st.settings&&st.settings.max_mb;
   $('#tlmDisk').textContent='Recordings use '+tlmMB(st.disk||0)+(cap?' of '+(cap>=1000?cap/1000+' GB':cap+' MB'):'')+'.';
   $('#dmExportTlmLbl').textContent='Include telemetry ('+tlmMB(st.disk||0)+')';
