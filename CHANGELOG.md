@@ -5,13 +5,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and CSR
 uses [Semantic Versioning](https://semver.org/) (MAJOR.MINOR.PATCH).
 
 
-## [Unreleased]
-
-### Fixed
-- Telemetry settings showed a channel as enabled when its game build started no telemetry
-  service. 5.0 PTU (build 13273298) reads the line but starts none. CSR now reads the
-  game's own startup line and says so, in the settings and on Kestrel's recorder line.
-
 ## [2.0.0-beta] — 2026-11-25
 
 Telemetry and the Kestrel K-7 Flight Slate. Beta: telemetry is new and tested on
@@ -77,6 +70,8 @@ LIVE 4.10 only.
   (right-click → Properties → Details). Antivirus tools trust an exe with details more.
 
 ### Fixed
+- Telemetry settings say when a game build starts no telemetry service. 5.0 PTU (build
+  13273298) reads the setting but starts none.
 - Refresh Data cards were titled Export backup and Import / merge.
 - The alert bell's link to a crash opens Stability's Crashes page again.
 - Tech Preview places showed their raw code, like "cluster ht a agriculture l 002 (Green
