@@ -70,6 +70,8 @@ LIVE 4.10 only.
   (right-click → Properties → Details). Antivirus tools trust an exe with details more.
 
 ### Fixed
+- Telemetry settings say when a game build starts no telemetry service. 5.0 PTU (build
+  13273298) reads the setting but starts none.
 - Refresh Data cards were titled Export backup and Import / merge.
 - The alert bell's link to a crash opens Stability's Crashes page again.
 - Tech Preview places showed their raw code, like "cluster ht a agriculture l 002 (Green
