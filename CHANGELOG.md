@@ -12,6 +12,15 @@ uses [Semantic Versioning](https://semver.org/) (MAJOR.MINOR.PATCH).
   beta to try. The beta can be hidden. On narrow screens the status light gets a dot and
   its menu lists them. CSR checks GitHub every 6 hours. `"check_updates": false` in
   csr_config.json turns it off.
+- **Time on a server, next to playtime.** Playtime is how long the game ran, menus and
+  loading screens included. Overview and Activity now also show the hours spent on a
+  server, from joining one to the next return to the menu or quitting. Sessions whose
+  logs Star Citizen has deleted have no join data. The line says how much of your
+  playtime it covers when that's under 95%.
+
+### Changed
+- The first start after updating re-reads every log once (a minute or so) to work out
+  time on a server.
 
 ## [2.0.0-beta] — 2026-11-25
 

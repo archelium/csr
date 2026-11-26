@@ -65,7 +65,7 @@ CSR_CONTACT = "support@archelium.com"      # publisher/contact (archelium.com)
 # Bump whenever scan_log() learns to extract something new or fixes an extraction bug.
 # A quick refresh reuses archived sessions only when they were parsed by THIS version,
 # so improved parsing always re-reads old logs instead of silently keeping stale numbers.
-PARSER_VERSION = 26
+PARSER_VERSION = 27
 
 
 # --------------------------------------------------------------------------- #
@@ -2172,6 +2172,24 @@ NOTIF_MISSION_RE = re.compile(r"MissionId: \[([0-9a-f-]+)\], ObjectiveId: \[([^\
 # med-bed surgery: who, which bed, in which ship (none = a hospital), which parts
 MEDBED_RE = re.compile(r"<MED BED HEAL> Actor: (\S+) .*?Perform surgery event Success, med bed name: (\S+), vehicle name: (\S+), (.*)$")
 PU_JOIN = ('Context Establisher Done', 'gamerules="SC_Default"', 'establisher="Network"')
+
+
+def server_seconds(events, end, dur):
+    """Seconds on a game server: each join (PU_JOIN) runs until the next return to the menu
+    ([CSessionManager::RequestFrontEnd]) or the end of the log. Never more than `dur`, the
+    session's playtime. `events` is [("J"|"F", datetime)] in log order."""
+    if not dur:
+        return 0.0
+    total, on = 0.0, None
+    for kind, t in events:
+        if kind == "J" and on is None:
+            on = t
+        elif kind == "F" and on is not None:
+            total += max(0.0, (t - on).total_seconds())
+            on = None
+    if on is not None and end is not None:
+        total += max(0.0, (end - on).total_seconds())
+    return min(total, dur)
 LZ_VISIT_GAP = 600           # armistice-zone entries closer than this are one visit
 
 
@@ -4190,6 +4208,7 @@ def scan_log(path):
     contracts_failed = Counter()
     hud_n = 0                          # HUD notifications seen at all (era detection)
     pu_joins = []                      # times the client finished joining a PU server
+    srv_ev = []                        # ("J" joined a server | "F" back to the menu, UTC time)
     fleet_max = 0
     purchases = 0
     spend = 0.0                        # aUEC across item + commodity buys
@@ -4425,6 +4444,11 @@ def scan_log(path):
                     _pj = parse_dt(p) if p else None
                     if _pj:
                         pu_joins.append(_pj)
+                        srv_ev.append(("J", _pj))
+                elif BOOT_FRONTEND in line:
+                    _fe = parse_dt(p) if p else None
+                    if _fe:
+                        srv_ev.append(("F", _fe))
                 # cheap substring gates before any regex
                 if channel is None and "Bin64" in line:      # the Executable: line
                     m = EXE_CHANNEL_RE.search(line)
@@ -4771,6 +4795,7 @@ def scan_log(path):
         dur = (dt1 - dt0).total_seconds()
         if dur > 12 * 3600:            # guard against a log left open for days
             dur = 0.0
+    srv = server_seconds(srv_ev, parse_dt(last), dur)
 
     # "limited data" = a real-length session that produced NO gameplay signal AND
     # is missing the normal Handle[…login] line — the signature of a game build
@@ -4869,7 +4894,7 @@ def scan_log(path):
     # taken; this one is what a reputation estimate can be built on
     contracts_cls = Counter(c for mid, c in contract_cls.items() if missions.get(mid) == "Complete")
     return {
-        "patch": patch, "build": build, "start": dt0, "dur": dur,
+        "patch": patch, "build": build, "start": dt0, "dur": dur, "srv": srv,
         "ships": ships, "ship_events": ship_events, "missions": missions, "weapons": weapons,
         **load_res,
         "aboard": ship_t["aboard"], "aboard_secs": ship_t["aboard_secs"],
@@ -4930,7 +4955,7 @@ def scan_log(path):
 
 def blank_patch():
     return {
-        "sessions": 0, "seconds": 0.0, "longest": 0.0,
+        "sessions": 0, "seconds": 0.0, "longest": 0.0, "srv_seconds": 0.0, "srv_of": 0.0,
         "days": set(), "months": defaultdict(float),
         "by_hour": [0] * 24, "by_dow": [0] * 7,
         "weekhour": [[0] * 24 for _ in range(7)],
@@ -5011,6 +5036,9 @@ def fold(agg, s):
     sc_tlm_stats.fold_tlm(agg["tlm"], s.get("_tlm"), s.get("start"))
     agg["seconds"] += s["dur"]
     agg["longest"] = max(agg["longest"], s["dur"])
+    if s.get("srv") is not None:
+        agg["srv_seconds"] += s["srv"]
+        agg["srv_of"] += s["dur"]
     if s.get("limited"):
         agg["limited_sessions"] += 1
         agg["limited_seconds"] += s["dur"]
@@ -6000,6 +6028,9 @@ def finalize(agg):
         "buy_cats": buy_cats,
         "sessions": agg["sessions"],
         "hours": round(agg["seconds"] / 3600, 1),
+        # time on a server, from the sessions whose logs CSR read with this parser
+        "srv_hours": round(agg["srv_seconds"] / 3600, 1),
+        "srv_of_hours": round(agg["srv_of"] / 3600, 1),
         "limited_sessions": agg["limited_sessions"],
         "limited_hours": round(agg["limited_seconds"] / 3600, 1),
         "avg_min": round(agg["seconds"] / agg["sessions"] / 60) if agg["sessions"] else 0,
@@ -9087,6 +9118,7 @@ nav a::after{background:var(--menu-bg);border-color:var(--glass-line);box-shadow
 .kstat{display:flex;gap:10px;align-items:center;margin-top:14px;padding-top:12px;border-top:1px solid var(--line);font-size:12.5px;color:var(--txt)}
 .kstat span{font-family:var(--font-mono);font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--dim)}
 
+.ov-srv b{color:var(--txt)}.ov-cov{color:var(--dim)}
 /* ---- new versions: sidebar cards + a dot on the status light ---- */
 #updBox{display:flex;flex-direction:column;gap:8px;margin-bottom:10px}
 #updBox:empty{display:none}
@@ -10659,7 +10691,7 @@ function heroHTML(v){
       `<div class="ov-sum"><span><b>${fmt(v.active_days)}</b> days</span><span><b>${fmt(v.sessions)}</b> sessions</span><span>avg <b>${v.avg_min}</b> min</span><span><b>${fmt(v.ships_unique)}</b> ships</span></div>`+
     `</div></div>`+
     `<div class="ov-nums"><div class="ov-ring" title="${fmt(m.total)} missions ended, ${m.rate}% completed"><div class="ov-rg">${ring}</div><div class="ov-k">of ${fmt(m.total)}<br>missions done</div></div>`+
-      `<div class="ov-big"><div class="ov-n">${fmt(Math.round(v.hours))}</div><div class="ov-k c">Hours played</div><div class="ov-s">longest ${v.longest_h} h session</div></div></div>`+
+      `<div class="ov-big"><div class="ov-n">${fmt(Math.round(v.hours))}</div><div class="ov-k c">Hours played</div>${srvLine(v)}<div class="ov-s">longest ${v.longest_h} h session</div></div></div>`+
   `</section>`;
 }
 
@@ -11874,9 +11906,20 @@ function hoursChart(v){
   splitbar(el, HOURS_PARTS.map(([k,label,color])=>({label, value:Math.round(h[k]/360)/10, color})),
     {big:fmt(Math.round(h.total/3600)), small:'hours logged'});
 }
+// time on a server next to playtime. Sessions read before this figure existed (logs since
+// deleted) aren't in it: the line says what share of playtime it covers.
+function srvPct(v){ return v.srv_of_hours>0 ? Math.round(100*v.srv_hours/v.srv_of_hours) : null; }
+function srvCover(v){ return v.hours>0 ? v.srv_of_hours/v.hours : 0; }
+function srvLine(v){
+  const p=srvPct(v); if(p==null) return '';
+  const part=srvCover(v)<0.95?` <span class="ov-cov" title="From ${fmt(Math.round(v.srv_of_hours))} of ${fmt(Math.round(v.hours))} h. Older sessions whose logs are gone have no join data.">· ${fmt(Math.round(v.srv_of_hours))} h with data</span>`:'';
+  return `<div class="ov-s ov-srv"><b>${fmt(Math.round(v.srv_hours))} h</b> on a server · ${p}%${part}</div>`;
+}
 function secActivity(v){
+  const sp=srvPct(v);
   const K=kpiRow([
     [icon('calendar'), v.active_days, 'Active days', `days you logged in`],
+    [icon('planet'), sp==null?'—':fmt(Math.round(v.srv_hours))+'h', 'On a server', sp==null?'no join data':`${sp}% of playtime`+(srvCover(v)<0.95?` · ${fmt(Math.round(v.srv_of_hours))} h with data`:'')],
     [icon('damage'), v.streak, 'Longest streak', `consecutive days`],
     [icon('time'), v.avg_min+'m', 'Avg session', `per play session`],
     [icon('night'), v.longest_h+'h', 'Longest session', `single sitting`],
