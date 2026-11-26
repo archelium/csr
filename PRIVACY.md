@@ -71,4 +71,4 @@ to private on the RSI website; CSR only reflects what RSI already makes public.
 ## Contact
 Questions: **support@archelium.com**
 
-_Last updated: 2026-11-25 · CSR v2.0.0-beta_
+_Last updated: 2026-11-26 · CSR v2.0.0-beta.2_

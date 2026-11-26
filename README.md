@@ -122,14 +122,13 @@ CSR is portable, so updating is just **replace the exe**:
 keeps sessions Star Citizen has since deleted from your log folder. If you want a
 belt-and-braces backup first, open CSR and use **💾 Backup & transfer → Export**.
 
-What happens on your first run of v2.0.0-beta, depending on where you're coming from:
+What happens on your first run of v2.0.0-beta.2, depending on where you're coming from:
 
 | Coming from | What to expect |
 |---|---|
 | **v1.0.0** | v1.0.0 kept no archive, so your history is rebuilt from whatever logs you still have. If your saved folder was `…\StarCitizen\LIVE`, CSR now finds `PTU` and `TECH-PREVIEW` beside it on its own — **no need to re-pick a folder** — and a **Channel** dropdown appears if it finds any. |
-| **v1.1.0 – v1.11.0** | Your archive carries over untouched. |
-| **v1.0.0 – v1.9.1** | The first scan re-reads **every** log (a minute or so). This is deliberate: each release fixes parsing bugs or extracts new data, so nothing older is trusted. It happens once — after that CSR starts, and refreshes, in about a second. |
-| **v1.9.2 – v1.11.0** | No re-read. Telemetry recording starts once you enable it for your channel (see [Telemetry](#telemetry)). |
+| **v1.1.0 – v2.0.0-beta** | Your archive carries over untouched. |
+| **Any earlier version** | The first scan re-reads **every** log (a minute or so). This is deliberate: each release fixes parsing bugs or extracts new data, so nothing older is trusted. It happens once — after that CSR starts, and refreshes, in about a second. |
 
 Coming from **v1.2.0** specifically, the first run also *moves* some existing numbers,
 because v1.3.0 converts session times from the log's UTC stamps to your own clock: the
