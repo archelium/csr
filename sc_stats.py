@@ -60,12 +60,12 @@ import sc_tlm_stats
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
-CSR_VERSION = "2.0.0-beta"
+CSR_VERSION = "2.0.0-beta.2"
 CSR_CONTACT = "support@archelium.com"      # publisher/contact (archelium.com)
 # Bump whenever scan_log() learns to extract something new or fixes an extraction bug.
 # A quick refresh reuses archived sessions only when they were parsed by THIS version,
 # so improved parsing always re-reads old logs instead of silently keeping stale numbers.
-PARSER_VERSION = 26
+PARSER_VERSION = 27
 
 
 # --------------------------------------------------------------------------- #
@@ -573,6 +573,112 @@ def update_config(**kv):
 def remember_folder(path):
     """Save the linked StarCitizen folder without touching the rest of the config."""
     return update_config(live_path=path)
+
+
+# --- new versions ----------------------------------------------------------------------
+# One GitHub API call every 6 hours while CSR runs. The answer is cached in
+# sc_updates.json. "check_updates": false in csr_config.json turns it off.
+CSR_RELEASES_API = "https://api.github.com/repos/archelium/csr/releases?per_page=30"
+CSR_RELEASES_PAGE = "https://github.com/archelium/csr/releases"
+UPDATES_FILE = "sc_updates.json"
+UPDATE_CHECK_S = 6 * 3600
+_UPDATES = {"t": 0.0, "releases": None, "loaded": False}
+_VER_RE = re.compile(r"^v?(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.]+))?$")
+
+
+def version_key(v):
+    """Sortable key for "1.11.0" or "2.0.0-beta.2". A release sorts after its pre-releases.
+    None for anything else."""
+    m = _VER_RE.match(str(v or "").strip())
+    if not m:
+        return None
+    pre = m.group(4)
+    parts = tuple((0, int(x), "") if x.isdigit() else (1, 0, x) for x in (pre or "").split(".") if x)
+    return (int(m.group(1)), int(m.group(2)), int(m.group(3)), 1 if pre is None else 0, parts)
+
+
+def update_info(releases, current):
+    """{"current", "stable", "beta"}: stable is the newest release newer than `current`,
+    beta the newest pre-release newer than both `current` and the newest release.
+    Each is {"version", "url", "date"} or None."""
+    out = {"current": current, "stable": None, "beta": None}
+    cur = version_key(current)
+    if cur is None:
+        return out
+    best = {"stable": None, "beta": None}
+    for r in releases or []:
+        if not isinstance(r, dict) or r.get("draft"):
+            continue
+        k = version_key(r.get("tag"))
+        if k is None:
+            continue
+        ch = "beta" if r.get("prerelease") else "stable"
+        if best[ch] is None or k > best[ch][0]:
+            best[ch] = (k, r)
+    top_stable = best["stable"][0] if best["stable"] else None
+    for ch in ("stable", "beta"):
+        b = best[ch]
+        if not b or b[0] <= cur:
+            continue
+        if ch == "beta" and top_stable is not None and b[0] <= top_stable:
+            continue
+        r = b[1]
+        out[ch] = {"version": str(r.get("tag")).lstrip("v"), "url": r.get("url") or CSR_RELEASES_PAGE,
+                   "date": str(r.get("date") or "")[:10]}
+    return out
+
+
+def _updates_path():
+    try:
+        return os.path.join(app_dir(), UPDATES_FILE)
+    except Exception:
+        return None
+
+
+def check_updates(force=False):
+    """Refresh the release list from GitHub when it's older than UPDATE_CHECK_S. Quiet on
+    any failure: the last good list stays."""
+    st = _UPDATES
+    path = _updates_path()
+    if not st["loaded"]:
+        st["loaded"] = True
+        try:
+            with open(path, encoding="utf-8") as fh:
+                d = json.load(fh)
+            if isinstance(d, dict) and isinstance(d.get("releases"), list):
+                st["t"], st["releases"] = float(d.get("t") or 0), d["releases"]
+        except (OSError, ValueError, TypeError):
+            pass
+    if load_config().get("check_updates") is False:
+        return
+    if not force and time.time() - st["t"] < UPDATE_CHECK_S:
+        return
+    try:
+        import urllib.request
+        req = urllib.request.Request(CSR_RELEASES_API, headers={
+            "User-Agent": "CSR-update-check", "Accept": "application/vnd.github+json"})
+        raw = json.loads(urllib.request.urlopen(req, timeout=15, context=sc_names._SSL).read())
+    except Exception:
+        return
+    rel = [{"tag": r.get("tag_name"), "prerelease": bool(r.get("prerelease")), "draft": bool(r.get("draft")),
+            "url": r.get("html_url"), "date": r.get("published_at")} for r in raw if isinstance(r, dict)]
+    st["t"], st["releases"] = time.time(), rel
+    if path:
+        try:
+            tmp = path + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as fh:
+                json.dump({"t": st["t"], "releases": rel}, fh)
+            os.replace(tmp, path)
+        except OSError:
+            pass
+
+
+def updates_state():
+    """What /api/status reports about new versions."""
+    info = update_info(_UPDATES["releases"], CSR_VERSION)
+    info["checked"] = _UPDATES["t"] or None
+    info["off"] = load_config().get("check_updates") is False
+    return info
 
 
 TLM_DEFAULTS = {"record": True, "detail": "normal", "keep_days": None, "max_mb": 1000,
@@ -2066,6 +2172,24 @@ NOTIF_MISSION_RE = re.compile(r"MissionId: \[([0-9a-f-]+)\], ObjectiveId: \[([^\
 # med-bed surgery: who, which bed, in which ship (none = a hospital), which parts
 MEDBED_RE = re.compile(r"<MED BED HEAL> Actor: (\S+) .*?Perform surgery event Success, med bed name: (\S+), vehicle name: (\S+), (.*)$")
 PU_JOIN = ('Context Establisher Done', 'gamerules="SC_Default"', 'establisher="Network"')
+
+
+def server_seconds(events, end, dur):
+    """Seconds on a game server: each join (PU_JOIN) runs until the next return to the menu
+    ([CSessionManager::RequestFrontEnd]) or the end of the log. Never more than `dur`, the
+    session's playtime. `events` is [("J"|"F", datetime)] in log order."""
+    if not dur:
+        return 0.0
+    total, on = 0.0, None
+    for kind, t in events:
+        if kind == "J" and on is None:
+            on = t
+        elif kind == "F" and on is not None:
+            total += max(0.0, (t - on).total_seconds())
+            on = None
+    if on is not None and end is not None:
+        total += max(0.0, (end - on).total_seconds())
+    return min(total, dur)
 LZ_VISIT_GAP = 600           # armistice-zone entries closer than this are one visit
 
 
@@ -4084,6 +4208,7 @@ def scan_log(path):
     contracts_failed = Counter()
     hud_n = 0                          # HUD notifications seen at all (era detection)
     pu_joins = []                      # times the client finished joining a PU server
+    srv_ev = []                        # ("J" joined a server | "F" back to the menu, UTC time)
     fleet_max = 0
     purchases = 0
     spend = 0.0                        # aUEC across item + commodity buys
@@ -4319,6 +4444,11 @@ def scan_log(path):
                     _pj = parse_dt(p) if p else None
                     if _pj:
                         pu_joins.append(_pj)
+                        srv_ev.append(("J", _pj))
+                elif BOOT_FRONTEND in line:
+                    _fe = parse_dt(p) if p else None
+                    if _fe:
+                        srv_ev.append(("F", _fe))
                 # cheap substring gates before any regex
                 if channel is None and "Bin64" in line:      # the Executable: line
                     m = EXE_CHANNEL_RE.search(line)
@@ -4665,6 +4795,7 @@ def scan_log(path):
         dur = (dt1 - dt0).total_seconds()
         if dur > 12 * 3600:            # guard against a log left open for days
             dur = 0.0
+    srv = server_seconds(srv_ev, parse_dt(last), dur)
 
     # "limited data" = a real-length session that produced NO gameplay signal AND
     # is missing the normal Handle[…login] line — the signature of a game build
@@ -4763,7 +4894,7 @@ def scan_log(path):
     # taken; this one is what a reputation estimate can be built on
     contracts_cls = Counter(c for mid, c in contract_cls.items() if missions.get(mid) == "Complete")
     return {
-        "patch": patch, "build": build, "start": dt0, "dur": dur,
+        "patch": patch, "build": build, "start": dt0, "dur": dur, "srv": srv,
         "ships": ships, "ship_events": ship_events, "missions": missions, "weapons": weapons,
         **load_res,
         "aboard": ship_t["aboard"], "aboard_secs": ship_t["aboard_secs"],
@@ -4824,7 +4955,7 @@ def scan_log(path):
 
 def blank_patch():
     return {
-        "sessions": 0, "seconds": 0.0, "longest": 0.0,
+        "sessions": 0, "seconds": 0.0, "longest": 0.0, "srv_seconds": 0.0, "srv_of": 0.0,
         "days": set(), "months": defaultdict(float),
         "by_hour": [0] * 24, "by_dow": [0] * 7,
         "weekhour": [[0] * 24 for _ in range(7)],
@@ -4905,6 +5036,9 @@ def fold(agg, s):
     sc_tlm_stats.fold_tlm(agg["tlm"], s.get("_tlm"), s.get("start"))
     agg["seconds"] += s["dur"]
     agg["longest"] = max(agg["longest"], s["dur"])
+    if s.get("srv") is not None:
+        agg["srv_seconds"] += s["srv"]
+        agg["srv_of"] += s["dur"]
     if s.get("limited"):
         agg["limited_sessions"] += 1
         agg["limited_seconds"] += s["dur"]
@@ -5894,6 +6028,9 @@ def finalize(agg):
         "buy_cats": buy_cats,
         "sessions": agg["sessions"],
         "hours": round(agg["seconds"] / 3600, 1),
+        # time on a server, from the sessions whose logs CSR read with this parser
+        "srv_hours": round(agg["srv_seconds"] / 3600, 1),
+        "srv_of_hours": round(agg["srv_of"] / 3600, 1),
         "limited_sessions": agg["limited_sessions"],
         "limited_hours": round(agg["limited_seconds"] / 3600, 1),
         "avg_min": round(agg["seconds"] / agg["sessions"] / 60) if agg["sessions"] else 0,
@@ -8981,6 +9118,25 @@ nav a::after{background:var(--menu-bg);border-color:var(--glass-line);box-shadow
 .kstat{display:flex;gap:10px;align-items:center;margin-top:14px;padding-top:12px;border-top:1px solid var(--line);font-size:12.5px;color:var(--txt)}
 .kstat span{font-family:var(--font-mono);font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--dim)}
 
+.ov-srv b{color:var(--txt)}.ov-cov{color:var(--dim)}
+/* ---- new versions: sidebar cards + a dot on the status light ---- */
+#updBox{display:flex;flex-direction:column;gap:8px;margin-bottom:10px}
+#updBox:empty{display:none}
+.updcard{position:relative;display:block;text-decoration:none;padding:10px 30px 10px 12px;border-radius:var(--r-sm,10px);
+  border:1px solid rgba(74,222,128,.45);background:linear-gradient(90deg,rgba(74,222,128,.14),rgba(74,222,128,.03));color:var(--txt)}
+.updcard.beta{border-color:rgba(167,139,250,.5);background:linear-gradient(90deg,rgba(167,139,250,.16),rgba(167,139,250,.03))}
+.updcard:hover{filter:brightness(1.15)}
+.updcard .uk{display:block;font-family:var(--font-mono);font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:#4ade80}
+.updcard.beta .uk{color:#a78bfa}
+.updcard b{display:block;font-size:13px;margin-top:2px}
+.updcard small{display:block;font-size:11px;color:var(--muted);margin-top:2px}
+.updcard .ux{position:absolute;top:6px;right:8px;font-style:normal;font-size:16px;color:var(--muted);cursor:pointer;padding:0 4px}
+.updcard .ux:hover{color:var(--txt)}
+.sm-upd{display:flex;flex-direction:column;gap:8px;margin-top:12px}
+.sm-upd:empty{display:none}
+.statusbtn.hasupd::before{content:"";position:absolute;top:6px;right:6px;width:8px;height:8px;border-radius:50%;background:#4ade80;box-shadow:0 0 0 2px var(--bg)}
+.statusbtn{position:relative}
+
 /* ---- modals + limited-data banner ---- */
 .modal-back{background:rgba(4,8,13,.6);backdrop-filter:blur(6px)}
 :root[data-theme="light"] .modal-back{background:rgba(23,35,47,.25)}
@@ -9671,6 +9827,7 @@ img[src*="xparrow-lite.pages.dev"]{object-fit:scale-down!important}
     </nav>
     <div class="side-toc" id="sideToc" aria-label="On this page" hidden></div>
     <div class="side-foot">
+      <div id="updBox"></div>
       <button class="foot-link" id="aboutBtn">About &amp; legal</button>
       <div id="gen"></div>
       <div class="foot-disc">Fan-made · not affiliated with CIG / RSI</div>
@@ -9734,6 +9891,7 @@ img[src*="xparrow-lite.pages.dev"]{object-fit:scale-down!important}
           <div class="statusmenu" id="statusMenu">
             <div class="sm-head"><span class="dot"></span><span id="smState">Checking…</span></div>
             <div class="sm-body" id="smBody"></div>
+            <div class="sm-upd" id="smUpd"></div>
             <div class="sm-acts" id="smActs"></div>
           </div>
         </div>
@@ -10533,7 +10691,7 @@ function heroHTML(v){
       `<div class="ov-sum"><span><b>${fmt(v.active_days)}</b> days</span><span><b>${fmt(v.sessions)}</b> sessions</span><span>avg <b>${v.avg_min}</b> min</span><span><b>${fmt(v.ships_unique)}</b> ships</span></div>`+
     `</div></div>`+
     `<div class="ov-nums"><div class="ov-ring" title="${fmt(m.total)} missions ended, ${m.rate}% completed"><div class="ov-rg">${ring}</div><div class="ov-k">of ${fmt(m.total)}<br>missions done</div></div>`+
-      `<div class="ov-big"><div class="ov-n">${fmt(Math.round(v.hours))}</div><div class="ov-k c">Hours played</div><div class="ov-s">longest ${v.longest_h} h session</div></div></div>`+
+      `<div class="ov-big"><div class="ov-n">${fmt(Math.round(v.hours))}</div><div class="ov-k c">Hours played</div>${srvLine(v)}<div class="ov-s">longest ${v.longest_h} h session</div></div></div>`+
   `</section>`;
 }
 
@@ -11748,9 +11906,20 @@ function hoursChart(v){
   splitbar(el, HOURS_PARTS.map(([k,label,color])=>({label, value:Math.round(h[k]/360)/10, color})),
     {big:fmt(Math.round(h.total/3600)), small:'hours logged'});
 }
+// time on a server next to playtime. Sessions read before this figure existed (logs since
+// deleted) aren't in it: the line says what share of playtime it covers.
+function srvPct(v){ return v.srv_of_hours>0 ? Math.round(100*v.srv_hours/v.srv_of_hours) : null; }
+function srvCover(v){ return v.hours>0 ? v.srv_of_hours/v.hours : 0; }
+function srvLine(v){
+  const p=srvPct(v); if(p==null) return '';
+  const part=srvCover(v)<0.95?` <span class="ov-cov" title="From ${fmt(Math.round(v.srv_of_hours))} of ${fmt(Math.round(v.hours))} h. Older sessions whose logs are gone have no join data.">· ${fmt(Math.round(v.srv_of_hours))} h with data</span>`:'';
+  return `<div class="ov-s ov-srv"><b>${fmt(Math.round(v.srv_hours))} h</b> on a server · ${p}%${part}</div>`;
+}
 function secActivity(v){
+  const sp=srvPct(v);
   const K=kpiRow([
     [icon('calendar'), v.active_days, 'Active days', `days you logged in`],
+    [icon('planet'), sp==null?'—':fmt(Math.round(v.srv_hours))+'h', 'On a server', sp==null?'no join data':`${sp}% of playtime`+(srvCover(v)<0.95?` · ${fmt(Math.round(v.srv_of_hours))} h with data`:'')],
     [icon('damage'), v.streak, 'Longest streak', `consecutive days`],
     [icon('time'), v.avg_min+'m', 'Avg session', `per play session`],
     [icon('night'), v.longest_h+'h', 'Longest session', `single sitting`],
@@ -13311,6 +13480,7 @@ fetch('/api/status').then(r=>r.ok?r.json():Promise.reject()).then(s=>{
   $('#navKestrel').style.display='';
   if(location.hash==='#kestrel') kestrelOpen();
   renderBell();
+  if(s) renderUpdates(s.updates);
   if(s&&s.sessions!=null) $('#dmCount').textContent=fmt(s.sessions)+' sessions';
   if(s&&s.online){ ONLINE=s.online; olWhen(); }
   if(s){ CSR_CONSOLE={hidden:!!s.console_hidden,supported:!!s.console_supported,log:!!s.log_file,autostart:s.autostart}; }
@@ -13322,6 +13492,27 @@ fetch('/api/status').then(r=>r.ok?r.json():Promise.reject()).then(s=>{
 // pollStatus are declared — calling setPollRate() from here would hit the temporal
 // dead zone on POLL_MS and abort the rest of this script.
 $('#refreshBtn').onclick=()=>modal('refreshModal',true);
+// ---- new versions: a stable update stays until you install it, a newer beta can be hidden
+function updHidden(v){try{return localStorage.getItem('csr.hideBeta')===v}catch(e){return false}}
+function updCard(kind,u){
+  const beta=kind==='beta';
+  return `<a class="updcard ${beta?'beta':'stable'}" href="${esc(u.url)}" target="_blank" rel="noopener" title="${beta?'Pre-release':'Release'} ${esc(u.version)}${u.date?' · '+esc(u.date):''}">
+    <span class="uk">${beta?'Beta':'Update'}</span><b>${beta?'Try '+esc(u.version):esc(u.version)+' available'}</b>
+    <small>${beta?'New features, may have bugs':'Download from GitHub'}</small>${beta?'<i class="ux" data-hide="'+esc(u.version)+'" title="Hide this beta">×</i>':''}</a>`;
+}
+function renderUpdates(up){
+  const box=$('#updBox'); if(!box) return;
+  up=up||{}; let h='';
+  if(up.stable) h+=updCard('stable',up.stable);
+  if(up.beta&&!updHidden(up.beta.version)) h+=updCard('beta',up.beta);
+  box.innerHTML=h;
+  // narrow screens hide the sidebar footer: the status light carries it instead
+  const st=$('#statusBtn'); if(st) st.classList.toggle('hasupd',!!(up.stable||(up.beta&&!updHidden(up.beta.version))));
+  const sm=$('#smUpd'); if(sm) sm.innerHTML=h;
+  document.querySelectorAll('#updBox [data-hide],#smUpd [data-hide]').forEach(x=>x.onclick=e=>{e.preventDefault();e.stopPropagation();
+    try{localStorage.setItem('csr.hideBeta',x.dataset.hide)}catch(_){} renderUpdates(up);});
+  window.CSR_UPDATES=up;
+}
 $('#rfCancel').onclick=()=>modal('refreshModal',false);
 function runRefresh(full){
   modal('refreshModal',false);
@@ -13490,6 +13681,7 @@ function pollStatus(){
                if(s&&s.events) s.events.forEach(showAlert);
                if(s) TLM_LINE=tlmLine(s.tlm);
                if(s&&s.watch) renderWatch(s.watch);
+               if(s&&JSON.stringify(s.updates)!==JSON.stringify(window.CSR_UPDATES)) renderUpdates(s.updates);
                // check in more often while Star Citizen is actually writing its log,
                // so a crash surfaces in ~5s instead of ~8s; back off when it isn't
                if(s) setPollRate(s.session_live?3000:6000);
@@ -14567,7 +14759,8 @@ def serve(out_path, port=7878, explicit_logs=None, open_browser=True,
                     "events": watch_events(),
                     "session_live": _WATCH["live"],
                     "watch": watch_status(),
-                    "tlm": recorder.status()}))
+                    "tlm": recorder.status(),
+                    "updates": updates_state()}))
             elif p in ("/api/telemetry/live", "/api/telemetry/status", "/api/telemetry/ship"):
                 try:
                     body = tlm_api_get(self.path, recorder.live, tlm_status, phone_seen)
@@ -14950,6 +15143,12 @@ def serve(out_path, port=7878, explicit_logs=None, open_browser=True,
     recorder.start()     # record the game's telemetry stream while it runs
     phone_sync()         # phone view, when it's on in settings
     threading.Thread(target=tlm_worker, name="tlm-index", daemon=True).start()
+
+    def update_loop():
+        while True:
+            check_updates()
+            time.sleep(600)               # cheap: a real call only every UPDATE_CHECK_S
+    threading.Thread(target=update_loop, name="updates", daemon=True).start()
     # Hide the console straight away rather than after the scan: the browser's
     # flight-recorder terminal is already showing that progress, so leaving this
     # window up means two things reporting the same thing. Everything printed while

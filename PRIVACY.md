@@ -25,6 +25,9 @@ While it is **building the dashboard**, CSR contacts:
 - **api.star-citizen.wiki** / **starcitizen.tools** — item names and weapon images.
 - **xparrow-lite.pages.dev** — the list of item icons it hosts. Only on *Update now*,
   since CSR ships with a copy.
+- **api.github.com** — the list of CSR releases, once every 6 hours while CSR runs, to show
+  when a new version or beta is out. Nothing about you is sent. Set `"check_updates": false`
+  in `csr_config.json` to turn it off.
 - **fonts.googleapis.com / fonts.gstatic.com** — the display fonts (fetched once,
   then cached locally; the generated page embeds them and needs no further access).
 
@@ -68,4 +71,4 @@ to private on the RSI website; CSR only reflects what RSI already makes public.
 ## Contact
 Questions: **support@archelium.com**
 
-_Last updated: 2026-11-25 · CSR v2.0.0-beta_
+_Last updated: 2026-11-26 · CSR v2.0.0-beta.2_
