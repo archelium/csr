@@ -108,6 +108,9 @@ Pick whichever fits you. To record the game's live telemetry, see
 
 ### Updating from an earlier version
 
+CSR tells you when a new version is out: a card at the bottom of the sidebar, or a dot on
+the status light on narrow screens. Newer betas show as a separate card you can hide.
+
 CSR is portable, so updating is just **replace the exe**:
 
 1. Close CSR — **Quit CSR** from the tray icon, or **Shut down** in the status light.

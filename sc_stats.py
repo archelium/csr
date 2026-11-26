@@ -575,6 +575,112 @@ def remember_folder(path):
     return update_config(live_path=path)
 
 
+# --- new versions ----------------------------------------------------------------------
+# One GitHub API call every 6 hours while CSR runs. The answer is cached in
+# sc_updates.json. "check_updates": false in csr_config.json turns it off.
+CSR_RELEASES_API = "https://api.github.com/repos/archelium/csr/releases?per_page=30"
+CSR_RELEASES_PAGE = "https://github.com/archelium/csr/releases"
+UPDATES_FILE = "sc_updates.json"
+UPDATE_CHECK_S = 6 * 3600
+_UPDATES = {"t": 0.0, "releases": None, "loaded": False}
+_VER_RE = re.compile(r"^v?(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.]+))?$")
+
+
+def version_key(v):
+    """Sortable key for "1.11.0" or "2.0.0-beta.2". A release sorts after its pre-releases.
+    None for anything else."""
+    m = _VER_RE.match(str(v or "").strip())
+    if not m:
+        return None
+    pre = m.group(4)
+    parts = tuple((0, int(x), "") if x.isdigit() else (1, 0, x) for x in (pre or "").split(".") if x)
+    return (int(m.group(1)), int(m.group(2)), int(m.group(3)), 1 if pre is None else 0, parts)
+
+
+def update_info(releases, current):
+    """{"current", "stable", "beta"}: stable is the newest release newer than `current`,
+    beta the newest pre-release newer than both `current` and the newest release.
+    Each is {"version", "url", "date"} or None."""
+    out = {"current": current, "stable": None, "beta": None}
+    cur = version_key(current)
+    if cur is None:
+        return out
+    best = {"stable": None, "beta": None}
+    for r in releases or []:
+        if not isinstance(r, dict) or r.get("draft"):
+            continue
+        k = version_key(r.get("tag"))
+        if k is None:
+            continue
+        ch = "beta" if r.get("prerelease") else "stable"
+        if best[ch] is None or k > best[ch][0]:
+            best[ch] = (k, r)
+    top_stable = best["stable"][0] if best["stable"] else None
+    for ch in ("stable", "beta"):
+        b = best[ch]
+        if not b or b[0] <= cur:
+            continue
+        if ch == "beta" and top_stable is not None and b[0] <= top_stable:
+            continue
+        r = b[1]
+        out[ch] = {"version": str(r.get("tag")).lstrip("v"), "url": r.get("url") or CSR_RELEASES_PAGE,
+                   "date": str(r.get("date") or "")[:10]}
+    return out
+
+
+def _updates_path():
+    try:
+        return os.path.join(app_dir(), UPDATES_FILE)
+    except Exception:
+        return None
+
+
+def check_updates(force=False):
+    """Refresh the release list from GitHub when it's older than UPDATE_CHECK_S. Quiet on
+    any failure: the last good list stays."""
+    st = _UPDATES
+    path = _updates_path()
+    if not st["loaded"]:
+        st["loaded"] = True
+        try:
+            with open(path, encoding="utf-8") as fh:
+                d = json.load(fh)
+            if isinstance(d, dict) and isinstance(d.get("releases"), list):
+                st["t"], st["releases"] = float(d.get("t") or 0), d["releases"]
+        except (OSError, ValueError, TypeError):
+            pass
+    if load_config().get("check_updates") is False:
+        return
+    if not force and time.time() - st["t"] < UPDATE_CHECK_S:
+        return
+    try:
+        import urllib.request
+        req = urllib.request.Request(CSR_RELEASES_API, headers={
+            "User-Agent": "CSR-update-check", "Accept": "application/vnd.github+json"})
+        raw = json.loads(urllib.request.urlopen(req, timeout=15, context=sc_names._SSL).read())
+    except Exception:
+        return
+    rel = [{"tag": r.get("tag_name"), "prerelease": bool(r.get("prerelease")), "draft": bool(r.get("draft")),
+            "url": r.get("html_url"), "date": r.get("published_at")} for r in raw if isinstance(r, dict)]
+    st["t"], st["releases"] = time.time(), rel
+    if path:
+        try:
+            tmp = path + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as fh:
+                json.dump({"t": st["t"], "releases": rel}, fh)
+            os.replace(tmp, path)
+        except OSError:
+            pass
+
+
+def updates_state():
+    """What /api/status reports about new versions."""
+    info = update_info(_UPDATES["releases"], CSR_VERSION)
+    info["checked"] = _UPDATES["t"] or None
+    info["off"] = load_config().get("check_updates") is False
+    return info
+
+
 TLM_DEFAULTS = {"record": True, "detail": "normal", "keep_days": None, "max_mb": 1000,
                 "groups": sc_telemetry.DEFAULT_GROUPS, "phone": False, "phone_key": None}
 TLM_KEEP_DAYS = (None, 365, 90, 30)
@@ -8981,6 +9087,24 @@ nav a::after{background:var(--menu-bg);border-color:var(--glass-line);box-shadow
 .kstat{display:flex;gap:10px;align-items:center;margin-top:14px;padding-top:12px;border-top:1px solid var(--line);font-size:12.5px;color:var(--txt)}
 .kstat span{font-family:var(--font-mono);font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--dim)}
 
+/* ---- new versions: sidebar cards + a dot on the status light ---- */
+#updBox{display:flex;flex-direction:column;gap:8px;margin-bottom:10px}
+#updBox:empty{display:none}
+.updcard{position:relative;display:block;text-decoration:none;padding:10px 30px 10px 12px;border-radius:var(--r-sm,10px);
+  border:1px solid rgba(74,222,128,.45);background:linear-gradient(90deg,rgba(74,222,128,.14),rgba(74,222,128,.03));color:var(--txt)}
+.updcard.beta{border-color:rgba(167,139,250,.5);background:linear-gradient(90deg,rgba(167,139,250,.16),rgba(167,139,250,.03))}
+.updcard:hover{filter:brightness(1.15)}
+.updcard .uk{display:block;font-family:var(--font-mono);font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:#4ade80}
+.updcard.beta .uk{color:#a78bfa}
+.updcard b{display:block;font-size:13px;margin-top:2px}
+.updcard small{display:block;font-size:11px;color:var(--muted);margin-top:2px}
+.updcard .ux{position:absolute;top:6px;right:8px;font-style:normal;font-size:16px;color:var(--muted);cursor:pointer;padding:0 4px}
+.updcard .ux:hover{color:var(--txt)}
+.sm-upd{display:flex;flex-direction:column;gap:8px;margin-top:12px}
+.sm-upd:empty{display:none}
+.statusbtn.hasupd::before{content:"";position:absolute;top:6px;right:6px;width:8px;height:8px;border-radius:50%;background:#4ade80;box-shadow:0 0 0 2px var(--bg)}
+.statusbtn{position:relative}
+
 /* ---- modals + limited-data banner ---- */
 .modal-back{background:rgba(4,8,13,.6);backdrop-filter:blur(6px)}
 :root[data-theme="light"] .modal-back{background:rgba(23,35,47,.25)}
@@ -9671,6 +9795,7 @@ img[src*="xparrow-lite.pages.dev"]{object-fit:scale-down!important}
     </nav>
     <div class="side-toc" id="sideToc" aria-label="On this page" hidden></div>
     <div class="side-foot">
+      <div id="updBox"></div>
       <button class="foot-link" id="aboutBtn">About &amp; legal</button>
       <div id="gen"></div>
       <div class="foot-disc">Fan-made · not affiliated with CIG / RSI</div>
@@ -9734,6 +9859,7 @@ img[src*="xparrow-lite.pages.dev"]{object-fit:scale-down!important}
           <div class="statusmenu" id="statusMenu">
             <div class="sm-head"><span class="dot"></span><span id="smState">Checking…</span></div>
             <div class="sm-body" id="smBody"></div>
+            <div class="sm-upd" id="smUpd"></div>
             <div class="sm-acts" id="smActs"></div>
           </div>
         </div>
@@ -13311,6 +13437,7 @@ fetch('/api/status').then(r=>r.ok?r.json():Promise.reject()).then(s=>{
   $('#navKestrel').style.display='';
   if(location.hash==='#kestrel') kestrelOpen();
   renderBell();
+  if(s) renderUpdates(s.updates);
   if(s&&s.sessions!=null) $('#dmCount').textContent=fmt(s.sessions)+' sessions';
   if(s&&s.online){ ONLINE=s.online; olWhen(); }
   if(s){ CSR_CONSOLE={hidden:!!s.console_hidden,supported:!!s.console_supported,log:!!s.log_file,autostart:s.autostart}; }
@@ -13322,6 +13449,27 @@ fetch('/api/status').then(r=>r.ok?r.json():Promise.reject()).then(s=>{
 // pollStatus are declared — calling setPollRate() from here would hit the temporal
 // dead zone on POLL_MS and abort the rest of this script.
 $('#refreshBtn').onclick=()=>modal('refreshModal',true);
+// ---- new versions: a stable update stays until you install it, a newer beta can be hidden
+function updHidden(v){try{return localStorage.getItem('csr.hideBeta')===v}catch(e){return false}}
+function updCard(kind,u){
+  const beta=kind==='beta';
+  return `<a class="updcard ${beta?'beta':'stable'}" href="${esc(u.url)}" target="_blank" rel="noopener" title="${beta?'Pre-release':'Release'} ${esc(u.version)}${u.date?' · '+esc(u.date):''}">
+    <span class="uk">${beta?'Beta':'Update'}</span><b>${beta?'Try '+esc(u.version):esc(u.version)+' available'}</b>
+    <small>${beta?'New features, may have bugs':'Download from GitHub'}</small>${beta?'<i class="ux" data-hide="'+esc(u.version)+'" title="Hide this beta">×</i>':''}</a>`;
+}
+function renderUpdates(up){
+  const box=$('#updBox'); if(!box) return;
+  up=up||{}; let h='';
+  if(up.stable) h+=updCard('stable',up.stable);
+  if(up.beta&&!updHidden(up.beta.version)) h+=updCard('beta',up.beta);
+  box.innerHTML=h;
+  // narrow screens hide the sidebar footer: the status light carries it instead
+  const st=$('#statusBtn'); if(st) st.classList.toggle('hasupd',!!(up.stable||(up.beta&&!updHidden(up.beta.version))));
+  const sm=$('#smUpd'); if(sm) sm.innerHTML=h;
+  document.querySelectorAll('#updBox [data-hide],#smUpd [data-hide]').forEach(x=>x.onclick=e=>{e.preventDefault();e.stopPropagation();
+    try{localStorage.setItem('csr.hideBeta',x.dataset.hide)}catch(_){} renderUpdates(up);});
+  window.CSR_UPDATES=up;
+}
 $('#rfCancel').onclick=()=>modal('refreshModal',false);
 function runRefresh(full){
   modal('refreshModal',false);
@@ -13490,6 +13638,7 @@ function pollStatus(){
                if(s&&s.events) s.events.forEach(showAlert);
                if(s) TLM_LINE=tlmLine(s.tlm);
                if(s&&s.watch) renderWatch(s.watch);
+               if(s&&JSON.stringify(s.updates)!==JSON.stringify(window.CSR_UPDATES)) renderUpdates(s.updates);
                // check in more often while Star Citizen is actually writing its log,
                // so a crash surfaces in ~5s instead of ~8s; back off when it isn't
                if(s) setPollRate(s.session_live?3000:6000);
@@ -14567,7 +14716,8 @@ def serve(out_path, port=7878, explicit_logs=None, open_browser=True,
                     "events": watch_events(),
                     "session_live": _WATCH["live"],
                     "watch": watch_status(),
-                    "tlm": recorder.status()}))
+                    "tlm": recorder.status(),
+                    "updates": updates_state()}))
             elif p in ("/api/telemetry/live", "/api/telemetry/status", "/api/telemetry/ship"):
                 try:
                     body = tlm_api_get(self.path, recorder.live, tlm_status, phone_seen)
@@ -14950,6 +15100,12 @@ def serve(out_path, port=7878, explicit_logs=None, open_browser=True,
     recorder.start()     # record the game's telemetry stream while it runs
     phone_sync()         # phone view, when it's on in settings
     threading.Thread(target=tlm_worker, name="tlm-index", daemon=True).start()
+
+    def update_loop():
+        while True:
+            check_updates()
+            time.sleep(600)               # cheap: a real call only every UPDATE_CHECK_S
+    threading.Thread(target=update_loop, name="updates", daemon=True).start()
     # Hide the console straight away rather than after the scan: the browser's
     # flight-recorder terminal is already showing that progress, so leaving this
     # window up means two things reporting the same thing. Everything printed while

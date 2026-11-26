@@ -5,6 +5,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and CSR
 uses [Semantic Versioning](https://semver.org/) (MAJOR.MINOR.PATCH).
 
 
+## [Unreleased]
+
+### Added
+- **New version notice.** The sidebar shows when a new CSR release is out, and a newer
+  beta to try. The beta can be hidden. On narrow screens the status light gets a dot and
+  its menu lists them. CSR checks GitHub every 6 hours. `"check_updates": false` in
+  csr_config.json turns it off.
+
 ## [2.0.0-beta] — 2026-11-25
 
 Telemetry and the Kestrel K-7 Flight Slate. Beta: telemetry is new and tested on
